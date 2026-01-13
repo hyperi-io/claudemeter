@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/hypersec-io/claudemeter/compare/v1.1.0...v1.1.1) (2026-01-13)
+
+
+### Bug Fixes
+
+* remove emojis from release bot comments ([a2a46e5](https://github.com/hypersec-io/claudemeter/commit/a2a46e544e7d1a1d85d0221ea24ac0e5ff47195a))
+
 # [1.1.0](https://github.com/hypersec-io/claudemeter/compare/v1.0.2...v1.1.0) (2026-01-13)
 
 
