@@ -7,7 +7,7 @@
 
 ![Icon](assets/claudemeter-logo-small-25pct.png)
 
-> Monitor your Claude Code usage in real time, with full limit information.
+> Monitor your Claude Code usage in real time, with full limit information.  
 > *No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'*
 
 - Token context usage
@@ -15,6 +15,7 @@
 - Weekly limits
 - Limit consumption and reset times
 - Claude session and login all local to device
+- Open source https://github.com/hypersec-io/claudemeter  
 
 ## Startup
 
