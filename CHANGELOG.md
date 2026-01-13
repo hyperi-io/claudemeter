@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/hypersec-io/claudemeter/compare/v1.0.1...v1.0.2) (2026-01-13)
+
+
+### Bug Fixes
+
+* use lowercase publisher ID for marketplace ([7c78f23](https://github.com/hypersec-io/claudemeter/commit/7c78f23bcd71a679bceef82ef767d55dc6037d56))
+
 ## [1.0.1](https://github.com/hypersec-io/claudemeter/compare/v1.0.0...v1.0.1) (2026-01-13)
 
 
