@@ -5,8 +5,9 @@
 [![GitHub Issues](https://img.shields.io/github/issues/hypersec-io/claudemeter)](https://github.com/hypersec-io/claudemeter/issues)
 [![GitHub Stars](https://img.shields.io/github/stars/hypersec-io/claudemeter)](https://github.com/hypersec-io/claudemeter)
 
-![Icon](assets/claudemeter-logo-small-25pct.png)  
-> Monitor your Claude Code usage in real time, with full limit information.  
+![Icon](assets/claudemeter-logo-small-25pct.png)
+
+> Monitor your Claude Code usage in real time, with full limit information.
 > *No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'*
 
 - Token context usage
@@ -19,7 +20,7 @@
 
 ![Startup](assets/startup.gif)
 
------
+---
 
 ## Default Status Bar
 
@@ -50,8 +51,8 @@ The extension will **automatically fetch usage data** when VS Code starts. If yo
 4. Your session is saved locally - you won't need to log in again
 
 ![Login 1](assets/login-1.png)
-![Login 2](assets/login-2.png)  
-![Login 3](assets/login-3.png)  
+![Login 2](assets/login-2.png)
+![Login 3](assets/login-3.png)
 
 ## Configuration
 
@@ -191,19 +192,18 @@ If you encounter any issues or have suggestions:
    - Steps to reproduce
 
 ## Authors
-![HyperSec Logo](assets/hypersec-logo.png)  
-Paying it forward by the hoopy froods at HyperSec  
-https://hypersec.io
 
+![HyperSec Logo](assets/hypersec-logo.png)
+
+Paying it forward by the hoopy froods at HyperSec
+<https://hypersec.io>
 
 ## License
 
 MIT License - See LICENSE file for details.
 
+Originally inspired and based on [claude-usage-monitor](https://github.com/Gronsten/claude-usage-monitor) by Mark Campbell. If you find this useful, please consider [sponsoring the original author](https://github.com/sponsors/Gronsten).
+
 ---
 
 **Note**: This is an unofficial extension and is not affiliated with Anthropic or Claude.ai.
-
----
-
-<sub>Originally inspired and based on [claude-usage-monitor](https://github.com/Gronsten/claude-usage-monitor) by Mark Campbell. If you find this useful, please consider [sponsoring the original author](https://github.com/sponsors/Gronsten).</sub>
