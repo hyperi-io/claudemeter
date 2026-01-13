@@ -1,0 +1,17 @@
+Claudemeter
+===========
+
+Maintainer: HyperSec (https://github.com/hypersec-io)
+Repository: https://github.com/hypersec-io/claudemeter
+License: MIT
+
+---
+
+Original Work Attribution
+
+This project was originally based on claude-usage-monitor by Mark Campbell.
+Original Repository: https://github.com/Gronsten/claude-usage-monitor
+Original License: MIT
+
+If you find this extension useful, please consider supporting the original author:
+https://github.com/sponsors/Gronsten

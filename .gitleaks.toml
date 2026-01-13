@@ -1,0 +1,21 @@
+# Gitleaks configuration - exclude false positives
+# https://github.com/gitleaks/gitleaks
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Claudemeter false positives"
+
+# Paths to ignore
+paths = [
+    '''\.md$''',
+    '''package-lock\.json''',
+]
+
+# Regex patterns that are false positives (placeholders in docs)
+regexes = [
+    '''YOUR_.*_HERE''',
+    '''PLACEHOLDER''',
+    '''example\.com''',
+]

@@ -1,0 +1,174 @@
+{
+  "name": "claudemeter",
+  "displayName": "Claudemeter",
+  "description": "Monitor Claude.ai web usage and Claude Code token consumption in VS Code. Real-time tracking with per-gauge thresholds, headless browser operation, and project-specific isolation.",
+  "version": "1.2.1",
+  "publisher": "HyperSec",
+  "author": {
+    "name": "HyperSec",
+    "url": "https://hypersec.io"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hypersec-io/claudemeter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hypersec-io/claudemeter/issues"
+  },
+  "homepage": "https://github.com/hypersec-io/claudemeter#readme",
+  "license": "MIT",
+  "icon": "assets/claudemeter-logo-icon-128.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production && vsce package",
+    "publish": "node esbuild.js --production && vsce publish",
+    "clear-session": "node scripts/clear-session.js"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudemeter.fetchNow",
+        "title": "Fetch Claude Usage Now",
+        "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.openSettings",
+        "title": "Open Claude Settings Page",
+        "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.startNewSession",
+        "title": "Start New Claude Code Session",
+        "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.showDebug",
+        "title": "Show Debug Output",
+        "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.resetConnection",
+        "title": "Reset Browser Connection",
+        "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.clearSession",
+        "title": "Clear Browser Session (Re-login)",
+        "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.openBrowser",
+        "title": "Open Browser for Login",
+        "category": "Claudemeter"
+      }
+    ],
+    "configuration": {
+      "title": "Claudemeter",
+      "properties": {
+        "claudemeter.fetchOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically fetch usage data when VS Code starts"
+        },
+        "claudemeter.headless": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run browser in headless (hidden) mode. Browser will show automatically if login is needed."
+        },
+        "claudemeter.autoRefreshMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Auto-refresh interval in minutes for checking Claude.ai usage and session token data (1-60 minutes)"
+        },
+        "claudemeter.statusBar.displayMode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "minimal",
+            "compact"
+          ],
+          "default": "default",
+          "enumDescriptions": [
+            "Full display: Claude Se 13% ⏱ 11:59  Wk 11% ⏱ Fri 11  Tk 36%",
+            "Percentages only: Claude Se 13%  Wk 11%  Tk 36%",
+            "Single compact panel: Claude S-13% Wk-11% Tk-36%"
+          ],
+          "markdownDescription": "Status bar display mode:\n- **default**: Full display with reset times (separate panels)\n- **minimal**: Percentages only (separate panels)\n- **compact**: All metrics in a single panel"
+        },
+        "claudemeter.statusBar.showSonnet": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show Sonnet weekly usage in status bar (default/minimal modes only)"
+        },
+        "claudemeter.statusBar.showOpus": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show Opus weekly usage in status bar (Max plans only, default/minimal modes)"
+        },
+        "claudemeter.statusBar.showCredits": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show extra usage (spending cap) in status bar (default/minimal modes only)"
+        },
+        "claudemeter.thresholds.warning": {
+          "type": "number",
+          "default": 80,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Usage percentage to show warning (yellow) indicator"
+        },
+        "claudemeter.thresholds.error": {
+          "type": "number",
+          "default": 90,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Usage percentage to show error (red) indicator"
+        },
+        "claudemeter.thresholds.tokens.warning": {
+          "type": "number",
+          "default": 65,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Token usage warning threshold"
+        },
+        "claudemeter.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable debug logging to output channel (for troubleshooting)"
+        },
+        "claudemeter.tokenLimit": {
+          "type": "number",
+          "default": 200000,
+          "minimum": 1000,
+          "maximum": 2000000,
+          "description": "Context window token limit (200,000 default for Claude models)"
+        },
+        "claudemeter.tokenOnlyMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Token-only mode: Only track Claude Code tokens, skip Claude.ai web usage scraping entirely"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "puppeteer": "^24.15.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "esbuild": "^0.27.0"
+  }
+}

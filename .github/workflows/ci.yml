@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
+  workflow_dispatch:
+
+jobs:
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for AI artifact leakage
+        run: |
+          echo "Checking for AI artifact leakage..."
+          FAILED=false
+
+          for file in .gitmodules STATE.md TODO.md; do
+            if [ -f "$file" ]; then
+              echo "::error::$file detected - AI artifact should not be committed"
+              FAILED=true
+            fi
+          done
+
+          if [ -d ai/ ]; then
+            echo "::error::ai/ directory detected - private submodule content"
+            FAILED=true
+          fi
+
+          find . -type l 2>/dev/null | while read link; do
+            target=$(readlink "$link" 2>/dev/null || echo "")
+            if [[ "$target" == *"ai/"* ]]; then
+              echo "::error::$link symlinks to ai/ directory"
+              FAILED=true
+            fi
+          done
+
+          if grep -rE "hypersec-io/(ai|hs-ai|standards)" \
+             --include="*.yml" --include="*.yaml" --include="*.json" \
+             . 2>/dev/null | grep -v "^\.git"; then
+            echo "::error::Found references to private hypersec-io repos"
+            FAILED=true
+          fi
+
+          if [ "$FAILED" = true ]; then
+            echo "=========================================="
+            echo "SECURITY CHECK FAILED"
+            echo "=========================================="
+            exit 1
+          fi
+
+          echo "✓ AI artifact check passed"
+
+      - name: Install Gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz
+          chmod +x gitleaks
+
+      - name: Run Gitleaks
+        run: ./gitleaks detect --source . --verbose
+
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Check for build errors
+        run: |
+          if [ ! -f dist/extension.js ]; then
+            echo "::error::Build failed - dist/extension.js not found"
+            exit 1
+          fi
+          echo "✓ Build successful"
+
+      - name: Verify package.json
+        run: |
+          # Check required fields exist
+          node -e "
+            const pkg = require('./package.json');
+            const required = ['name', 'displayName', 'version', 'publisher', 'engines', 'main'];
+            const missing = required.filter(f => !pkg[f]);
+            if (missing.length) {
+              console.error('Missing required fields:', missing.join(', '));
+              process.exit(1);
+            }
+            console.log('✓ package.json valid');
+          "
+
+  package:
+    name: Package
+    needs: [security, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Package VSIX
+        run: npx @vscode/vsce package --no-dependencies
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claudemeter-vsix
+          path: '*.vsix'
+          retention-days: 7

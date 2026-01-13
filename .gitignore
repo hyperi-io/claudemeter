@@ -1,0 +1,72 @@
+# Env files
+.env
+
+# Dependencies
+node_modules/
+
+# VS Code testing
+.vscode-test/
+
+# Packaged extension files
+*.vsix
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# Build output
+out/
+dist/
+
+# Test coverage
+coverage/
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Session tracking data
+session-data.json
+
+# Claude Code local settings (entire directory - local dev only)
+.claude/
+
+# Test and development scripts
+test-*.js
+check-*.js
+examine-*.js
+RELEASE_NOTES_*.md
+
+# ===========================================
+# HyperSec AI Development Tooling (LOCAL ONLY)
+# ===========================================
+# CRITICAL: These paths must NEVER be committed.
+# The AI submodule references private HyperSec infrastructure.
+# This repo is public
+
+# AI corporate submodule directory if present (private repo)
+ai/
+
+# Git submodule config (exposes private repo URL)
+.gitmodules
+
+# AI assistant files (Claude, Cursor, Codex, Gemini)
+CLAUDE.md
+STATE.md
+TODO.md
+.cursorrules
+.cursor/
+CODEX.md
+.codex/
+GEMINI.md
+.gemini/
+SKILLS.md

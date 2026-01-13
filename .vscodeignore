@@ -1,0 +1,33 @@
+# Development files
+.vscode/**
+.vscode-test/**
+.gitignore
+.yarnrc
+vsc-extension-quickstart.md
+**/jsconfig.json
+**/*.map
+**/.eslintrc.json
+
+# Documentation (except required)
+**/*.md
+!README.md
+!CHANGELOG.md
+
+# Build files (bundled into dist/)
+esbuild.js
+src/**
+extension.js
+scripts/**
+
+# Dependencies (bundled)
+node_modules/**
+
+# Keep bundled output
+!dist/**
+
+# Project management
+.claude/**
+STATE.md
+TODO.md
+archive/**
+*.vsix
