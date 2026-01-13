@@ -3,7 +3,7 @@
   "displayName": "Claudemeter - Claude AI Usage Monitor",
   "description": "Complete Claude.ai account monitoring: session limits, weekly limits, token usage, reset times, and spending caps. Track all Claude Code and Claude Pro/Max plan quotas in real-time from your status bar.",
   "version": "1.0.1",
-  "publisher": "HyperSec",
+  "publisher": "hypersec",
   "author": {
     "name": "HyperSec",
     "url": "https://hypersec.io"
