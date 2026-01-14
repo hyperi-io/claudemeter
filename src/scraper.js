@@ -371,6 +371,9 @@ class ClaudeUsageScraper {
                     '--disable-infobars',
                     '--noerrdialogs',
                     '--hide-crash-restore-bubble',
+                    '--no-first-run',
+                    '--no-default-browser-check',
+                    '--disable-restore-session-state',
                     `--remote-debugging-port=${this.browserPort}`
                 ],
                 defaultViewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT }
@@ -812,6 +815,9 @@ class ClaudeUsageScraper {
                     '--disable-infobars',
                     '--noerrdialogs',
                     '--hide-crash-restore-bubble',
+                    '--no-first-run',
+                    '--no-default-browser-check',
+                    '--disable-restore-session-state',
                     `--remote-debugging-port=${this.browserPort}`
                 ],
                 defaultViewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT }
