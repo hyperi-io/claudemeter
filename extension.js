@@ -12,7 +12,7 @@ const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner } = requ
 const { ActivityMonitor } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
-const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel } = require('./src/utils');
+const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog } = require('./src/utils');
 
 let statusBarItem;
 let scraper;
@@ -23,6 +23,7 @@ let activityMonitor;
 let sessionTracker;
 let claudeDataLoader;
 let jsonlWatcher;
+let currentWorkspacePath = null;
 
 // Prevents auto-retry after user closes login browser
 let loginWasCancelled = false;
@@ -136,8 +137,18 @@ async function fetchUsage(isManualRetry = false) {
         } else if (error.message === 'LOGIN_CANCELLED') {
             console.log('Claudemeter: Login cancelled by user, falling back to token-only mode');
             return { webError: new Error('Login cancelled. Running in token-only mode. Click status bar to retry login.'), loginCancelled: true };
+        } else if (error.message === 'LOGIN_FAILED_SHARED') {
+            console.log('Claudemeter: Another instance failed login, falling back to token-only mode');
+            return { webError: new Error('Login failed in another window. Running in token-only mode.'), loginCancelled: true };
+        } else if (error.message === 'LOGIN_IN_PROGRESS') {
+            // Another instance is logging in - silently skip this cycle, will retry on next refresh
+            console.log('Claudemeter: Another instance is logging in, skipping this fetch');
+            return { webError: null, loginCancelled: false };
         } else if (error.message === 'LOGIN_TIMEOUT') {
             return { webError: new Error('Login timed out. Click status bar to retry.'), loginCancelled: false };
+        } else if (error.message.includes('Browser busy')) {
+            // Another instance is logging in - this is handled by the lock retry, but if it times out...
+            return { webError: new Error('Another Claudemeter is logging in. Please wait and retry.'), loginCancelled: false };
         } else {
             console.error('Web scrape failed:', error);
             return { webError: error, loginCancelled: false };
@@ -178,14 +189,20 @@ async function setupTokenMonitoring(context) {
         }
     });
 
-    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || null;
-    if (workspacePath) {
-        debugLog(`Workspace path: ${workspacePath}`);
+    currentWorkspacePath = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || null;
+
+    // Initialise file logger with workspace path for instance identification
+    initFileLogger(currentWorkspacePath);
+
+    if (currentWorkspacePath) {
+        debugLog(`Workspace path: ${currentWorkspacePath}`);
+        fileLog(`Extension activated for workspace: ${currentWorkspacePath}`);
     } else {
         debugLog('No workspace folder open - will use global token search');
+        fileLog('Extension activated (no workspace)');
     }
 
-    claudeDataLoader = new ClaudeDataLoader(workspacePath, debugLog);
+    claudeDataLoader = new ClaudeDataLoader(currentWorkspacePath, debugLog);
 
     const claudeDir = await claudeDataLoader.findClaudeDataDirectory();
     if (!claudeDir) {
@@ -202,7 +219,7 @@ async function setupTokenMonitoring(context) {
     const projectDir = await claudeDataLoader.getProjectDataDirectory();
 
     if (!projectDir) {
-        debugLog(`Project directory not found for workspace: ${workspacePath}`);
+        debugLog(`Project directory not found for workspace: ${currentWorkspacePath}`);
         debugLog(`   Expected: ${claudeDataLoader.projectDirName}`);
         debugLog('   Token monitoring will only work once Claude Code creates data for this project.');
         debugLog('   Will retry on next refresh cycle.');
