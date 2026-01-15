@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/hypersec-io/claudemeter/compare/v1.1.2...v1.1.3) (2026-01-15)
+
+
+### Bug Fixes
+
+* revert multi-session changes due to bugs discovered in regression testing ([3c2c3c2](https://github.com/hypersec-io/claudemeter/commit/3c2c3c2776fc6ce2421a4feef9954a99e8ce70a9))
+
 ## [1.1.2](https://github.com/hypersec-io/claudemeter/compare/v1.1.1...v1.1.2) (2026-01-15)
 
 
