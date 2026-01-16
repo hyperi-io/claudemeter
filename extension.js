@@ -12,7 +12,7 @@ const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner } = requ
 const { ActivityMonitor } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
-const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog } = require('./src/utils');
+const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
 
 let statusBarItem;
 let scraper;
@@ -107,13 +107,17 @@ async function fetchUsage(isManualRetry = false) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const tokenOnlyMode = config.get('tokenOnlyMode', false);
 
+    fileLog(`fetchUsage() called (isManualRetry=${isManualRetry}, tokenOnlyMode=${tokenOnlyMode})`);
+
     if (tokenOnlyMode) {
         console.log('Claudemeter: Token-only mode enabled, skipping web fetch');
+        fileLog('Skipping web fetch - tokenOnlyMode enabled');
         return { webError: null, loginCancelled: false };
     }
 
     if (!scraper) {
         scraper = new ClaudeUsageScraper();
+        fileLog('Created new ClaudeUsageScraper instance');
     }
 
     let loginCancelled = false;
@@ -121,17 +125,28 @@ async function fetchUsage(isManualRetry = false) {
     try {
         // Check session BEFORE launching browser to avoid headless->headed restart
         const hasSession = scraper.hasExistingSession();
+        fileLog(`hasExistingSession() = ${hasSession}`);
 
         if (hasSession) {
+            fileLog('Initializing scraper (headless)...');
             await scraper.initialize(false);
+            fileLog('Scraper initialized');
+        } else {
+            fileLog('No existing session - will open login browser');
         }
 
+        fileLog('Calling ensureLoggedIn()...');
         await scraper.ensureLoggedIn();
+        fileLog('ensureLoggedIn() completed');
+
+        fileLog('Calling fetchUsageData()...');
         usageData = await scraper.fetchUsageData();
+        fileLog('fetchUsageData() completed successfully');
         isFirstFetch = false;
 
         return { webError: null, loginCancelled: false };
     } catch (error) {
+        fileLog(`fetchUsage() error: ${error.message}`);
         if (error.message === 'CHROME_NOT_FOUND') {
             return { webError: new Error('Chromium-based browser required. Install Chrome, Chromium, Brave, or Edge to fetch Claude.ai usage stats.'), loginCancelled: false };
         } else if (error.message === 'LOGIN_CANCELLED') {
@@ -155,7 +170,9 @@ async function fetchUsage(isManualRetry = false) {
         }
     } finally {
         if (scraper) {
+            fileLog('Closing scraper...');
             await scraper.close();
+            fileLog('Scraper closed');
         }
     }
 }
@@ -292,11 +309,34 @@ async function updateTokensFromJsonl(silent = false) {
     }
 }
 
+// Auto-populate debugLogFile setting on first run
+async function initializeDebugLogPath() {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    const currentPath = config.get('debugLogFile', '');
+
+    if (!currentPath || !currentPath.trim()) {
+        const defaultPath = getDefaultDebugLogPath();
+        try {
+            await config.update('debugLogFile', defaultPath, vscode.ConfigurationTarget.Global);
+            console.log(`Claudemeter: Initialized debugLogFile to ${defaultPath}`);
+        } catch (error) {
+            console.error('Failed to initialize debugLogFile setting:', error);
+        }
+    }
+}
+
 async function activate(context) {
     // Enable debug mode in Extension Development Host (F5)
     if (context.extensionMode === vscode.ExtensionMode.Development) {
         setDevMode(true);
     }
+
+    // Auto-populate debugLogFile setting if empty
+    await initializeDebugLogPath();
+
+    // Log version on startup for debugging
+    const version = context.extension.packageJSON.version;
+    fileLog(`Claudemeter v${version} starting`);
 
     statusBarItem = createStatusBarItem(context);
 

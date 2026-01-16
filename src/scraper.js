@@ -10,7 +10,6 @@ const puppeteer = require('puppeteer');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execSync } = require('child_process');
 const vscode = require('vscode');
 
 const lockfile = require('proper-lockfile');
@@ -30,11 +29,11 @@ const {
 
 // Browser lock configuration
 // Stale after 6 minutes (login timeout is 5 min, add buffer)
-// With the logging_in state check, other instances won't wait - they skip
+// Poll every 1 second for up to 90 seconds - covers typical fetch (30-45s) with buffer
 const BROWSER_LOCK_OPTIONS = {
     stale: 360000,
     retries: {
-        retries: 3,
+        retries: 90,
         factor: 1,
         minTimeout: 1000,
         maxTimeout: 1000
@@ -149,6 +148,12 @@ class ClaudeUsageScraper {
     // Acquire exclusive lock for browser operations (login, headed browser launch)
     // Other instances wait until lock is released or times out
     async acquireBrowserLock() {
+        // Skip if we already hold the lock
+        if (this.releaseBrowserLock) {
+            fileLog('Already holding browser lock, skipping acquire');
+            return true;
+        }
+
         const debug = isDebugEnabled();
         const lockFile = PATHS.BROWSER_LOCK_FILE;
 
@@ -178,7 +183,7 @@ class ClaudeUsageScraper {
                 getDebugChannel().appendLine(`Failed to acquire browser lock: ${error.message}`);
             }
             fileLog(`Failed to acquire browser lock: ${error.message}`);
-            throw new Error(`Browser busy (another Claudemeter instance is logging in). Please wait and retry.`);
+            throw new Error(`Browser busy (another Claudemeter instance is using the browser). Please wait and retry.`);
         }
     }
 
@@ -466,6 +471,14 @@ class ClaudeUsageScraper {
         const userHeadless = config.get('headless', true);
         const headless = forceHeaded ? false : userHeadless;
 
+        // Acquire lock before launching browser - only one instance can use the userDataDir at a time
+        await this.acquireBrowserLock();
+        fileLog('Browser lock acquired for initialize()');
+
+        // Small delay after acquiring lock to ensure previous browser fully terminated
+        // This prevents race conditions with userDataDir cleanup
+        await sleep(1000);
+
         try {
             const chromePath = this.findChrome();
 
@@ -479,6 +492,7 @@ class ClaudeUsageScraper {
                 headless: headless ? 'new' : false,
                 userDataDir: this.sessionDir,
                 executablePath: chromePath,
+                timeout: 60000,
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -511,6 +525,8 @@ class ClaudeUsageScraper {
 
             console.log('Successfully launched new browser');
         } catch (error) {
+            // Release lock on failure
+            await this.releaseBrowserLockIfHeld();
             if (error.message.includes('already running')) {
                 throw new Error('Browser session is locked by another process. Please close all Chrome/Edge windows and try again, or restart VSCode.');
             }
@@ -893,18 +909,44 @@ class ClaudeUsageScraper {
     }
 
     async close() {
-        if (this.browser) {
-            if (this.isConnectedBrowser) {
-                await this.browser.disconnect();
-                console.log('Disconnected from shared browser');
-            } else {
-                await this.browser.close();
-                console.log('Closed browser instance');
+        try {
+            if (this.browser) {
+                if (this.isConnectedBrowser) {
+                    await this.browser.disconnect();
+                    console.log('Disconnected from shared browser');
+                } else {
+                    // Try graceful close with timeout, then force kill if needed
+                    const browserProcess = this.browser.process();
+                    const closePromise = this.browser.close();
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Browser close timeout')), 5000)
+                    );
+
+                    try {
+                        await Promise.race([closePromise, timeoutPromise]);
+                        console.log('Closed browser instance');
+                    } catch (e) {
+                        // Force kill if graceful close times out
+                        fileLog(`Browser close timed out, force killing`);
+                        if (browserProcess) {
+                            try {
+                                browserProcess.kill('SIGKILL');
+                            } catch (killErr) {
+                                // Process may have already exited
+                            }
+                        }
+                        // Wait for OS to fully release userDataDir resources
+                        await sleep(1000);
+                    }
+                }
+                this.browser = null;
+                this.page = null;
+                this.isInitialized = false;
+                this.isConnectedBrowser = false;
             }
-            this.browser = null;
-            this.page = null;
-            this.isInitialized = false;
-            this.isConnectedBrowser = false;
+        } finally {
+            // Always release the lock when closing
+            await this.releaseBrowserLockIfHeld();
         }
     }
 

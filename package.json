@@ -201,7 +201,7 @@
         "claudemeter.debugLogFile": {
           "type": "string",
           "default": "",
-          "description": "Custom path for debug log file. Leave empty to use default location (~/.config/claudemeter/debug.log on Linux/macOS)"
+          "description": "Path to debug log file. Auto-populated on first run. Supports ~ for home directory."
         },
         "claudemeter.debugLogMaxSizeKB": {
           "type": "number",

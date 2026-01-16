@@ -68,7 +68,12 @@ class FileLogger {
         const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
         const customPath = config.get('debugLogFile', '');
         if (customPath && customPath.trim()) {
-            return customPath.trim();
+            // Expand ~ to home directory
+            let expandedPath = customPath.trim();
+            if (expandedPath.startsWith('~/')) {
+                expandedPath = path.join(os.homedir(), expandedPath.slice(2));
+            }
+            return expandedPath;
         }
         return path.join(PATHS.CONFIG_DIR, 'debug.log');
     }
@@ -165,9 +170,13 @@ function fileLog(message) {
     getFileLogger().log(message);
 }
 
+function getDefaultDebugLogPath() {
+    return path.join(PATHS.CONFIG_DIR, 'debug.log');
+}
+
 // Timeouts in milliseconds
 const TIMEOUTS = {
-    PAGE_LOAD: 30000,
+    PAGE_LOAD: 45000,
     LOGIN_WAIT: 300000,
     LOGIN_POLL: 2000,
     API_RETRY_DELAY: 2000,
@@ -238,13 +247,15 @@ function calculateResetClockTime(resetTime, timeFormat = { hour: 'numeric', minu
         const now = new Date();
         const resetDate = new Date(now.getTime() + totalMinutes * 60 * 1000);
 
-        const timeStr = resetDate.toLocaleTimeString(undefined, timeFormat);
-
         if (totalMinutes >= 24 * 60) {
+            // Multi-day: show "Fri 15:20" (day name + time) for clarity
             const dayName = resetDate.toLocaleDateString(undefined, { weekday: 'short' });
+            const timeStr = resetDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
             return `${dayName} ${timeStr}`;
         }
 
+        // Within 24 hours: show time
+        const timeStr = resetDate.toLocaleTimeString(undefined, timeFormat);
         return timeStr;
     } catch (error) {
         return '??:??';
@@ -331,5 +342,6 @@ module.exports = {
     formatCompact,
     initFileLogger,
     getFileLogger,
-    fileLog
+    fileLog,
+    getDefaultDebugLogPath
 };
