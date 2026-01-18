@@ -322,60 +322,73 @@ class ClaudeDataLoader {
                     cacheCreationTokens: 0,
                     cacheReadTokens: 0,
                     messageCount: 0,
-                    isActive: false
+                    isActive: false,
+                    activeSessionCount: 0
                 };
             }
 
-            const mostRecentFile = recentFiles[0].path;
-            this.log(`Reading: ${path.basename(mostRecentFile)}`);
+            // Scan ALL recent session files and track the highest cache_read value
+            // This handles multiple Claude Code sessions in the same project
+            let highestCacheRead = 0;
+            let highestCacheCreation = 0;
+            let highestMessageCount = 0;
+            let highestSessionFile = null;
+            let activeSessionCount = 0;
 
-            const content = await fs.readFile(mostRecentFile, 'utf-8');
-            const lines = content.trim().split('\n');
-            this.log(`File has ${lines.length} lines`);
-
-            let sessionTokens = 0;
-            let cacheCreation = 0;
-            let cacheRead = 0;
-            let messageCount = 0;
-
-            // Parse from end to find last assistant message with cache data
-            for (let i = lines.length - 1; i >= 0; i--) {
+            for (const fileInfo of recentFiles) {
                 try {
-                    const entry = JSON.parse(lines[i]);
+                    const content = await fs.readFile(fileInfo.path, 'utf-8');
+                    const lines = content.trim().split('\n');
 
-                    if (entry.type === 'assistant' && entry.message?.usage) {
-                        const usage = entry.message.usage;
-                        const entryCache = (usage.cache_creation_input_tokens || 0) +
-                                          (usage.cache_read_input_tokens || 0);
+                    // Parse from end to find last assistant message with cache data
+                    for (let i = lines.length - 1; i >= 0; i--) {
+                        try {
+                            const entry = JSON.parse(lines[i]);
 
-                        if (entryCache > 0) {
-                            cacheCreation = usage.cache_creation_input_tokens || 0;
-                            cacheRead = usage.cache_read_input_tokens || 0;
-                            sessionTokens = cacheRead;
-                            messageCount = lines.length;
+                            if (entry.type === 'assistant' && entry.message?.usage) {
+                                const usage = entry.message.usage;
+                                const cacheRead = usage.cache_read_input_tokens || 0;
 
-                            this.log(`Found session usage from last assistant message:`);
-                            this.log(`   Cache creation: ${cacheCreation.toLocaleString()}`);
-                            this.log(`   Cache read: ${cacheRead.toLocaleString()}`);
-                            this.log(`   Session total (cache_read): ${sessionTokens.toLocaleString()} tokens`);
-                            this.log(`   Percentage: ${((sessionTokens / getTokenLimit()) * 100).toFixed(2)}%`);
+                                if (cacheRead > 0) {
+                                    activeSessionCount++;
 
-                            break;
+                                    if (cacheRead > highestCacheRead) {
+                                        highestCacheRead = cacheRead;
+                                        highestCacheCreation = usage.cache_creation_input_tokens || 0;
+                                        highestMessageCount = lines.length;
+                                        highestSessionFile = path.basename(fileInfo.path);
+                                    }
+                                    break;
+                                }
+                            }
+                        } catch (parseError) {
+                            continue;
                         }
                     }
-                } catch (parseError) {
+                } catch (readError) {
+                    this.log(`Error reading ${path.basename(fileInfo.path)}: ${readError.message}`);
                     continue;
                 }
             }
 
+            if (highestCacheRead > 0) {
+                this.log(`Found ${activeSessionCount} active session(s), showing highest usage:`);
+                this.log(`   File: ${highestSessionFile}`);
+                this.log(`   Cache creation: ${highestCacheCreation.toLocaleString()}`);
+                this.log(`   Cache read: ${highestCacheRead.toLocaleString()}`);
+                this.log(`   Session total (cache_read): ${highestCacheRead.toLocaleString()} tokens`);
+                this.log(`   Percentage: ${((highestCacheRead / getTokenLimit()) * 100).toFixed(2)}%`);
+            }
+
             return {
-                totalTokens: sessionTokens,
+                totalTokens: highestCacheRead,
                 inputTokens: 0,
                 outputTokens: 0,
-                cacheCreationTokens: cacheCreation,
-                cacheReadTokens: cacheRead,
-                messageCount: messageCount,
-                isActive: sessionTokens > 0
+                cacheCreationTokens: highestCacheCreation,
+                cacheReadTokens: highestCacheRead,
+                messageCount: highestMessageCount,
+                isActive: highestCacheRead > 0,
+                activeSessionCount: activeSessionCount
             };
 
         } catch (error) {
@@ -387,7 +400,8 @@ class ClaudeDataLoader {
                 cacheCreationTokens: 0,
                 cacheReadTokens: 0,
                 messageCount: 0,
-                isActive: false
+                isActive: false,
+                activeSessionCount: 0
             };
         }
     }

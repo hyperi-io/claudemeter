@@ -10,20 +10,79 @@ const puppeteer = require('puppeteer');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execSync } = require('child_process');
 const vscode = require('vscode');
 
+const lockfile = require('proper-lockfile');
 const { ClaudeAuth } = require('./auth');
 const {
     CONFIG_NAMESPACE,
+    PATHS,
     TIMEOUTS,
     VIEWPORT,
     CLAUDE_URLS,
     isDebugEnabled,
     getDebugChannel,
     setDevMode,
-    sleep
+    sleep,
+    fileLog
 } = require('./utils');
+
+// Browser lock configuration
+// Stale after 6 minutes (login timeout is 5 min, add buffer)
+// Poll every 1 second for up to 90 seconds - covers typical fetch (30-45s) with buffer
+const BROWSER_LOCK_OPTIONS = {
+    stale: 360000,
+    retries: {
+        retries: 90,
+        factor: 1,
+        minTimeout: 1000,
+        maxTimeout: 1000
+    },
+    onCompromised: (err) => {
+        console.warn('Claudemeter: Browser lock was compromised:', err.message);
+    }
+};
+
+// Shared browser state across all VS Code windows
+// States: 'ready' (session valid), 'login_failed' (all go token-only), 'logging_in' (wait)
+const BrowserState = {
+    read() {
+        try {
+            if (fs.existsSync(PATHS.BROWSER_STATE_FILE)) {
+                const data = JSON.parse(fs.readFileSync(PATHS.BROWSER_STATE_FILE, 'utf-8'));
+                // State expires after 5 minutes to allow retry
+                if (data.timestamp && Date.now() - data.timestamp < 300000) {
+                    return data;
+                }
+            }
+        } catch (e) { /* ignore */ }
+        return { state: 'unknown', timestamp: 0 };
+    },
+
+    write(state, reason = null) {
+        try {
+            const dir = path.dirname(PATHS.BROWSER_STATE_FILE);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(PATHS.BROWSER_STATE_FILE, JSON.stringify({
+                state,
+                reason,
+                timestamp: Date.now()
+            }));
+        } catch (e) {
+            console.warn('Failed to write browser state:', e.message);
+        }
+    },
+
+    clear() {
+        try {
+            if (fs.existsSync(PATHS.BROWSER_STATE_FILE)) {
+                fs.unlinkSync(PATHS.BROWSER_STATE_FILE);
+            }
+        } catch (e) { /* ignore */ }
+    }
+};
 const {
     USAGE_API_SCHEMA,
     API_ENDPOINTS,
@@ -79,10 +138,73 @@ class ClaudeUsageScraper {
         this.capturedEndpoints = [];
 
         this.auth = new ClaudeAuth();
+        this.releaseBrowserLock = null;
     }
 
     get sessionDir() {
         return this.auth.getSessionDir();
+    }
+
+    // Acquire exclusive lock for browser operations (login, headed browser launch)
+    // Other instances wait until lock is released or times out
+    async acquireBrowserLock() {
+        // Skip if we already hold the lock
+        if (this.releaseBrowserLock) {
+            fileLog('Already holding browser lock, skipping acquire');
+            return true;
+        }
+
+        const debug = isDebugEnabled();
+        const lockFile = PATHS.BROWSER_LOCK_FILE;
+
+        // Ensure lock file exists (proper-lockfile requires it)
+        if (!fs.existsSync(lockFile)) {
+            const dir = path.dirname(lockFile);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(lockFile, '');
+        }
+
+        if (debug) {
+            getDebugChannel().appendLine('Acquiring browser lock...');
+        }
+        fileLog('Attempting to acquire browser lock...');
+
+        try {
+            this.releaseBrowserLock = await lockfile.lock(lockFile, BROWSER_LOCK_OPTIONS);
+            if (debug) {
+                getDebugChannel().appendLine('Browser lock acquired');
+            }
+            fileLog('Browser lock acquired');
+            return true;
+        } catch (error) {
+            if (debug) {
+                getDebugChannel().appendLine(`Failed to acquire browser lock: ${error.message}`);
+            }
+            fileLog(`Failed to acquire browser lock: ${error.message}`);
+            throw new Error(`Browser busy (another Claudemeter instance is using the browser). Please wait and retry.`);
+        }
+    }
+
+    async releaseBrowserLockIfHeld() {
+        if (this.releaseBrowserLock) {
+            const debug = isDebugEnabled();
+            try {
+                await this.releaseBrowserLock();
+                this.releaseBrowserLock = null;
+                if (debug) {
+                    getDebugChannel().appendLine('Browser lock released');
+                }
+                fileLog('Browser lock released');
+            } catch (error) {
+                // Lock may have been compromised or already released
+                if (debug) {
+                    getDebugChannel().appendLine(`Error releasing browser lock: ${error.message}`);
+                }
+                fileLog(`Error releasing browser lock: ${error.message}`);
+            }
+        }
     }
 
     async findAvailablePort() {
@@ -349,6 +471,14 @@ class ClaudeUsageScraper {
         const userHeadless = config.get('headless', true);
         const headless = forceHeaded ? false : userHeadless;
 
+        // Acquire lock before launching browser - only one instance can use the userDataDir at a time
+        await this.acquireBrowserLock();
+        fileLog('Browser lock acquired for initialize()');
+
+        // Small delay after acquiring lock to ensure previous browser fully terminated
+        // This prevents race conditions with userDataDir cleanup
+        await sleep(1000);
+
         try {
             const chromePath = this.findChrome();
 
@@ -362,6 +492,7 @@ class ClaudeUsageScraper {
                 headless: headless ? 'new' : false,
                 userDataDir: this.sessionDir,
                 executablePath: chromePath,
+                timeout: 60000,
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -371,6 +502,8 @@ class ClaudeUsageScraper {
                     '--disable-infobars',
                     '--noerrdialogs',
                     '--hide-crash-restore-bubble',
+                    '--no-first-run',
+                    '--no-default-browser-check',
                     `--remote-debugging-port=${this.browserPort}`
                 ],
                 defaultViewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT }
@@ -392,6 +525,8 @@ class ClaudeUsageScraper {
 
             console.log('Successfully launched new browser');
         } catch (error) {
+            // Release lock on failure
+            await this.releaseBrowserLockIfHeld();
             if (error.message.includes('already running')) {
                 throw new Error('Browser session is locked by another process. Please close all Chrome/Edge windows and try again, or restart VSCode.');
             }
@@ -404,6 +539,24 @@ class ClaudeUsageScraper {
         const debugChannel = getDebugChannel();
 
         debugChannel.appendLine(`\n=== AUTH FLOW (${new Date().toLocaleString()}) ===`);
+
+        // Check shared state first - coordinate with other instances
+        const sharedState = BrowserState.read();
+        debugChannel.appendLine(`Auth: Shared state: ${sharedState.state} (reason: ${sharedState.reason || 'none'})`);
+
+        if (sharedState.state === 'logging_in') {
+            // Another instance is currently logging in - skip this fetch cycle
+            // Don't wait/block, just bail and try on next auto-refresh
+            debugChannel.appendLine('Auth: Another instance is logging in, skipping this fetch cycle');
+            fileLog('Skipping fetch - another instance is logging in');
+            throw new Error('LOGIN_IN_PROGRESS');
+        }
+
+        if (sharedState.state === 'login_failed') {
+            debugChannel.appendLine('Auth: Another instance recently failed login, skipping to token-only mode');
+            fileLog('Skipping fetch - login failed in another instance');
+            throw new Error('LOGIN_FAILED_SHARED');
+        }
 
         try {
             const hasSession = this.auth.hasExistingSession();
@@ -423,6 +576,8 @@ class ClaudeUsageScraper {
                 if (debug) {
                     getDebugChannel().appendLine('Auth: Session valid (fast path)');
                 }
+                // Clear any previous failed state - session is now valid
+                BrowserState.clear();
                 await this.page.goto(CLAUDE_URLS.USAGE, {
                     waitUntil: 'networkidle2',
                     timeout: TIMEOUTS.PAGE_LOAD
@@ -447,48 +602,75 @@ class ClaudeUsageScraper {
     async openLoginBrowser() {
         const debugChannel = getDebugChannel();
 
-        const browserResult = await this.forceOpenBrowser();
-        if (!browserResult.success) {
-            throw new Error(browserResult.message);
-        }
+        // Acquire lock before opening headed browser - other instances will wait
+        await this.acquireBrowserLock();
 
-        const loginResult = await vscode.window.withProgress(
-            {
-                location: vscode.ProgressLocation.Notification,
-                title: 'Login required. Please log in to Claude.ai in the browser window...',
-                cancellable: false
-            },
-            async () => {
-                return await this.auth.waitForLogin();
+        // Mark that we're attempting login - other instances will see this
+        BrowserState.write('logging_in');
+        fileLog('Starting login flow - marked state as logging_in');
+
+        try {
+            const browserResult = await this.forceOpenBrowser();
+            if (!browserResult.success) {
+                BrowserState.write('login_failed', 'browser_launch_failed');
+                throw new Error(browserResult.message);
             }
-        );
 
-        if (loginResult.success) {
-            vscode.window.withProgress(
+            const loginResult = await vscode.window.withProgress(
                 {
                     location: vscode.ProgressLocation.Notification,
-                    title: '✓ Login successful! Session saved.',
+                    title: 'Login required. Please log in to Claude.ai in the browser window...',
                     cancellable: false
                 },
-                () => new Promise(resolve => setTimeout(resolve, 3000))
+                async () => {
+                    return await this.auth.waitForLogin();
+                }
             );
 
-            await this.close();
-            await this.initialize(false);
+            if (loginResult.success) {
+                // Clear failed state - all instances can now use the session
+                BrowserState.clear();
+                fileLog('Login successful - cleared shared state');
 
-            await this.page.goto(CLAUDE_URLS.USAGE, {
-                waitUntil: 'networkidle2',
-                timeout: TIMEOUTS.PAGE_LOAD
-            });
+                vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: '✓ Login successful! Session saved.',
+                        cancellable: false
+                    },
+                    () => new Promise(resolve => setTimeout(resolve, 3000))
+                );
 
-            debugChannel.appendLine('Auth: Login successful, switched to headless mode');
-        } else if (loginResult.cancelled) {
-            debugChannel.appendLine('Auth: Login cancelled by user');
-            await this.close();
-            throw new Error('LOGIN_CANCELLED');
-        } else {
-            await this.close();
-            throw new Error('LOGIN_TIMEOUT');
+                await this.close();
+                await this.initialize(false);
+
+                await this.page.goto(CLAUDE_URLS.USAGE, {
+                    waitUntil: 'networkidle2',
+                    timeout: TIMEOUTS.PAGE_LOAD
+                });
+
+                debugChannel.appendLine('Auth: Login successful, switched to headless mode');
+            } else if (loginResult.cancelled) {
+                debugChannel.appendLine('Auth: Login cancelled by user');
+                BrowserState.write('login_failed', 'user_cancelled');
+                fileLog('Login cancelled by user');
+                await this.close();
+                throw new Error('LOGIN_CANCELLED');
+            } else {
+                BrowserState.write('login_failed', 'timeout');
+                fileLog('Login timed out');
+                await this.close();
+                throw new Error('LOGIN_TIMEOUT');
+            }
+        } catch (error) {
+            // Ensure failed state is written for any error
+            if (!error.message.includes('LOGIN_CANCELLED') && !error.message.includes('LOGIN_TIMEOUT')) {
+                BrowserState.write('login_failed', error.message);
+            }
+            throw error;
+        } finally {
+            // Always release lock after login attempt (success or failure)
+            await this.releaseBrowserLockIfHeld();
         }
     }
 
@@ -727,18 +909,44 @@ class ClaudeUsageScraper {
     }
 
     async close() {
-        if (this.browser) {
-            if (this.isConnectedBrowser) {
-                await this.browser.disconnect();
-                console.log('Disconnected from shared browser');
-            } else {
-                await this.browser.close();
-                console.log('Closed browser instance');
+        try {
+            if (this.browser) {
+                if (this.isConnectedBrowser) {
+                    await this.browser.disconnect();
+                    console.log('Disconnected from shared browser');
+                } else {
+                    // Try graceful close with timeout, then force kill if needed
+                    const browserProcess = this.browser.process();
+                    const closePromise = this.browser.close();
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Browser close timeout')), 5000)
+                    );
+
+                    try {
+                        await Promise.race([closePromise, timeoutPromise]);
+                        console.log('Closed browser instance');
+                    } catch (e) {
+                        // Force kill if graceful close times out
+                        fileLog(`Browser close timed out, force killing`);
+                        if (browserProcess) {
+                            try {
+                                browserProcess.kill('SIGKILL');
+                            } catch (killErr) {
+                                // Process may have already exited
+                            }
+                        }
+                        // Wait for OS to fully release userDataDir resources
+                        await sleep(1000);
+                    }
+                }
+                this.browser = null;
+                this.page = null;
+                this.isInitialized = false;
+                this.isConnectedBrowser = false;
             }
-            this.browser = null;
-            this.page = null;
-            this.isInitialized = false;
-            this.isConnectedBrowser = false;
+        } finally {
+            // Always release the lock when closing
+            await this.releaseBrowserLockIfHeld();
         }
     }
 
@@ -812,6 +1020,8 @@ class ClaudeUsageScraper {
                     '--disable-infobars',
                     '--noerrdialogs',
                     '--hide-crash-restore-bubble',
+                    '--no-first-run',
+                    '--no-default-browser-check',
                     `--remote-debugging-port=${this.browserPort}`
                 ],
                 defaultViewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT }
@@ -877,6 +1087,7 @@ class ClaudeUsageScraper {
 
 module.exports = {
     ClaudeUsageScraper,
+    BrowserState,
     getDebugChannel,
     setDevMode
 };

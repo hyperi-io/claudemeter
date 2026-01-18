@@ -9,6 +9,8 @@
 const vscode = require('vscode');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
+const crypto = require('crypto');
 
 const CONFIG_NAMESPACE = 'claudemeter';
 
@@ -41,6 +43,8 @@ const CONFIG_DIR = getConfigDir();
 const PATHS = {
     CONFIG_DIR: CONFIG_DIR,
     BROWSER_SESSION_DIR: path.join(CONFIG_DIR, 'browser-session'),
+    BROWSER_LOCK_FILE: path.join(CONFIG_DIR, 'browser.lock'),
+    BROWSER_STATE_FILE: path.join(CONFIG_DIR, 'browser-state.json'),
     SESSION_DATA_FILE: path.join(CONFIG_DIR, 'session-data.json'),
     USAGE_HISTORY_FILE: path.join(CONFIG_DIR, 'usage-history.json')
 };
@@ -48,9 +52,131 @@ const PATHS = {
 // Claude Code default context window (tokens)
 const DEFAULT_TOKEN_LIMIT = 200000;
 
+// File-based debug logging with instance identification
+// Each instance identified by short hash + project name for easy differentiation
+let fileLoggerInstance = null;
+
+class FileLogger {
+    constructor(workspacePath = null) {
+        this.workspacePath = workspacePath;
+        this.instanceId = this.generateInstanceId(workspacePath);
+        this.logFile = this.getLogFilePath();
+        this.maxSizeBytes = this.getMaxSizeBytes();
+    }
+
+    getLogFilePath() {
+        const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+        const customPath = config.get('debugLogFile', '');
+        if (customPath && customPath.trim()) {
+            // Expand ~ to home directory
+            let expandedPath = customPath.trim();
+            if (expandedPath.startsWith('~/')) {
+                expandedPath = path.join(os.homedir(), expandedPath.slice(2));
+            }
+            return expandedPath;
+        }
+        return path.join(PATHS.CONFIG_DIR, 'debug.log');
+    }
+
+    getMaxSizeBytes() {
+        const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+        const maxSizeKB = config.get('debugLogMaxSizeKB', 256);
+        return Math.max(64, Math.min(2048, maxSizeKB)) * 1024;
+    }
+
+    generateInstanceId(workspacePath) {
+        if (!workspacePath) {
+            return '[global]';
+        }
+        // Short hash (8 chars) + project name for identification
+        const hash = crypto.createHash('sha256').update(workspacePath).digest('hex').slice(0, 8);
+        const projectName = path.basename(workspacePath);
+        return `[${hash}:${projectName}]`;
+    }
+
+    trimIfNeeded() {
+        try {
+            if (!fs.existsSync(this.logFile)) return;
+
+            const stats = fs.statSync(this.logFile);
+            if (stats.size >= this.maxSizeBytes) {
+                // FIFO trim: keep newest ~75% of max size, discard oldest entries
+                const content = fs.readFileSync(this.logFile, 'utf-8');
+                const lines = content.split('\n');
+                const targetSize = Math.floor(this.maxSizeBytes * 0.75);
+
+                // Find cut point to keep ~targetSize bytes from the end
+                let keptSize = 0;
+                let cutIndex = lines.length;
+                for (let i = lines.length - 1; i >= 0; i--) {
+                    keptSize += lines[i].length + 1; // +1 for newline
+                    if (keptSize >= targetSize) {
+                        cutIndex = i;
+                        break;
+                    }
+                }
+
+                const trimmedContent = lines.slice(cutIndex).join('\n');
+                fs.writeFileSync(this.logFile, trimmedContent);
+            }
+        } catch (e) {
+            // Ignore trim errors
+        }
+    }
+
+    log(message) {
+        if (!isDebugEnabled()) return;
+
+        try {
+            const dir = path.dirname(this.logFile);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+
+            this.trimIfNeeded();
+
+            const timestamp = new Date().toISOString();
+            const line = `${timestamp} ${this.instanceId} ${message}\n`;
+            fs.appendFileSync(this.logFile, line);
+        } catch (e) {
+            // Silently ignore write errors to avoid blocking
+        }
+    }
+
+    clear() {
+        try {
+            if (fs.existsSync(this.logFile)) {
+                fs.unlinkSync(this.logFile);
+            }
+        } catch (e) {
+            // Ignore
+        }
+    }
+}
+
+function initFileLogger(workspacePath) {
+    fileLoggerInstance = new FileLogger(workspacePath);
+    return fileLoggerInstance;
+}
+
+function getFileLogger() {
+    if (!fileLoggerInstance) {
+        fileLoggerInstance = new FileLogger(null);
+    }
+    return fileLoggerInstance;
+}
+
+function fileLog(message) {
+    getFileLogger().log(message);
+}
+
+function getDefaultDebugLogPath() {
+    return path.join(PATHS.CONFIG_DIR, 'debug.log');
+}
+
 // Timeouts in milliseconds
 const TIMEOUTS = {
-    PAGE_LOAD: 30000,
+    PAGE_LOAD: 45000,
     LOGIN_WAIT: 300000,
     LOGIN_POLL: 2000,
     API_RETRY_DELAY: 2000,
@@ -121,13 +247,15 @@ function calculateResetClockTime(resetTime, timeFormat = { hour: 'numeric', minu
         const now = new Date();
         const resetDate = new Date(now.getTime() + totalMinutes * 60 * 1000);
 
-        const timeStr = resetDate.toLocaleTimeString(undefined, timeFormat);
-
         if (totalMinutes >= 24 * 60) {
+            // Multi-day: show "Fri 15:20" (day name + time) for clarity
             const dayName = resetDate.toLocaleDateString(undefined, { weekday: 'short' });
+            const timeStr = resetDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
             return `${dayName} ${timeStr}`;
         }
 
+        // Within 24 hours: show time
+        const timeStr = resetDate.toLocaleTimeString(undefined, timeFormat);
         return timeStr;
     } catch (error) {
         return '??:??';
@@ -211,5 +339,9 @@ module.exports = {
     calculateResetClockTime,
     calculateResetClockTimeExpanded,
     getCurrencySymbol,
-    formatCompact
+    formatCompact,
+    initFileLogger,
+    getFileLogger,
+    fileLog,
+    getDefaultDebugLogPath
 };

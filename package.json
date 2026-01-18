@@ -2,7 +2,7 @@
   "name": "claudemeter",
   "displayName": "Claudemeter - Claude AI Usage Monitor",
   "description": "Complete Claude.ai account monitoring: session limits, weekly limits, token usage, reset times, and spending caps. Track all Claude Code and Claude Pro/Max plan quotas in real-time from your status bar.",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "publisher": "hypersec",
   "author": {
     "name": "HyperSec",
@@ -197,15 +197,29 @@
           "type": "boolean",
           "default": false,
           "description": "Token-only mode: Only track Claude Code tokens, skip Claude.ai web usage scraping entirely"
+        },
+        "claudemeter.debugLogFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to debug log file. Auto-populated on first run. Supports ~ for home directory."
+        },
+        "claudemeter.debugLogMaxSizeKB": {
+          "type": "number",
+          "default": 256,
+          "minimum": 64,
+          "maximum": 2048,
+          "description": "Maximum debug log file size in KB. Oldest entries are trimmed when exceeded (64-2048 KB, default 256 KB)"
         }
       }
     }
   },
   "dependencies": {
+    "proper-lockfile": "^4.1.2",
     "puppeteer": "^24.15.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.27.0"
   }
 }
