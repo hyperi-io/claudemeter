@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/hypersec-io/claudemeter/compare/v1.1.4...v1.2.0) (2026-01-29)
+
+
+### Features
+
+* add Claude service status indicator ([194f605](https://github.com/hypersec-io/claudemeter/commit/194f6054d5ee8e6b39d83303f866d764a9eaf506))
+
 ## [1.1.4](https://github.com/hypersec-io/claudemeter/compare/v1.1.3...v1.1.4) (2026-01-18)
 
 
