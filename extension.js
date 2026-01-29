@@ -8,7 +8,7 @@
 
 const vscode = require('vscode');
 const { ClaudeUsageScraper } = require('./src/scraper');
-const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner } = require('./src/statusBar');
+const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
 const { ActivityMonitor } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
@@ -19,6 +19,7 @@ let scraper;
 let usageData = null;
 let isFirstFetch = true;
 let autoRefreshTimer;
+let serviceStatusTimer;
 let activityMonitor;
 let sessionTracker;
 let claudeDataLoader;
@@ -340,6 +341,16 @@ async function activate(context) {
 
     statusBarItem = createStatusBarItem(context);
 
+    // Fetch service status immediately and set up periodic refresh (every 5 minutes)
+    refreshServiceStatus().catch(err => {
+        console.log('Claudemeter: Initial service status fetch failed:', err.message);
+    });
+    serviceStatusTimer = setInterval(() => {
+        refreshServiceStatus().catch(err => {
+            console.log('Claudemeter: Service status refresh failed:', err.message);
+        });
+    }, 5 * 60 * 1000);  // 5 minutes
+
     activityMonitor = new ActivityMonitor();
     activityMonitor.startMonitoring(context);
 
@@ -552,6 +563,11 @@ async function deactivate() {
     if (autoRefreshTimer) {
         clearInterval(autoRefreshTimer);
         autoRefreshTimer = null;
+    }
+
+    if (serviceStatusTimer) {
+        clearInterval(serviceStatusTimer);
+        serviceStatusTimer = null;
     }
 
     if (scraper) {

@@ -8,8 +8,122 @@
 
 const vscode = require('vscode');
 const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, calculateResetClockTimeExpanded, getCurrencySymbol } = require('./utils');
+const { fetchServiceStatus, getStatusDisplay, formatStatusTime, STATUS_PAGE_URL } = require('./serviceStatus');
 
 const LABEL_TEXT = 'Claude';
+
+// Service status state
+let currentServiceStatus = null;
+let serviceStatusError = null;
+
+/**
+ * Check if service status display is enabled in settings
+ * @returns {boolean}
+ */
+function isServiceStatusEnabled() {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    return config.get('statusBar.showServiceStatus', true);
+}
+
+/**
+ * Get the label text with service status icon prefix (only when degraded/outage)
+ * @returns {string} Label text like "Claude" or "$(warning) Claude" when issues
+ */
+function getLabelTextWithStatus() {
+    if (isServiceStatusEnabled() && currentServiceStatus && currentServiceStatus.indicator !== 'none') {
+        // Only show icon when there's an issue (not operational)
+        const display = getStatusDisplay(currentServiceStatus.indicator);
+        return `${display.icon} ${LABEL_TEXT}`;
+    }
+    return `${LABEL_TEXT}`;
+}
+
+/**
+ * Get ThemeColor for service status (if degraded/outage)
+ * @returns {vscode.ThemeColor|undefined}
+ */
+function getServiceStatusColor() {
+    if (isServiceStatusEnabled() && currentServiceStatus) {
+        const display = getStatusDisplay(currentServiceStatus.indicator);
+        if (display.color) {
+            return new vscode.ThemeColor(display.color);
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Build service status section for tooltip
+ * @returns {string[]} Array of tooltip lines
+ */
+function getServiceStatusTooltipLines() {
+    const lines = [];
+
+    if (!isServiceStatusEnabled()) {
+        return lines;
+    }
+
+    if (currentServiceStatus) {
+        const display = getStatusDisplay(currentServiceStatus.indicator);
+        lines.push('');
+        lines.push(`**Service Status:** ${display.label}`);
+        if (currentServiceStatus.description && currentServiceStatus.description !== display.label) {
+            lines.push(`${currentServiceStatus.description}`);
+        }
+        if (currentServiceStatus.updatedAt) {
+            lines.push(`Last checked: ${formatStatusTime(currentServiceStatus.updatedAt)}`);
+        }
+        lines.push(`[View status page](${STATUS_PAGE_URL})`);
+    } else if (serviceStatusError) {
+        lines.push('');
+        lines.push('**Service Status:** Unable to fetch');
+    }
+
+    return lines;
+}
+
+/**
+ * Refresh service status from API
+ * Updates the label if status bar items exist
+ */
+async function refreshServiceStatus() {
+    if (!isServiceStatusEnabled()) {
+        return null;
+    }
+
+    try {
+        currentServiceStatus = await fetchServiceStatus();
+        serviceStatusError = null;
+
+        // Update label text if initialized (only show icon when there's an issue)
+        if (statusBarItems.label && !isSpinnerActive) {
+            statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+            statusBarItems.label.color = getServiceStatusColor();
+        }
+        if (statusBarItems.compact && !isSpinnerActive && currentServiceStatus.indicator !== 'none') {
+            // For compact mode, add icon prefix only when there's an issue
+            const currentText = statusBarItems.compact.text || '';
+            if (currentText && !currentText.startsWith('$(')) {
+                const display = getStatusDisplay(currentServiceStatus.indicator);
+                statusBarItems.compact.text = `${display.icon} ${currentText}`;
+            }
+        }
+
+        return currentServiceStatus;
+    } catch (error) {
+        serviceStatusError = error;
+        currentServiceStatus = null;
+        return null;
+    }
+}
+
+/**
+ * Get current service status (cached)
+ * @returns {object|null}
+ */
+function getServiceStatus() {
+    return currentServiceStatus;
+}
 
 const DISPLAY_MODES = {
     DEFAULT: 'default',
@@ -284,7 +398,7 @@ function createStatusBarItem(context) {
         basePriority
     );
     statusBarItems.label.command = COMMANDS.FETCH_NOW;
-    statusBarItems.label.text = `${LABEL_TEXT}  `;
+    statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
     statusBarItems.label.show();
     context.subscriptions.push(statusBarItems.label);
 
@@ -369,8 +483,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     if (!usageData && !sessionData) {
         if (!isSpinnerActive) {
             if (statusBarItems.label) {
-                statusBarItems.label.text = `${LABEL_TEXT}  `;
-                statusBarItems.label.color = undefined;
+                statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+                statusBarItems.label.color = getServiceStatusColor();
             }
             setAllTooltips('Click to fetch Claude usage data');
         }
@@ -380,8 +494,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     if (!isSpinnerActive) {
         if (statusBarItems.label) {
-            statusBarItems.label.text = `${LABEL_TEXT}  `;
-            statusBarItems.label.color = undefined;
+            statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+            statusBarItems.label.color = getServiceStatusColor();
         }
     }
 
@@ -476,6 +590,10 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         tooltipLines.push(`*${activityStats.description.quirky}*`);
     }
 
+    // Add service status to tooltip
+    const serviceStatusLines = getServiceStatusTooltipLines();
+    tooltipLines.push(...serviceStatusLines);
+
     tooltipLines.push('');
     if (usageData) {
         tooltipLines.push(`Updated: ${usageData.timestamp.toLocaleTimeString()}`);
@@ -483,6 +601,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     tooltipLines.push('Click to refresh');
 
     const markdown = new vscode.MarkdownString(tooltipLines.join('  \n'));
+    markdown.isTrusted = true;  // Enable clickable links
     if (!isSpinnerActive) {
         setAllTooltips(markdown);
     }
@@ -532,7 +651,7 @@ function startSpinner() {
         }, 80);
     } else if (statusBarItems.label) {
         spinnerInterval = setInterval(() => {
-            statusBarItems.label.text = `${LABEL_TEXT} ${spinnerFrames[spinnerIndex]}`;
+            statusBarItems.label.text = `${getLabelTextWithStatus()} ${spinnerFrames[spinnerIndex]}`;
             spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
         }, 80);
     }
@@ -574,7 +693,7 @@ function stopSpinner(webError = null, tokenError = null) {
             statusBarItems.compact.text = `${baseText} ✗`;
             statusBarItems.compact.color = new vscode.ThemeColor('errorForeground');
         } else if (statusBarItems.label) {
-            statusBarItems.label.text = `${LABEL_TEXT} ✗`;
+            statusBarItems.label.text = `${getLabelTextWithStatus()} ✗`;
             statusBarItems.label.color = new vscode.ThemeColor('errorForeground');
         }
     } else if (webError) {
@@ -619,22 +738,22 @@ function stopSpinner(webError = null, tokenError = null) {
         setAllTooltips(errorTooltip);
 
         if (isCompactMode && statusBarItems.compact) {
-            const currentText = statusBarItems.compact.text || LABEL_TEXT;
+            const currentText = statusBarItems.compact.text || getLabelTextWithStatus();
             const baseText = currentText.replace(/ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/, '');
             statusBarItems.compact.text = `${baseText} ⚠`;
             statusBarItems.compact.color = new vscode.ThemeColor('editorWarning.foreground');
         } else if (statusBarItems.label) {
-            statusBarItems.label.text = `${LABEL_TEXT} ⚠`;
+            statusBarItems.label.text = `${getLabelTextWithStatus()} ⚠`;
             statusBarItems.label.color = new vscode.ThemeColor('editorWarning.foreground');
         }
     } else {
         if (isCompactMode && statusBarItems.compact) {
-            const currentText = statusBarItems.compact.text || LABEL_TEXT;
+            const currentText = statusBarItems.compact.text || getLabelTextWithStatus();
             statusBarItems.compact.text = currentText.replace(/ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/, '');
-            statusBarItems.compact.color = undefined;
+            statusBarItems.compact.color = getServiceStatusColor();
         } else if (statusBarItems.label) {
-            statusBarItems.label.text = `${LABEL_TEXT}  `;
-            statusBarItems.label.color = undefined;
+            statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+            statusBarItems.label.color = getServiceStatusColor();
         }
     }
 }
@@ -644,5 +763,7 @@ module.exports = {
     updateStatusBar,
     startSpinner,
     stopSpinner,
+    refreshServiceStatus,
+    getServiceStatus,
     DISPLAY_MODES
 };
