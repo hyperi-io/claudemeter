@@ -585,11 +585,37 @@ class ClaudeUsageScraper {
                 return;
             }
 
-            if (debug) {
-                getDebugChannel().appendLine(`Auth: Session invalid (${validation.reason}), need login`);
+            // Only force login for definite session issues (no cookie or expired)
+            // For transient errors (network issues, server errors), try the fetch anyway
+            const definitivelyNoSession = ['no_cookie', 'cookie_expired', 'no_page'].includes(validation.reason);
+
+            if (definitivelyNoSession) {
+                if (debug) {
+                    getDebugChannel().appendLine(`Auth: Session definitely invalid (${validation.reason}), need login`);
+                }
+                await this.openLoginBrowser();
+                return;
             }
 
-            await this.openLoginBrowser();
+            // For server_rejected or validation_error, try fetching anyway - cookies might still work
+            if (debug) {
+                getDebugChannel().appendLine(`Auth: Validation uncertain (${validation.reason}), attempting fetch anyway`);
+            }
+            debugChannel.appendLine(`Auth: Validation uncertain (${validation.reason}), trying fetch with existing cookies`);
+
+            try {
+                await this.page.goto(CLAUDE_URLS.USAGE, {
+                    waitUntil: 'networkidle2',
+                    timeout: TIMEOUTS.PAGE_LOAD
+                });
+                // If we get here without error, the session worked
+                BrowserState.clear();
+                return;
+            } catch (fetchError) {
+                // Fetch failed - now we need login
+                debugChannel.appendLine(`Auth: Fetch with existing cookies failed: ${fetchError.message}`);
+                await this.openLoginBrowser();
+            }
         } catch (error) {
             debugChannel.appendLine(`Auth: ERROR - ${error.message}`);
             if (error.message.includes('timeout')) {

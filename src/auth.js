@@ -57,7 +57,7 @@ class ClaudeAuth {
     // Short timeout (5s) to fail fast if session is stale
     async checkCookie() {
         if (!this.page) {
-            return { exists: false, expired: true, cookie: null };
+            return { exists: false, expired: true, cookie: null, error: 'no_page' };
         }
 
         try {
@@ -74,18 +74,20 @@ class ClaudeAuth {
             const sessionCookie = cookies.find(c => c.name === 'sessionKey');
 
             if (!sessionCookie) {
-                return { exists: false, expired: true, cookie: null };
+                return { exists: false, expired: true, cookie: null, error: null };
             }
 
             const isExpired = sessionCookie.expires <= Date.now() / 1000;
             return {
                 exists: true,
                 expired: isExpired,
-                cookie: sessionCookie
+                cookie: sessionCookie,
+                error: null
             };
         } catch (error) {
             console.log('Error checking cookie:', error.message);
-            return { exists: false, expired: true, cookie: null };
+            // Return error info so caller can distinguish between "no cookie" and "couldn't check"
+            return { exists: false, expired: true, cookie: null, error: error.message };
         }
     }
 
@@ -98,6 +100,15 @@ class ClaudeAuth {
         const debug = isDebugEnabled();
 
         const cookieCheck = await this.checkCookie();
+
+        // If there was an error checking cookies (network issue, timeout),
+        // return a transient error so we can try fetching anyway
+        if (cookieCheck.error) {
+            if (debug) {
+                getDebugChannel().appendLine(`Auth: Error checking cookie: ${cookieCheck.error}`);
+            }
+            return { valid: false, reason: 'cookie_check_error' };
+        }
 
         if (!cookieCheck.exists) {
             if (debug) {
