@@ -18,10 +18,16 @@ jobs:
       - name: Check for AI artifact leakage
         run: |
           FAILED=false
-          for file in .gitmodules STATE.md TODO.md; do
-            [ -f "$file" ] && echo "::error::$file detected" && FAILED=true
+          # Block local-only AI assistant files
+          for file in STATE.md TODO.md CLAUDE.md; do
+            [ -f "$file" ] && echo "::error::$file detected - local AI file leaked" && FAILED=true
           done
-          [ -d ai/ ] && echo "::error::ai/ directory detected" && FAILED=true
+          # ai/ submodule reference is OK, but actual contents would indicate a problem
+          # (submodule contents aren't checked out in CI unless explicitly requested)
+          if [ -d ai/ ] && [ "$(ls -A ai/ 2>/dev/null)" ]; then
+            echo "::error::ai/ directory has contents - submodule was checked out"
+            FAILED=true
+          fi
           [ "$FAILED" = true ] && exit 1
           echo "✓ Security check passed"
 

@@ -78,7 +78,14 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 - **Type**: Number
 - **Default**: `5`
 - **Range**: `1-60` minutes
-- **Description**: Auto-refresh interval in minutes
+- **Description**: Auto-refresh interval in minutes for fetching Claude.ai web usage data. This triggers browser automation to scrape session and weekly limits from claude.ai/settings.
+
+### `claudemeter.localRefreshSeconds`
+
+- **Type**: Number
+- **Default**: `15`
+- **Range**: `5-60` seconds
+- **Description**: Local token refresh interval in seconds. Controls how often local Claude Code token data is polled from JSONL files. This is a lightweight local operation (no web requests). Set higher to reduce CPU usage.
 
 ### `claudemeter.tokenLimit`
 
@@ -198,6 +205,19 @@ If you encounter any issues or have suggestions:
 
 Paying it forward by the hoopy froods at HyperSec
 <https://hypersec.io>
+
+## Development
+
+### Optional AI Submodule (HyperSec Internal)
+
+This repo includes an optional `ai/` submodule containing HyperSec coding standards. It's a private repo - external contributors can safely ignore it.
+
+```bash
+# HyperSec devs only - init the submodule if you have access
+git submodule update --init ai
+```
+
+External clones work normally without the submodule.
 
 ## License
 

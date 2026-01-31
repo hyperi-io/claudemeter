@@ -49,16 +49,6 @@ RELEASE_NOTES_*.md
 # ===========================================
 # HyperSec AI Development Tooling (LOCAL ONLY)
 # ===========================================
-# CRITICAL: These paths must NEVER be committed.
-# The AI submodule references private HyperSec infrastructure.
-# This repo is public
-
-# AI corporate submodule directory if present (private repo)
-ai/
-
-# Git submodule config (exposes private repo URL)
-.gitmodules
-
 # AI assistant files (Claude, Cursor, Codex, Gemini)
 CLAUDE.md
 STATE.md
