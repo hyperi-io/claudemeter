@@ -1,3 +1,10 @@
+## [1.2.2](https://github.com/hypersec-io/claudemeter/compare/v1.2.1...v1.2.2) (2026-01-31)
+
+
+### Bug Fixes
+
+* Windows token monitoring path handling ([d04eed2](https://github.com/hypersec-io/claudemeter/commit/d04eed25a2634ebf05d8090562c49c830fb8e771))
+
 ## [1.2.1](https://github.com/hypersec-io/claudemeter/compare/v1.2.0...v1.2.1) (2026-01-30)
 
 
