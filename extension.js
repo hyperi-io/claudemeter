@@ -19,6 +19,7 @@ let scraper;
 let usageData = null;
 let isFirstFetch = true;
 let autoRefreshTimer;
+let localRefreshTimer;
 let serviceStatusTimer;
 let activityMonitor;
 let sessionTracker;
@@ -189,11 +190,21 @@ function createAutoRefreshTimer(minutes) {
 
     if (clampedMinutes <= 0) return null;
 
-    console.log(`Auto-refresh enabled: checking usage every ${clampedMinutes} minutes`);
+    console.log(`Web auto-refresh enabled: fetching Claude.ai usage every ${clampedMinutes} minutes`);
 
     return setInterval(async () => {
         await performFetch();
     }, clampedMinutes * 60 * 1000);
+}
+
+function createLocalRefreshTimer(seconds) {
+    const clampedSeconds = Math.max(5, Math.min(60, seconds));
+
+    console.log(`Local refresh enabled: polling token data every ${clampedSeconds} seconds`);
+
+    return setInterval(async () => {
+        await updateTokensFromJsonl(true);
+    }, clampedSeconds * 1000);
 }
 
 // Monitor Claude Code token usage via JSONL files in ~/.config/claude/projects/
@@ -531,6 +542,9 @@ async function activate(context) {
     const autoRefreshMinutes = config.get('autoRefreshMinutes', 5);
     autoRefreshTimer = createAutoRefreshTimer(autoRefreshMinutes);
 
+    const localRefreshSeconds = config.get('localRefreshSeconds', 15);
+    localRefreshTimer = createLocalRefreshTimer(localRefreshSeconds);
+
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(async (e) => {
             if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.autoRefreshMinutes`)) {
@@ -542,6 +556,17 @@ async function activate(context) {
                 const newConfig = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
                 const newAutoRefresh = newConfig.get('autoRefreshMinutes', 5);
                 autoRefreshTimer = createAutoRefreshTimer(newAutoRefresh);
+            }
+
+            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.localRefreshSeconds`)) {
+                if (localRefreshTimer) {
+                    clearInterval(localRefreshTimer);
+                    localRefreshTimer = null;
+                }
+
+                const newConfig = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+                const newLocalRefresh = newConfig.get('localRefreshSeconds', 15);
+                localRefreshTimer = createLocalRefreshTimer(newLocalRefresh);
             }
 
             if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.statusBar`)) {
@@ -563,6 +588,11 @@ async function deactivate() {
     if (autoRefreshTimer) {
         clearInterval(autoRefreshTimer);
         autoRefreshTimer = null;
+    }
+
+    if (localRefreshTimer) {
+        clearInterval(localRefreshTimer);
+        localRefreshTimer = null;
     }
 
     if (serviceStatusTimer) {

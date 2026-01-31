@@ -128,7 +128,14 @@
           "default": 5,
           "minimum": 1,
           "maximum": 60,
-          "description": "Auto-refresh interval in minutes for checking Claude.ai usage and session token data (1-60 minutes)"
+          "description": "Auto-refresh interval in minutes for fetching Claude.ai web usage data (1-60 minutes). This triggers browser automation to scrape usage stats."
+        },
+        "claudemeter.localRefreshSeconds": {
+          "type": "number",
+          "default": 15,
+          "minimum": 5,
+          "maximum": 60,
+          "description": "Local token refresh interval in seconds (5-60 seconds). Controls how often local Claude Code token data is polled from JSONL files. Set higher to reduce CPU usage."
         },
         "claudemeter.statusBar.displayMode": {
           "type": "string",
