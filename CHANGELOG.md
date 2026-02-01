@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/hypersec-io/claudemeter/compare/v1.2.4...v1.3.0) (2026-02-01)
+
+
+### Features
+
+* add 24-hour time format option ([7ed71de](https://github.com/hypersec-io/claudemeter/commit/7ed71de14fde2a3571298cefb271dee57e78a094)), closes [#4](https://github.com/hypersec-io/claudemeter/issues/4)
+
 ## [1.2.4](https://github.com/hypersec-io/claudemeter/compare/v1.2.3...v1.2.4) (2026-01-31)
 
 
