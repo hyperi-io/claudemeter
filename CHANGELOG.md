@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/hypersec-io/claudemeter/compare/v1.3.0...v1.3.1) (2026-02-01)
+
+
+### Bug Fixes
+
+* add status bar position and progress bar options ([63e4b20](https://github.com/hypersec-io/claudemeter/commit/63e4b201d6016871016db7554f22886df7793474)), closes [#2](https://github.com/hypersec-io/claudemeter/issues/2)
+
 # [1.3.0](https://github.com/hypersec-io/claudemeter/compare/v1.2.4...v1.3.0) (2026-02-01)
 
 
