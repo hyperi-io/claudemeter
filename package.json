@@ -179,7 +179,7 @@
             "24hour",
             "countdown"
           ],
-          "default": "12hour",
+          "default": "countdown",
           "enumDescriptions": [
             "12-hour format with AM/PM (e.g., 2:30 PM)",
             "24-hour format (e.g., 14:30)",

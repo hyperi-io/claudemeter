@@ -137,7 +137,7 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 ### `claudemeter.statusBar.timeFormat`
 
 - **Type**: String
-- **Default**: `12hour`
+- **Default**: `countdown`
 - **Options**: `12hour`, `24hour`, `countdown`
 - **Description**: How to display reset times in the status bar:
   - **12hour**: 12-hour format with AM/PM (e.g., 2:30 PM)

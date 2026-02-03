@@ -239,7 +239,7 @@ function getTokenLimit() {
 
 function getTimeFormat() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    return config.get('statusBar.timeFormat', '12hour');
+    return config.get('statusBar.timeFormat', 'countdown');
 }
 
 function getUse24HourTime() {
