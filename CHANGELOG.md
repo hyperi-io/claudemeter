@@ -1,3 +1,10 @@
+## [1.3.3](https://github.com/hypersec-io/claudemeter/compare/v1.3.2...v1.3.3) (2026-02-03)
+
+
+### Bug Fixes
+
+* change default usageFormat to barCircle ([ad49e13](https://github.com/hypersec-io/claudemeter/commit/ad49e136ef231b331ec89804c74e177d0461c73d))
+
 ## [1.3.2](https://github.com/hypersec-io/claudemeter/compare/v1.3.1...v1.3.2) (2026-02-02)
 
 
