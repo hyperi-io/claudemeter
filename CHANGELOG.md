@@ -1,3 +1,13 @@
+## [1.3.5](https://github.com/hyperi-io/claudemeter/compare/v1.3.4...v1.3.5) (2026-02-10)
+
+
+### Bug Fixes
+
+* compact mode now shows service status icon ([d8d0468](https://github.com/hyperi-io/claudemeter/commit/d8d0468256830a3d9bec7180e58fa30229bdda3a))
+* rebrand to hyperi-io, update README screenshots and typos ([ca2cfef](https://github.com/hyperi-io/claudemeter/commit/ca2cfef90549e781fcfa3c6f4d94c13d8fae5c41))
+* update .releaserc.json repositoryUrl for hyperi-io rename ([bbf80e5](https://github.com/hyperi-io/claudemeter/commit/bbf80e55eef0216ff1e3db77da1a3a9cbeb54d71))
+* update release workflow repo check for hyperi-io rename ([14189a1](https://github.com/hyperi-io/claudemeter/commit/14189a14160b9d111b47c918fc5f78969ebb8469))
+
 ## [1.3.4](https://github.com/hypersec-io/claudemeter/compare/v1.3.3...v1.3.4) (2026-02-03)
 
 
