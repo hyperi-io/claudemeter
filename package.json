@@ -5,17 +5,17 @@
   "version": "1.3.4",
   "publisher": "hypersec",
   "author": {
-    "name": "HyperSec",
-    "url": "https://hypersec.io"
+    "name": "HyperI",
+    "url": "https://hyperi.io"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/hypersec-io/claudemeter.git"
+    "url": "https://github.com/hyperi-io/claudemeter.git"
   },
   "bugs": {
-    "url": "https://github.com/hypersec-io/claudemeter/issues"
+    "url": "https://github.com/hyperi-io/claudemeter/issues"
   },
-  "homepage": "https://github.com/hypersec-io/claudemeter#readme",
+  "homepage": "https://github.com/hyperi-io/claudemeter#readme",
   "license": "MIT",
   "icon": "assets/claudemeter-logo-icon-128.png",
   "galleryBanner": {

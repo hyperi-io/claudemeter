@@ -1,29 +1,27 @@
 # Claudemeter
 
 [![VS Code Installs](https://img.shields.io/visual-studio-marketplace/i/HyperSec.claudemeter)](https://marketplace.visualstudio.com/items?itemName=HyperSec.claudemeter)
-[![GitHub License](https://img.shields.io/github/license/hypersec-io/claudemeter)](https://github.com/hypersec-io/claudemeter)
-[![GitHub Issues](https://img.shields.io/github/issues/hypersec-io/claudemeter)](https://github.com/hypersec-io/claudemeter/issues)
-[![GitHub Stars](https://img.shields.io/github/stars/hypersec-io/claudemeter)](https://github.com/hypersec-io/claudemeter)
+[![GitHub License](https://img.shields.io/github/license/hyperi-io/claudemeter)](https://github.com/hyperi-io/claudemeter)
+[![GitHub Issues](https://img.shields.io/github/issues/hyperi-io/claudemeter)](https://github.com/hyperi-io/claudemeter/issues)
+[![GitHub Stars](https://img.shields.io/github/stars/hyperi-io/claudemeter)](https://github.com/hyperi-io/claudemeter)
 
-![Icon](assets/claudemeter-logo-small-25pct.png)
-
+![Icon](assets/claudemeter-logo-trim.png)
 > Monitor your Claude Code usage in real time, with full limit information.  
 > *No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'*
+
+![Tooltip](assets/tooltip.png)
 
 - Token context usage
 - Session limits
 - Weekly limits
 - Limit consumption and reset times
+- Claude service status (working, partial outage, major outage)
 - Claude session and login all local to device
-- Open source https://github.com/hypersec-io/claudemeter  
-
-## Startup
-
-![Startup](assets/startup.gif)
+- Open source: <https://github.com/hyperi-io/claudemeter>
 
 ---
 
-## Default Status Bar
+## Status Bar Default
 
 ![Status Bar Default](assets/status-bar-default.png)
 
@@ -34,6 +32,15 @@
 ## Compact Status Bar
 
 ![Status Bar Compact](assets/status-bar-compact.png)
+
+## 12 Hour
+
+![Status Bar 12h](assets/status-bar-default-12h.png)
+
+## 24 Hour
+
+![Status Bar 24h](assets/status-bar-default-24h.png)
+
 
 ## Installation
 
@@ -57,7 +64,8 @@ The extension will **automatically fetch usage data** when VS Code starts. If yo
 
 ## Configuration
 
-![Status Bar Compact](assets/settings.png)
+![Settings1](assets/settings1.png)
+![Settings1](assets/settings2.png)
 
 Open VS Code Settings and search for "Claudemeter" to configure:
 
@@ -220,7 +228,7 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 
 - Claude.ai may have changed their settings page layout
 - Check if you can see your usage at [claude.ai/settings](https://claude.ai/settings)
-- [Report an issue](https://github.com/hypersec-io/claudemeter/issues) for the extension to be updated
+- [Report an issue](https://github.com/hyperi-io/claudemeter/issues) for the extension to be updated
 
 ## Privacy & Security
 
@@ -234,7 +242,7 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 If you encounter any issues or have suggestions:
 
 1. Check the troubleshooting section above
-2. Review open issues on [GitHub](https://github.com/hypersec-io/claudemeter/issues)
+2. Review open issues on [GitHub](https://github.com/hyperi-io/claudemeter/issues)
 3. Submit a new issue with:
    - VS Code version
    - Extension version
@@ -243,10 +251,10 @@ If you encounter any issues or have suggestions:
 
 ## Authors
 
-![HyperSec Logo](assets/hypersec-logo.png)
+![HyperSec Logo](assets/hyperi-logo.png)
 
-Paying it forward by the hoopy froods at HyperSec
-<https://hypersec.io>
+Paying it forward by the hoopy froods at HyperI (nee HyperSec)
+<https://hyperi.io>
 
 ## Development
 
