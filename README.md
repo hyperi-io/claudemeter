@@ -251,16 +251,16 @@ If you encounter any issues or have suggestions:
 
 ## Authors
 
-![HyperSec Logo](assets/hyperi-logo.png)
+![HyperI Logo](assets/hyperi-logo.png)
 
 Paying it forward by the hoopy froods at HyperI (nee HyperSec)
 <https://hyperi.io>
 
 ## Development
 
-### Optional AI Submodule (HyperSec Internal)
+### Optional AI Submodule (HyperI Internal)
 
-This repo includes an optional `ai/` submodule containing HyperSec coding standards. It's a private repo - external contributors can safely ignore it.
+This repo includes an optional `ai/` submodule containing the HyperI AI assistant meta layer ony top of Claude Code and coding standards. It's a private repo - external contributors can safely ignore it.
 
 ```bash
 # HyperSec devs only - init the submodule if you have access
@@ -273,7 +273,7 @@ External clones work normally without the submodule.
 
 MIT License - See LICENSE file for details.
 
-Originally inspired and based on [claude-usage-monitor](https://github.com/Gronsten/claude-usage-monitor) by Mark Campbell. If you find this useful, please consider [sponsoring the original author](https://github.com/sponsors/Gronsten).
+Originally inspired and based on [claude-usage-monitor](https://github.com/Gronsten/claude-usage-monitor) by Mark Campbell.
 
 ---
 
