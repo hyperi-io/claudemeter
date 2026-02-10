@@ -1,3 +1,10 @@
+## [1.3.6](https://github.com/hyperi-io/claudemeter/compare/v1.3.5...v1.3.6) (2026-02-10)
+
+
+### Bug Fixes
+
+* add missing assets for marketplace README rendering ([ff3b4ec](https://github.com/hyperi-io/claudemeter/commit/ff3b4ecc530b56f243d2376a2d22c918bda6847b))
+
 ## [1.3.5](https://github.com/hyperi-io/claudemeter/compare/v1.3.4...v1.3.5) (2026-02-10)
 
 
