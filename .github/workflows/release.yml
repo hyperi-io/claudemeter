@@ -43,7 +43,7 @@ jobs:
   release:
     name: Release
     needs: security
-    if: github.repository == 'hypersec-io/claudemeter'
+    if: github.repository == 'hyperi-io/claudemeter'
     runs-on: ubuntu-latest
     permissions:
       contents: write
