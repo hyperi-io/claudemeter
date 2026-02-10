@@ -397,11 +397,11 @@ async function activate(context) {
     statusBarItem = createStatusBarItem(context);
 
     // Fetch service status immediately and set up periodic refresh (every 5 minutes)
-    refreshServiceStatus().catch(err => {
+    refreshServiceStatus().then(() => updateStatusBarWithAllData()).catch(err => {
         console.log('Claudemeter: Initial service status fetch failed:', err.message);
     });
     serviceStatusTimer = setInterval(() => {
-        refreshServiceStatus().catch(err => {
+        refreshServiceStatus().then(() => updateStatusBarWithAllData()).catch(err => {
             console.log('Claudemeter: Service status refresh failed:', err.message);
         });
     }, 5 * 60 * 1000);  // 5 minutes

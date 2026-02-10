@@ -166,14 +166,7 @@ async function refreshServiceStatus() {
             statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
             statusBarItems.label.color = getServiceStatusColor();
         }
-        if (statusBarItems.compact && !isSpinnerActive && currentServiceStatus.indicator !== 'none') {
-            // For compact mode, add icon prefix only when there's an issue
-            const currentText = statusBarItems.compact.text || '';
-            if (currentText && !currentText.startsWith('$(')) {
-                const display = getStatusDisplay(currentServiceStatus.indicator);
-                statusBarItems.compact.text = `${display.icon} ${currentText}`;
-            }
-        }
+        // Compact mode picks up service status via getLabelTextWithStatus() on next render cycle
 
         return currentServiceStatus;
     } catch (error) {
@@ -272,7 +265,7 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
     lastDisplayedValues.weeklyText = null;
     lastDisplayedValues.tokensText = null;
 
-    const parts = [LABEL_TEXT];
+    const parts = [getLabelTextWithStatus()];
     if (sessionPercent !== null) {
         parts.push(`S${formatPercent(sessionPercent, true)}`);
     }
@@ -287,7 +280,7 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
 
     const compactText = parts.join(' ');
 
-    let compactColor = undefined;
+    let compactColor = getServiceStatusColor();
     const levels = [sessionStatus.level, weeklyStatus.level, tokenStatus.level];
     if (levels.includes('error')) {
         compactColor = new vscode.ThemeColor('errorForeground');
