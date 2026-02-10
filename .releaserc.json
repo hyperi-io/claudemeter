@@ -1,6 +1,6 @@
 {
   "branches": ["main"],
-  "repositoryUrl": "https://github.com/hypersec-io/claudemeter.git",
+  "repositoryUrl": "https://github.com/hyperi-io/claudemeter.git",
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
