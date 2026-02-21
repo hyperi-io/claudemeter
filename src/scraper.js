@@ -137,6 +137,9 @@ class ClaudeUsageScraper {
         this.overageEndpoint = null;
         this.capturedEndpoints = [];
 
+        this.currentOrgId = null;
+        this.accountInfo = null;
+
         this.auth = new ClaudeAuth();
         this.releaseBrowserLock = null;
     }
@@ -576,6 +579,12 @@ class ClaudeUsageScraper {
                 if (debug) {
                     getDebugChannel().appendLine('Auth: Session valid (fast path)');
                 }
+                if (validation.account) {
+                    this.accountInfo = validation.account;
+                    if (debug) {
+                        getDebugChannel().appendLine(`Auth: Account: ${validation.account.name || 'unknown'}`);
+                    }
+                }
                 // Clear any previous failed state - session is now valid
                 BrowserState.clear();
                 await this.page.goto(CLAUDE_URLS.USAGE, {
@@ -721,6 +730,19 @@ class ClaudeUsageScraper {
                         ...request.headers(),
                         'Content-Type': 'application/json'
                     };
+
+                    const orgMatch = url.match(/\/organizations\/([a-f0-9-]+)\//);
+                    if (orgMatch) {
+                        const newOrgId = orgMatch[1];
+                        if (this.currentOrgId && this.currentOrgId !== newOrgId) {
+                            console.log(`Claudemeter: Org changed from ${this.currentOrgId} to ${newOrgId}`);
+                            if (isDebugEnabled()) {
+                                getDebugChannel().appendLine(`Account change detected: ${this.currentOrgId} → ${newOrgId}`);
+                            }
+                        }
+                        this.currentOrgId = newOrgId;
+                    }
+
                     console.log('Captured usage endpoint:', this.apiEndpoint);
                 }
 
@@ -808,6 +830,7 @@ class ClaudeUsageScraper {
                 extraUsage: data.extraUsage.value,
                 prepaidCredits: prepaidCredits,
                 monthlyCredits: monthlyCredits,
+                accountInfo: this.accountInfo,
                 timestamp: new Date(),
                 rawData: apiResponse,
                 schemaVersion: getSchemaInfo().version,
@@ -989,18 +1012,23 @@ class ClaudeUsageScraper {
         this.creditsEndpoint = null;
         this.overageEndpoint = null;
         this.capturedEndpoints = [];
+        this.currentOrgId = null;
+        this.accountInfo = null;
+
+        // Clear browser session (cookies) so next fetch forces fresh login
+        const sessionResult = await this.auth.clearSession();
 
         if (debug) {
             getDebugChannel().appendLine('Browser connection closed');
             getDebugChannel().appendLine('All captured API endpoints cleared');
+            getDebugChannel().appendLine('Browser session cleared');
         }
 
-        return { success: true, message: 'Connection reset successfully' };
+        return { success: true, message: 'Connection reset and session cleared. Next fetch will require login.' };
     }
 
     async clearSession() {
-        await this.reset();
-        return await this.auth.clearSession();
+        return await this.reset();
     }
 
     async forceOpenBrowser() {
@@ -1103,6 +1131,9 @@ class ClaudeUsageScraper {
             hasCreditsEndpoint: !!this.creditsEndpoint,
             hasOverageEndpoint: !!this.overageEndpoint,
             capturedEndpointsCount: this.capturedEndpoints?.length || 0,
+            currentOrgId: this.currentOrgId,
+            accountName: this.accountInfo?.name || null,
+            accountEmail: this.accountInfo?.email || null,
             ...authDiag,
             schemaVersion: schemaInfo.version,
             schemaFields: schemaInfo.usageFields,

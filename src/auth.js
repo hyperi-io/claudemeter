@@ -130,25 +130,45 @@ class ClaudeAuth {
             }
 
             const apiUrl = CLAUDE_URLS.API_ORGS;
-            const isValid = await this.page.evaluate(async (url) => {
+            const result = await this.page.evaluate(async (url) => {
                 try {
                     const response = await fetch(url, {
                         method: 'GET',
                         credentials: 'include'
                     });
-                    return response.ok;
+                    if (!response.ok) return { ok: false, data: null };
+                    const data = await response.json();
+                    return { ok: true, data };
                 } catch {
-                    return false;
+                    return { ok: false, data: null };
                 }
             }, apiUrl);
 
             if (debug) {
-                getDebugChannel().appendLine(`Auth: API validation result: ${isValid ? 'valid' : 'invalid'}`);
+                getDebugChannel().appendLine(`Auth: API validation result: ${result.ok ? 'valid' : 'invalid'}`);
+            }
+
+            // Extract account identity from org response
+            let account = null;
+            if (result.ok && result.data) {
+                const orgs = Array.isArray(result.data) ? result.data : [result.data];
+                const org = orgs[0];
+                if (org) {
+                    account = {
+                        orgId: org.uuid || org.id || null,
+                        name: org.name || null,
+                        email: org.email_address || org.owner?.email || null,
+                    };
+                    if (debug) {
+                        getDebugChannel().appendLine(`Auth: Account: ${account.name || 'unknown'} (${account.orgId || 'no org'})`);
+                    }
+                }
             }
 
             return {
-                valid: isValid,
-                reason: isValid ? 'valid' : 'server_rejected'
+                valid: result.ok,
+                reason: result.ok ? 'valid' : 'server_rejected',
+                account,
             };
         } catch (error) {
             if (debug) {

@@ -484,6 +484,9 @@ async function activate(context) {
                 debugChannel.appendLine(`  Has Credits Endpoint: ${diag.hasCreditsEndpoint}`);
                 debugChannel.appendLine(`  Has Overage Endpoint: ${diag.hasOverageEndpoint}`);
                 debugChannel.appendLine(`  Captured Endpoints: ${diag.capturedEndpointsCount}`);
+                debugChannel.appendLine(`  Org ID: ${diag.currentOrgId || 'none'}`);
+                debugChannel.appendLine(`  Account: ${diag.accountName || 'unknown'}`);
+                debugChannel.appendLine(`  Email: ${diag.accountEmail || 'unknown'}`);
                 debugChannel.appendLine(`  Session Dir: ${diag.sessionDir}`);
                 debugChannel.appendLine(`  Has Existing Session: ${diag.hasExistingSession}`);
             } else {
@@ -494,6 +497,7 @@ async function activate(context) {
             debugChannel.appendLine('Usage Data State:');
             if (usageData) {
                 debugChannel.appendLine(`  Last Updated: ${usageData.timestamp}`);
+                debugChannel.appendLine(`  Account: ${usageData.accountInfo?.name || 'unknown'}`);
                 debugChannel.appendLine(`  Session Usage: ${usageData.usagePercent}%`);
                 debugChannel.appendLine(`  Weekly Usage: ${usageData.usagePercentWeek}%`);
                 debugChannel.appendLine(`  Has Monthly Credits: ${!!usageData.monthlyCredits}`);
