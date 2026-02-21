@@ -1,3 +1,10 @@
+## [1.3.7](https://github.com/hyperi-io/claudemeter/compare/v1.3.6...v1.3.7) (2026-02-21)
+
+
+### Bug Fixes
+
+* update CI security gate for submodule-aware repo layout ([bb59a71](https://github.com/hyperi-io/claudemeter/commit/bb59a713dfc0a6f0be6230fbac0bde52ceac609c))
+
 ## [1.3.6](https://github.com/hyperi-io/claudemeter/compare/v1.3.5...v1.3.6) (2026-02-10)
 
 
