@@ -567,6 +567,11 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     const tooltipLines = [];
 
+    if (usageData && usageData.accountInfo && usageData.accountInfo.name) {
+        tooltipLines.push(`**${usageData.accountInfo.name}**`);
+        tooltipLines.push('');
+    }
+
     let sessionPercent = null;
     let sessionResetTime = null;
     let sessionStatus = { icon: '', color: undefined, level: 'normal' };
