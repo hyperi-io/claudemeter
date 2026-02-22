@@ -9,6 +9,7 @@
 const vscode = require('vscode');
 const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, calculateResetClockTimeExpanded, getCurrencySymbol, getUse24HourTime } = require('./utils');
 const { fetchServiceStatus, getStatusDisplay, formatStatusTime, STATUS_PAGE_URL } = require('./serviceStatus');
+const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 
 const LABEL_TEXT = 'Claude';
 
@@ -520,7 +521,7 @@ function createStatusBarItem(context) {
     return statusBarItems.label;
 }
 
-function updateStatusBar(item, usageData, activityStats = null, sessionData = null) {
+function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
     const showSonnet = config.get('statusBar.showSonnet', false);
@@ -567,8 +568,20 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     const tooltipLines = [];
 
-    if (usageData && usageData.accountInfo && usageData.accountInfo.name) {
-        tooltipLines.push(`**${usageData.accountInfo.name}**`);
+    // Account identity header
+    const accountName = usageData?.accountInfo?.name;
+    const plan = credentialsInfo ? formatSubscriptionType(credentialsInfo.subscriptionType) : null;
+    const tier = credentialsInfo ? formatRateLimitTier(credentialsInfo.rateLimitTier) : null;
+
+    if (accountName || plan) {
+        const parts = [];
+        if (accountName) parts.push(`**${accountName}**`);
+        if (plan && tier && tier !== plan) {
+            parts.push(plan + ' · ' + tier);
+        } else if (plan) {
+            parts.push(plan);
+        }
+        tooltipLines.push(parts.join(' — '));
         tooltipLines.push('');
     }
 
