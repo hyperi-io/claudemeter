@@ -569,7 +569,11 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     const tooltipLines = [];
 
     // Account identity header
-    const accountName = usageData?.accountInfo?.name;
+    // Strip "'s Organization" / "'s Organisation" suffix from personal account names
+    const rawAccountName = usageData?.accountInfo?.name;
+    const accountName = rawAccountName
+        ? rawAccountName.replace(/'s Organi[sz]ation$/, '')
+        : null;
     if (accountName) {
         tooltipLines.push(`**${accountName}**`);
     }
