@@ -13,10 +13,12 @@ const { ActivityMonitor } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
 const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
+const { CREDENTIALS_PATH, readCredentials, formatSubscriptionType, formatRateLimitTier } = require('./src/credentialsReader');
 
 let statusBarItem;
 let scraper;
 let usageData = null;
+let credentialsInfo = null;
 let isFirstFetch = true;
 let autoRefreshTimer;
 let localRefreshTimer;
@@ -25,6 +27,7 @@ let activityMonitor;
 let sessionTracker;
 let claudeDataLoader;
 let jsonlWatcher;
+let credentialsWatcher;
 let currentWorkspacePath = null;
 
 // Prevents auto-retry after user closes login browser
@@ -187,7 +190,7 @@ async function fetchUsage(isManualRetry = false) {
 async function updateStatusBarWithAllData() {
     const sessionData = sessionTracker ? await sessionTracker.getCurrentSession() : null;
     const activityStats = activityMonitor ? activityMonitor.getStats(usageData, sessionData) : null;
-    updateStatusBar(statusBarItem, usageData, activityStats, sessionData);
+    updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo);
 }
 
 function createAutoRefreshTimer(minutes) {
@@ -289,6 +292,54 @@ async function setupTokenMonitoring(context) {
     debugLog(`   Watching: ${projectDir}/*.jsonl`);
 }
 
+function setupCredentialsMonitoring(context) {
+    const fs = require('fs');
+    const path = require('path');
+
+    // Read credentials on startup
+    credentialsInfo = readCredentials();
+    if (credentialsInfo) {
+        fileLog(`Credentials loaded: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
+    } else {
+        fileLog('No Claude Code credentials found');
+    }
+
+    // Watch for account switches
+    const credentialsDir = path.dirname(CREDENTIALS_PATH);
+    if (fs.existsSync(credentialsDir)) {
+        credentialsWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(credentialsDir, '.credentials.json')
+        );
+
+        const handleCredentialsChange = async () => {
+            const previous = credentialsInfo;
+            credentialsInfo = readCredentials();
+
+            if (!credentialsInfo) return;
+
+            const orgChanged = previous && previous.orgId && credentialsInfo.orgId !== previous.orgId;
+            if (orgChanged) {
+                fileLog(`Account switched: ${previous.orgId.slice(0, 8)}... → ${credentialsInfo.orgId.slice(0, 8)}...`);
+                fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
+
+                // Clear stale state so next fetch uses new account
+                BrowserState.clear();
+                isFirstFetch = true;
+
+                // Trigger fetch for new account's usage data
+                await performFetch();
+            }
+
+            await updateStatusBarWithAllData();
+        };
+
+        credentialsWatcher.onDidChange(handleCredentialsChange);
+        credentialsWatcher.onDidCreate(handleCredentialsChange);
+        context.subscriptions.push(credentialsWatcher);
+        fileLog('Watching ~/.claude/.credentials.json for account changes');
+    }
+}
+
 async function updateTokensFromJsonl(silent = false) {
     try {
         const usage = await claudeDataLoader.getCurrentSessionUsage();
@@ -315,10 +366,10 @@ async function updateTokensFromJsonl(silent = false) {
 
                 const sessionData = await sessionTracker.getCurrentSession();
                 const activityStats = activityMonitor ? activityMonitor.getStats(usageData, sessionData) : null;
-                updateStatusBar(statusBarItem, usageData, activityStats, sessionData);
+                updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo);
             } else {
                 const activityStats = activityMonitor ? activityMonitor.getStats(usageData, null) : null;
-                updateStatusBar(statusBarItem, usageData, activityStats, null);
+                updateStatusBar(statusBarItem, usageData, activityStats, null, credentialsInfo);
             }
         }
     } catch (error) {
@@ -417,6 +468,7 @@ async function activate(context) {
     sessionTracker = new SessionTracker();
 
     await setupTokenMonitoring(context);
+    setupCredentialsMonitoring(context);
 
     // Clean up browser when extension deactivates
     context.subscriptions.push({
