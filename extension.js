@@ -7,7 +7,7 @@
 // Copyright: (c) 2026 HyperSec
 
 const vscode = require('vscode');
-const { ClaudeUsageScraper } = require('./src/scraper');
+const { ClaudeUsageScraper, BrowserState } = require('./src/scraper');
 const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
 const { ActivityMonitor } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
@@ -135,6 +135,11 @@ async function fetchUsage(isManualRetry = false) {
             fileLog('Scraper initialized');
         } else {
             fileLog('No existing session - will open login browser');
+        }
+
+        // Manual retry should ignore stale login_failed state from other instances
+        if (isManualRetry) {
+            BrowserState.clear();
         }
 
         fileLog('Calling ensureLoggedIn()...');
