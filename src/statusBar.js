@@ -570,18 +570,19 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     // Account identity header
     const accountName = usageData?.accountInfo?.name;
-    const plan = credentialsInfo ? formatSubscriptionType(credentialsInfo.subscriptionType) : null;
-    const tier = credentialsInfo ? formatRateLimitTier(credentialsInfo.rateLimitTier) : null;
-
-    if (accountName || plan) {
-        const parts = [];
-        if (accountName) parts.push(`**${accountName}**`);
+    if (accountName) {
+        tooltipLines.push(`**${accountName}**`);
+    }
+    if (credentialsInfo) {
+        const plan = formatSubscriptionType(credentialsInfo.subscriptionType);
+        const tier = formatRateLimitTier(credentialsInfo.rateLimitTier);
         if (plan && tier && tier !== plan) {
-            parts.push(plan + ' · ' + tier);
+            tooltipLines.push(`${plan} · ${tier}`);
         } else if (plan) {
-            parts.push(plan);
+            tooltipLines.push(plan);
         }
-        tooltipLines.push(parts.join(' — '));
+    }
+    if (accountName || credentialsInfo) {
         tooltipLines.push('');
     }
 
