@@ -27,6 +27,7 @@ function readCredentials() {
             orgId: data.organizationUuid || null,
             subscriptionType: oauth.subscriptionType || null,
             rateLimitTier: oauth.rateLimitTier || null,
+            accessToken: oauth.accessToken || null,
         };
     } catch (error) {
         console.warn('Claudemeter: Failed to read credentials:', error.message);

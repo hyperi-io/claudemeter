@@ -12,7 +12,7 @@ const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refresh
 const { ActivityMonitor } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
-const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
+const { CONFIG_NAMESPACE, COMMANDS, PATHS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
 const { CREDENTIALS_PATH, readCredentials, formatSubscriptionType, formatRateLimitTier } = require('./src/credentialsReader');
 
 let statusBarItem;
@@ -317,17 +317,37 @@ function setupCredentialsMonitoring(context) {
 
             if (!credentialsInfo) return;
 
-            const orgChanged = previous && previous.orgId && credentialsInfo.orgId !== previous.orgId;
-            if (orgChanged) {
-                fileLog(`Account switched: ${previous.orgId.slice(0, 8)}... → ${credentialsInfo.orgId.slice(0, 8)}...`);
+            // Detect account switch by orgId OR access token change.
+            // Personal accounts always have orgId=null, so token comparison is the
+            // only reliable signal when switching between two personal accounts.
+            const orgChanged = previous?.orgId && credentialsInfo.orgId !== previous.orgId;
+            const tokenChanged = previous?.accessToken && credentialsInfo.accessToken &&
+                credentialsInfo.accessToken !== previous.accessToken;
+
+            if (orgChanged || tokenChanged) {
+                const hint = orgChanged
+                    ? `${previous.orgId.slice(0, 8)}... → ${credentialsInfo.orgId?.slice(0, 8)}...`
+                    : 'access token changed';
+                fileLog(`Account switched (${hint})`);
                 fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
 
-                // Clear stale state so next fetch uses new account
+                // Clear stale browser state and session cookies so next fetch
+                // uses the new account rather than replaying old cookies.
                 BrowserState.clear();
+                if (fs.existsSync(PATHS.BROWSER_SESSION_DIR)) {
+                    try {
+                        fs.rmSync(PATHS.BROWSER_SESSION_DIR, { recursive: true, force: true });
+                        fileLog('Browser session cleared for account switch');
+                    } catch (e) {
+                        fileLog(`Failed to clear browser session: ${e.message}`);
+                    }
+                }
+                loginWasCancelled = false;
                 isFirstFetch = true;
 
-                // Trigger fetch for new account's usage data
-                await performFetch();
+                vscode.window.showInformationMessage(
+                    'Claudemeter: Claude account switch detected. Click the status bar item to log in with the new account.'
+                );
             }
 
             await updateStatusBarWithAllData();
