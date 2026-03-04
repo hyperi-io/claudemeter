@@ -1,3 +1,10 @@
+## [1.3.10](https://github.com/hyperi-io/claudemeter/compare/v1.3.9...v1.3.10) (2026-03-04)
+
+
+### Bug Fixes
+
+* use refreshToken instead of accessToken for account switch detection ([d9e9202](https://github.com/hyperi-io/claudemeter/commit/d9e9202fab172ba3b610a1635e797bcb33b8a7bb))
+
 ## [1.3.9](https://github.com/hyperi-io/claudemeter/compare/v1.3.8...v1.3.9) (2026-03-04)
 
 
