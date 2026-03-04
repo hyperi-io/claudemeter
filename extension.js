@@ -317,17 +317,20 @@ function setupCredentialsMonitoring(context) {
 
             if (!credentialsInfo) return;
 
-            // Detect account switch by orgId OR access token change.
-            // Personal accounts always have orgId=null, so token comparison is the
+            // Detect account switch by orgId OR refresh token change.
+            // Personal accounts always have orgId=null, so refresh token is the
             // only reliable signal when switching between two personal accounts.
+            // We use refreshToken (not accessToken) because access tokens rotate
+            // on every OAuth refresh, causing false positives.  Refresh tokens
+            // only change on a full /login flow (i.e. actual account switch).
             const orgChanged = previous?.orgId && credentialsInfo.orgId !== previous.orgId;
-            const tokenChanged = previous?.accessToken && credentialsInfo.accessToken &&
-                credentialsInfo.accessToken !== previous.accessToken;
+            const tokenChanged = previous?.refreshToken && credentialsInfo.refreshToken &&
+                credentialsInfo.refreshToken !== previous.refreshToken;
 
             if (orgChanged || tokenChanged) {
                 const hint = orgChanged
                     ? `${previous.orgId.slice(0, 8)}... → ${credentialsInfo.orgId?.slice(0, 8)}...`
-                    : 'access token changed';
+                    : 'refresh token changed';
                 fileLog(`Account switched (${hint})`);
                 fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
 
