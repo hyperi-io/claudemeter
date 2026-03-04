@@ -9,7 +9,8 @@ jobs:
   # Security gate - must pass before release
   security:
     name: Security Gate
-    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}    steps:
+    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
+    steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -43,7 +44,8 @@ jobs:
     name: Release
     needs: security
     if: github.repository == 'hyperi-io/claudemeter'
-    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}    permissions:
+    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
+    permissions:
       contents: write
       issues: write
       pull-requests: write
@@ -89,7 +91,8 @@ jobs:
     name: Publish
     needs: release
     if: needs.release.outputs.new_release_published == 'true'
-    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}    permissions:
+    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
+    permissions:
       contents: write
 
     steps:
