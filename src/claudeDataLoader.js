@@ -79,10 +79,11 @@ class ClaudeDataLoader {
         paths.push(path.join(homeDir, '.config', 'claude', 'projects'));
         paths.push(path.join(homeDir, '.claude', 'projects'));
 
-        // Windows-specific: AppData locations
+        // Windows-specific: AppData and Program Files locations
         if (process.platform === 'win32') {
             const appData = process.env.APPDATA;
             const localAppData = process.env.LOCALAPPDATA;
+            const programData = process.env.ProgramData || 'C:\\ProgramData';
             if (appData) {
                 paths.push(path.join(appData, 'claude', 'projects'));
                 paths.push(path.join(appData, 'Claude', 'projects'));
@@ -91,6 +92,10 @@ class ClaudeDataLoader {
                 paths.push(path.join(localAppData, 'claude', 'projects'));
                 paths.push(path.join(localAppData, 'Claude', 'projects'));
             }
+            // New Anthropic path (March 2026+)
+            paths.push('C:\\Program Files\\ClaudeCode\\projects');
+            // Legacy enterprise managed path
+            paths.push(path.join(programData, 'ClaudeCode', 'projects'));
         }
 
         return paths;

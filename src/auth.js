@@ -1,238 +1,75 @@
-// Project:   Claudemeter
+// Project:   Claudemeter v2 (Lightweight)
 // File:      auth.js
-// Purpose:   Cookie-based authentication and session validation
+// Purpose:   Session cookie management (file-based, no browser dependency)
 // Language:  JavaScript (CommonJS)
+//
+// v2 auth: manages a session cookie stored as a JSON file. No Puppeteer or
+// browser dependency — cookie is extracted during the one-time login flow
+// in httpFetcher.js and persisted for subsequent HTTP-only fetches.
 //
 // License:   MIT
 // Copyright: (c) 2026 HyperSec
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS, TIMEOUTS, CLAUDE_URLS, isDebugEnabled, getDebugChannel, sleep } = require('./utils');
+const { PATHS, isDebugEnabled, getDebugChannel, fileLog } = require('./utils');
 
 class ClaudeAuth {
     constructor() {
-        this.sessionDir = PATHS.BROWSER_SESSION_DIR;
-        this.page = null;
-        this.browser = null;
-    }
-
-    setPageAndBrowser(page, browser) {
-        this.page = page;
-        this.browser = browser;
-    }
-
-    getSessionDir() {
-        return this.sessionDir;
+        this.cookieFile = PATHS.SESSION_COOKIE_FILE;
     }
 
     hasExistingSession() {
         try {
-            if (!fs.existsSync(this.sessionDir)) {
+            if (!fs.existsSync(this.cookieFile)) {
                 return false;
             }
+            const data = JSON.parse(fs.readFileSync(this.cookieFile, 'utf-8'));
+            if (!data.sessionKey) return false;
 
-            // Chromium stores cookies in various locations
-            const cookieFiles = [
-                path.join(this.sessionDir, 'Default', 'Cookies'),
-                path.join(this.sessionDir, 'Default', 'Network', 'Cookies')
-            ];
-
-            for (const cookieFile of cookieFiles) {
-                if (fs.existsSync(cookieFile)) {
-                    const stats = fs.statSync(cookieFile);
-                    if (stats.size > 0) {
-                        return true;
-                    }
-                }
+            // Check expiry
+            if (data.expires && data.expires <= Date.now() / 1000) {
+                return false;
             }
-
-            return false;
+            return true;
         } catch (error) {
-            console.log('Error checking session:', error);
+            console.log('Error checking session:', error.message);
             return false;
         }
     }
 
-    // Short timeout (5s) to fail fast if session is stale
-    async checkCookie() {
-        if (!this.page) {
-            return { exists: false, expired: true, cookie: null, error: 'no_page' };
+    saveCookie(sessionKey, expires, orgId) {
+        const dir = path.dirname(this.cookieFile);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
         }
+        const data = {
+            sessionKey,
+            expires,
+            savedAt: new Date().toISOString(),
+            orgId: orgId || null,
+        };
+        fs.writeFileSync(this.cookieFile, JSON.stringify(data, null, 2));
+        fileLog('Session cookie saved');
+    }
 
+    readCookie() {
         try {
-            // Browser must visit domain before cookies are accessible
-            const currentUrl = this.page.url();
-            if (!currentUrl.includes('claude.ai')) {
-                await this.page.goto(CLAUDE_URLS.BASE, {
-                    waitUntil: 'domcontentloaded',
-                    timeout: 5000
-                });
-            }
-
-            const cookies = await this.page.cookies(CLAUDE_URLS.BASE);
-            const sessionCookie = cookies.find(c => c.name === 'sessionKey');
-
-            if (!sessionCookie) {
-                return { exists: false, expired: true, cookie: null, error: null };
-            }
-
-            const isExpired = sessionCookie.expires <= Date.now() / 1000;
-            return {
-                exists: true,
-                expired: isExpired,
-                cookie: sessionCookie,
-                error: null
-            };
+            if (!fs.existsSync(this.cookieFile)) return null;
+            const data = JSON.parse(fs.readFileSync(this.cookieFile, 'utf-8'));
+            if (!data.sessionKey) return null;
+            return data;
         } catch (error) {
-            console.log('Error checking cookie:', error.message);
-            // Return error info so caller can distinguish between "no cookie" and "couldn't check"
-            return { exists: false, expired: true, cookie: null, error: error.message };
+            fileLog(`Error reading cookie: ${error.message}`);
+            return null;
         }
     }
 
-    // Fast path validation using fetch() instead of page navigation
-    async validateSession() {
-        if (!this.page) {
-            return { valid: false, reason: 'no_page' };
-        }
-
-        const debug = isDebugEnabled();
-
-        const cookieCheck = await this.checkCookie();
-
-        // If there was an error checking cookies (network issue, timeout),
-        // return a transient error so we can try fetching anyway
-        if (cookieCheck.error) {
-            if (debug) {
-                getDebugChannel().appendLine(`Auth: Error checking cookie: ${cookieCheck.error}`);
-            }
-            return { valid: false, reason: 'cookie_check_error' };
-        }
-
-        if (!cookieCheck.exists) {
-            if (debug) {
-                getDebugChannel().appendLine('Auth: No sessionKey cookie found');
-            }
-            return { valid: false, reason: 'no_cookie' };
-        }
-
-        if (cookieCheck.expired) {
-            if (debug) {
-                getDebugChannel().appendLine('Auth: sessionKey cookie expired');
-            }
-            return { valid: false, reason: 'cookie_expired' };
-        }
-
-        try {
-            if (debug) {
-                getDebugChannel().appendLine('Auth: Validating session with API call...');
-            }
-
-            const apiUrl = CLAUDE_URLS.API_ORGS;
-            const result = await this.page.evaluate(async (url) => {
-                try {
-                    const response = await fetch(url, {
-                        method: 'GET',
-                        credentials: 'include'
-                    });
-                    if (!response.ok) return { ok: false, data: null };
-                    const data = await response.json();
-                    return { ok: true, data };
-                } catch {
-                    return { ok: false, data: null };
-                }
-            }, apiUrl);
-
-            if (debug) {
-                getDebugChannel().appendLine(`Auth: API validation result: ${result.ok ? 'valid' : 'invalid'}`);
-            }
-
-            // Extract account identity from org response
-            let account = null;
-            if (result.ok && result.data) {
-                const orgs = Array.isArray(result.data) ? result.data : [result.data];
-                const org = orgs[0];
-                if (org) {
-                    account = {
-                        orgId: org.uuid || org.id || null,
-                        name: org.name || null,
-                        email: org.email_address || org.owner?.email || null,
-                    };
-                    if (debug) {
-                        getDebugChannel().appendLine(`Auth: Account: ${account.name || 'unknown'} (${account.orgId || 'no org'})`);
-                    }
-                }
-            }
-
-            return {
-                valid: result.ok,
-                reason: result.ok ? 'valid' : 'server_rejected',
-                account,
-            };
-        } catch (error) {
-            if (debug) {
-                getDebugChannel().appendLine(`Auth: Validation error: ${error.message}`);
-            }
-            return { valid: false, reason: 'validation_error' };
-        }
-    }
-
-    // Poll for sessionKey cookie without disturbing the login page
-    async waitForLogin(maxWaitMs = TIMEOUTS.LOGIN_WAIT, pollIntervalMs = TIMEOUTS.LOGIN_POLL) {
-        const debug = isDebugEnabled();
-        const startTime = Date.now();
-
-        if (debug) {
-            getDebugChannel().appendLine(`Auth: Waiting for login (max ${maxWaitMs / 1000}s)...`);
-        }
-
-        while (Date.now() - startTime < maxWaitMs) {
-            await sleep(pollIntervalMs);
-
-            try {
-                if (!this.browser || !this.page) {
-                    if (debug) {
-                        getDebugChannel().appendLine('Auth: Browser closed by user - login cancelled');
-                    }
-                    return { success: false, cancelled: true };
-                }
-
-                if (!this.browser.isConnected()) {
-                    if (debug) {
-                        getDebugChannel().appendLine('Auth: Browser disconnected - login cancelled');
-                    }
-                    return { success: false, cancelled: true };
-                }
-
-                const cookies = await this.page.cookies(CLAUDE_URLS.BASE);
-                const hasSessionKey = cookies.some(c => c.name === 'sessionKey');
-
-                if (hasSessionKey) {
-                    if (debug) {
-                        getDebugChannel().appendLine('Auth: sessionKey cookie detected - login successful');
-                    }
-                    return { success: true, cancelled: false };
-                }
-            } catch (error) {
-                // Browser closed errors
-                if (error.message.includes('Target closed') ||
-                    error.message.includes('Protocol error') ||
-                    error.message.includes('Session closed') ||
-                    error.message.includes('Connection closed')) {
-                    if (debug) {
-                        getDebugChannel().appendLine(`Auth: Browser closed - ${error.message}`);
-                    }
-                    return { success: false, cancelled: true };
-                }
-                console.log('Cookie check error:', error.message);
-            }
-        }
-
-        if (debug) {
-            getDebugChannel().appendLine('Auth: Login timeout');
-        }
-        return { success: false, cancelled: false };
+    isCookieValid() {
+        const cookie = this.readCookie();
+        if (!cookie) return false;
+        if (cookie.expires && cookie.expires <= Date.now() / 1000) return false;
+        return true;
     }
 
     async clearSession() {
@@ -243,33 +80,44 @@ class ClaudeAuth {
         }
 
         try {
-            if (fs.existsSync(this.sessionDir)) {
-                fs.rmSync(this.sessionDir, { recursive: true, force: true });
+            if (fs.existsSync(this.cookieFile)) {
+                fs.unlinkSync(this.cookieFile);
                 if (debug) {
-                    getDebugChannel().appendLine(`Deleted session directory: ${this.sessionDir}`);
+                    getDebugChannel().appendLine(`Deleted session cookie: ${this.cookieFile}`);
+                }
+            }
+
+            // Clean up old v1 browser-session directory if it exists
+            const oldSessionDir = path.join(PATHS.CONFIG_DIR, 'browser-session');
+            if (fs.existsSync(oldSessionDir)) {
+                fs.rmSync(oldSessionDir, { recursive: true, force: true });
+                if (debug) {
+                    getDebugChannel().appendLine('Cleaned up old browser-session directory');
                 }
             }
 
             if (debug) {
-                getDebugChannel().appendLine('Session cleared - next fetch will prompt for fresh login');
+                getDebugChannel().appendLine('Session cleared - next fetch will prompt for login');
             }
 
-            return { success: true, message: 'Session cleared successfully. Next fetch will prompt for login.' };
+            return { success: true, message: 'Session cleared. Next fetch will prompt for login.' };
         } catch (error) {
-            console.error('Failed to delete session directory:', error);
+            console.error('Failed to clear session:', error);
             if (debug) {
-                getDebugChannel().appendLine(`Failed to delete session directory: ${error.message}`);
+                getDebugChannel().appendLine(`Failed to clear session: ${error.message}`);
             }
             return { success: false, message: `Failed to clear session: ${error.message}` };
         }
     }
 
     getDiagnostics() {
+        const cookie = this.readCookie();
         return {
-            sessionDir: this.sessionDir,
+            cookieFile: this.cookieFile,
             hasExistingSession: this.hasExistingSession(),
-            hasPage: !!this.page,
-            hasBrowser: !!this.browser
+            hasCookie: !!cookie,
+            cookieExpires: cookie?.expires ? new Date(cookie.expires * 1000).toISOString() : null,
+            cookieSavedAt: cookie?.savedAt || null,
         };
     }
 }

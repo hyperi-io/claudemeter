@@ -2,7 +2,7 @@
   "name": "claudemeter",
   "displayName": "Claudemeter - Claude AI Usage Monitor",
   "description": "Complete Claude.ai account monitoring: session limits, weekly limits, token usage, reset times, and spending caps. Track all Claude Code and Claude Pro/Max plan quotas in real-time from your status bar.",
-  "version": "1.3.9",
+  "version": "2.0.0",
   "publisher": "hypersec",
   "author": {
     "name": "HyperI",
@@ -96,17 +96,17 @@
       },
       {
         "command": "claudemeter.resetConnection",
-        "title": "Reset Browser Connection",
+        "title": "Reset Browser Connection (Legacy)",
         "category": "Claudemeter"
       },
       {
         "command": "claudemeter.clearSession",
-        "title": "Clear Browser Session (Re-login)",
+        "title": "Clear Session (Re-login)",
         "category": "Claudemeter"
       },
       {
         "command": "claudemeter.openBrowser",
-        "title": "Open Browser for Login",
+        "title": "Login to Claude.ai",
         "category": "Claudemeter"
       }
     ],
@@ -118,17 +118,12 @@
           "default": true,
           "description": "Automatically fetch usage data when VS Code starts"
         },
-        "claudemeter.headless": {
-          "type": "boolean",
-          "default": true,
-          "description": "Run browser in headless (hidden) mode. Browser will show automatically if login is needed."
-        },
         "claudemeter.autoRefreshMinutes": {
           "type": "number",
           "default": 5,
           "minimum": 1,
           "maximum": 60,
-          "description": "Auto-refresh interval in minutes for fetching Claude.ai web usage data (1-60 minutes). This triggers browser automation to scrape usage stats."
+          "description": "Auto-refresh interval in minutes for fetching Claude.ai usage data (1-60 minutes)"
         },
         "claudemeter.localRefreshSeconds": {
           "type": "number",
@@ -260,6 +255,11 @@
           "default": false,
           "description": "Token-only mode: Only track Claude Code tokens, skip Claude.ai web usage scraping entirely"
         },
+        "claudemeter.useLegacyScraper": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use legacy browser-based scraper instead of lightweight HTTP fetching. The default HTTP method calls undocumented Claude.ai API endpoints that could change without notice. Enable this fallback if the HTTP method stops working due to API changes. Requires a Chromium-based browser (Chrome, Edge, Brave, etc.)."
+        },
         "claudemeter.debugLogFile": {
           "type": "string",
           "default": "",
@@ -276,8 +276,7 @@
     }
   },
   "dependencies": {
-    "proper-lockfile": "^4.1.2",
-    "puppeteer": "^24.37.5"
+    "puppeteer-core": "^24.37.5"
   },
   "devDependencies": {
     "@types/vscode": "^1.109.0",

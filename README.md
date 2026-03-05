@@ -42,21 +42,29 @@
 ![Status Bar 24h](assets/status-bar-default-24h.png)
 
 
+## How It Works
+
+Claudemeter v2 uses lightweight HTTP requests to fetch your usage data directly from Claude.ai's API endpoints. A browser is only needed once for the initial login — after that, your session cookie is stored locally and all subsequent fetches complete in 1-3 seconds with no browser overhead.
+
+> **Why not use the Claude CLI's OAuth token?** The CLI's OAuth scopes (`user:inference`, `user:profile`, etc.) don't grant access to the usage/billing endpoints. Only the `sessionKey` cookie from a browser login works. If Anthropic ever expands the CLI scopes, the browser login could be eliminated entirely.
+
+> **Why keep puppeteer-core?** The usage API endpoints are undocumented and could change without notice. `puppeteer-core` (~2MB, no bundled Chromium) handles the login flow and powers an opt-in legacy scraper fallback if the API breaks. See `claudemeter.useLegacyScraper` in settings.
+
 ## Installation
 
 ### Prerequisites
 
-- VS Code 1.80.0 or higher
-- A Chromium-based browser (Chrome, Chromium, Brave, or Edge)
+- VS Code 1.109.0 or higher
+- A Chromium-based browser for login (Chrome, Chromium, Brave, Edge, Arc, Vivaldi, or Opera)
 
 ## First-Time Setup
 
 The extension will **automatically fetch usage data** when VS Code starts. If you haven't logged in before:
 
-1. A browser window will appear (the extension detected you need to log in)
-2. Log in to Claude.ai with your credentials
-3. Once logged in, the extension automatically fetches your usage data
-4. Your session is saved locally - you won't need to log in again
+1. A browser window will open for you to log in to Claude.ai
+2. Log in with your credentials (Google, email, etc.)
+3. Once logged in, the extension saves your session cookie locally
+4. The browser closes and all future fetches use fast HTTP requests — no browser needed
 
 ![Login 1](assets/login-1.png)
 ![Login 2](assets/login-2.png)
@@ -75,18 +83,12 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 - **Default**: `true`
 - **Description**: Automatically fetch usage data when VS Code starts
 
-### `claudemeter.headless`
-
-- **Type**: Boolean
-- **Default**: `true`
-- **Description**: Run browser in headless (hidden) mode. Browser will show automatically if login is needed.
-
 ### `claudemeter.autoRefreshMinutes`
 
 - **Type**: Number
 - **Default**: `5`
 - **Range**: `1-60` minutes
-- **Description**: Auto-refresh interval in minutes for fetching Claude.ai web usage data. This triggers browser automation to scrape session and weekly limits from claude.ai/settings.
+- **Description**: Auto-refresh interval in minutes for fetching Claude.ai usage data via HTTP. Each fetch takes 1-3 seconds with no browser overhead.
 
 ### `claudemeter.localRefreshSeconds`
 
@@ -106,7 +108,13 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 
 - **Type**: Boolean
 - **Default**: `false`
-- **Description**: Token-only mode - only track Claude Code tokens, skip Claude.ai web usage scraping entirely
+- **Description**: Token-only mode - only track Claude Code tokens, skip Claude.ai usage fetching entirely
+
+### `claudemeter.useLegacyScraper`
+
+- **Type**: Boolean
+- **Default**: `false`
+- **Description**: Use the legacy browser-based scraper instead of lightweight HTTP fetching. The default HTTP method calls undocumented Claude.ai API endpoints that could change without notice. Enable this fallback if the HTTP method stops working due to API changes. Requires a Chromium-based browser.
 
 ### `claudemeter.statusBar.displayMode`
 
@@ -204,37 +212,39 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - **`Claudemeter: Open Claude Settings Page`** - Open claude.ai/settings in your default browser
 - **`Claudemeter: Start New Claude Code Session`** - Start a new token tracking session
 - **`Claudemeter: Show Debug Output`** - Open debug output channel
-- **`Claudemeter: Reset Browser Connection`** - Reset browser connection if stuck
-- **`Claudemeter: Clear Browser Session (Re-login)`** - Force re-login
-- **`Claudemeter: Open Browser for Login`** - Manually open browser for login
+- **`Claudemeter: Login to Claude.ai`** - Open browser for login
+- **`Claudemeter: Clear Session (Re-login)`** - Clear saved session and force re-login
+- **`Claudemeter: Reset Browser Connection (Legacy)`** - Reset browser connection (legacy scraper mode only)
 
 ## Troubleshooting
 
-### Browser won't launch
+### Browser won't open for login
 
-- Ensure you have enough disk space (~500MB for Chromium)
-- Check that no antivirus is blocking Puppeteer
+- Ensure you have a Chromium-based browser installed (Chrome, Edge, Brave, etc.)
+- The extension auto-detects your default browser; if it's not Chromium-based (e.g., Firefox), install Chrome or Edge
 - Try running VS Code as administrator (Windows)
 
-### Session expired or corrupted
+### Session expired or fetch errors
 
-- Delete the session folder:
-  - macOS: `~/Library/Application Support/claudemeter/`
-  - Linux: `~/.config/claudemeter/`
-  - Windows: `%APPDATA%\claudemeter\`
-- Log in again - session should persist this time
+- Run **Claudemeter: Clear Session (Re-login)** from the Command Palette
+- Or manually delete the session cookie file:
+  - macOS: `~/Library/Application Support/claudemeter/session-cookie.json`
+  - Linux: `~/.config/claudemeter/session-cookie.json`
+  - Windows: `%APPDATA%\claudemeter\session-cookie.json`
 
-### Can't find usage data
+### API changes broke usage fetching
 
-- Claude.ai may have changed their settings page layout
+- Claude.ai's usage API endpoints are undocumented and may change without notice
+- Try enabling the legacy scraper: set `claudemeter.useLegacyScraper` to `true` in settings
 - Check if you can see your usage at [claude.ai/settings](https://claude.ai/settings)
-- [Report an issue](https://github.com/hyperi-io/claudemeter/issues) for the extension to be updated
+- [Report an issue](https://github.com/hyperi-io/claudemeter/issues) so the extension can be updated
 
 ## Privacy & Security
 
-- **No credentials stored**: The extension never stores or transmits your credentials
-- **Local session only**: Your authentication session is saved locally by Chromium
+- **No credentials stored**: The extension never stores or transmits your login credentials
+- **Local session cookie**: Your `sessionKey` cookie is saved locally at `~/.config/claudemeter/session-cookie.json` (or platform equivalent) and is only sent to `claude.ai`
 - **No data transmission**: Usage data stays on your machine
+- **No bundled browser**: Uses your existing system browser for login only (via `puppeteer-core`)
 - **Open source**: All code is available for review
 
 ## Feedback & Issues

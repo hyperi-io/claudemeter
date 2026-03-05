@@ -1,12 +1,19 @@
-// Project:   Claudemeter
+// Project:   Claudemeter v2 (Lightweight)
 // File:      extension.js
 // Purpose:   VS Code extension entry point and lifecycle management
 // Language:  JavaScript (CommonJS)
+//
+// v2 replaces Puppeteer browser automation with lightweight HTTP cookie-based
+// fetching. The legacy browser scraper is retained as an opt-in fallback via
+// the "claudemeter.useLegacyScraper" setting.
 //
 // License:   MIT
 // Copyright: (c) 2026 HyperSec
 
 const vscode = require('vscode');
+const fs = require('fs');
+const path = require('path');
+const { ClaudeHttpFetcher } = require('./src/httpFetcher');
 const { ClaudeUsageScraper, BrowserState } = require('./src/scraper');
 const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
 const { ActivityMonitor } = require('./src/activityMonitor');
@@ -16,7 +23,8 @@ const { CONFIG_NAMESPACE, COMMANDS, PATHS, getTokenLimit, setDevMode, isDebugEna
 const { CREDENTIALS_PATH, readCredentials, formatSubscriptionType, formatRateLimitTier } = require('./src/credentialsReader');
 
 let statusBarItem;
-let scraper;
+let httpFetcher;
+let scraper; // Legacy browser-based scraper
 let usageData = null;
 let credentialsInfo = null;
 let isFirstFetch = true;
@@ -48,6 +56,11 @@ function debugLog(message) {
     }
 }
 
+function isLegacyMode() {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    return config.get('useLegacyScraper', false);
+}
+
 // Fetch with spinner, error handling, and login state management
 async function performFetch(isManualRetry = false) {
     let webError = null;
@@ -66,7 +79,8 @@ async function performFetch(isManualRetry = false) {
     }
 
     // Don't prompt for login on auto-refresh - only when user explicitly clicks
-    if (!isManualRetry && scraper && !scraper.hasExistingSession()) {
+    const fetcher = isLegacyMode() ? scraper : httpFetcher;
+    if (!isManualRetry && fetcher && !fetcher.hasExistingSession()) {
         console.log('Claudemeter: No session exists, skipping auto-refresh web fetch. Click status bar to login.');
         const sessionData = sessionTracker ? await sessionTracker.getCurrentSession() : null;
         if (!sessionData || !sessionData.tokenUsage) {
@@ -107,12 +121,12 @@ async function performFetch(isManualRetry = false) {
     return { webError, tokenError, loginCancelled: wasLoginCancelled };
 }
 
-// Fetch usage data from Claude.ai via browser automation
+// Fetch usage data from Claude.ai
 async function fetchUsage(isManualRetry = false) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const tokenOnlyMode = config.get('tokenOnlyMode', false);
 
-    fileLog(`fetchUsage() called (isManualRetry=${isManualRetry}, tokenOnlyMode=${tokenOnlyMode})`);
+    fileLog(`fetchUsage() called (isManualRetry=${isManualRetry}, tokenOnlyMode=${tokenOnlyMode}, legacy=${isLegacyMode()})`);
 
     if (tokenOnlyMode) {
         console.log('Claudemeter: Token-only mode enabled, skipping web fetch');
@@ -120,69 +134,124 @@ async function fetchUsage(isManualRetry = false) {
         return { webError: null, loginCancelled: false };
     }
 
+    if (isLegacyMode()) {
+        return fetchUsageLegacy(isManualRetry);
+    }
+
+    return fetchUsageHttp(isManualRetry);
+}
+
+// v2 default: HTTP cookie-based fetching
+async function fetchUsageHttp(isManualRetry = false) {
+    if (!httpFetcher) {
+        httpFetcher = new ClaudeHttpFetcher();
+        fileLog('Created new ClaudeHttpFetcher instance');
+    }
+
+    try {
+        fileLog('Calling fetchUsageData()...');
+        usageData = await httpFetcher.fetchUsageData();
+        fileLog('fetchUsageData() completed successfully');
+        isFirstFetch = false;
+        return { webError: null, loginCancelled: false };
+    } catch (error) {
+        fileLog(`fetchUsageHttp() error: ${error.message}`);
+
+        if (error.message === 'NO_SESSION' || error.message === 'SESSION_EXPIRED' || error.message === 'NO_ORG_ID') {
+            if (!isManualRetry) {
+                const msg = error.message === 'NO_ORG_ID'
+                    ? 'No Claude Code credentials found. Install and run Claude Code first.'
+                    : 'No session. Click status bar to login.';
+                return { webError: new Error(msg), loginCancelled: false };
+            }
+
+            // Manual retry: trigger login flow
+            try {
+                fileLog('Triggering login flow...');
+                await httpFetcher.login();
+                fileLog('Login completed, retrying fetch...');
+                usageData = await httpFetcher.fetchUsageData();
+                fileLog('Post-login fetch successful');
+                isFirstFetch = false;
+                return { webError: null, loginCancelled: false };
+            } catch (loginError) {
+                fileLog(`Login/fetch error: ${loginError.message}`);
+                if (loginError.message === 'LOGIN_CANCELLED') {
+                    return { webError: new Error('Login cancelled. Running in token-only mode. Click status bar to retry.'), loginCancelled: true };
+                } else if (loginError.message === 'LOGIN_IN_PROGRESS') {
+                    return { webError: null, loginCancelled: false };
+                } else if (loginError.message === 'LOGIN_TIMEOUT') {
+                    return { webError: new Error('Login timed out. Click status bar to retry.'), loginCancelled: false };
+                } else if (loginError.message === 'CHROME_NOT_FOUND') {
+                    return { webError: new Error('Chromium-based browser required. Install Chrome, Chromium, Brave, or Edge to fetch Claude.ai usage stats.'), loginCancelled: false };
+                }
+                return { webError: loginError, loginCancelled: false };
+            }
+        }
+
+        if (error.message === 'LOGIN_IN_PROGRESS') {
+            console.log('Claudemeter: Another instance is logging in, skipping this fetch');
+            return { webError: null, loginCancelled: false };
+        }
+
+        console.error('Web fetch failed:', error);
+        return { webError: error, loginCancelled: false };
+    }
+}
+
+// Legacy: browser-based scraping (fallback if HTTP method breaks)
+async function fetchUsageLegacy(isManualRetry = false) {
     if (!scraper) {
         scraper = new ClaudeUsageScraper();
-        fileLog('Created new ClaudeUsageScraper instance');
+        fileLog('Created new ClaudeUsageScraper instance (legacy mode)');
     }
 
     let loginCancelled = false;
 
     try {
-        // Check session BEFORE launching browser to avoid headless->headed restart
         const hasSession = scraper.hasExistingSession();
-        fileLog(`hasExistingSession() = ${hasSession}`);
+        fileLog(`Legacy: hasExistingSession() = ${hasSession}`);
 
         if (hasSession) {
-            fileLog('Initializing scraper (headless)...');
+            fileLog('Legacy: Initializing scraper (headless)...');
             await scraper.initialize(false);
-            fileLog('Scraper initialized');
-        } else {
-            fileLog('No existing session - will open login browser');
         }
 
-        // Manual retry should ignore stale login_failed state from other instances
         if (isManualRetry) {
             BrowserState.clear();
         }
 
-        fileLog('Calling ensureLoggedIn()...');
+        fileLog('Legacy: Calling ensureLoggedIn()...');
         await scraper.ensureLoggedIn();
-        fileLog('ensureLoggedIn() completed');
+        fileLog('Legacy: ensureLoggedIn() completed');
 
-        fileLog('Calling fetchUsageData()...');
+        fileLog('Legacy: Calling fetchUsageData()...');
         usageData = await scraper.fetchUsageData();
-        fileLog('fetchUsageData() completed successfully');
+        fileLog('Legacy: fetchUsageData() completed successfully');
         isFirstFetch = false;
 
         return { webError: null, loginCancelled: false };
     } catch (error) {
-        fileLog(`fetchUsage() error: ${error.message}`);
+        fileLog(`Legacy: fetchUsage() error: ${error.message}`);
         if (error.message === 'CHROME_NOT_FOUND') {
             return { webError: new Error('Chromium-based browser required. Install Chrome, Chromium, Brave, or Edge to fetch Claude.ai usage stats.'), loginCancelled: false };
         } else if (error.message === 'LOGIN_CANCELLED') {
-            console.log('Claudemeter: Login cancelled by user, falling back to token-only mode');
-            return { webError: new Error('Login cancelled. Running in token-only mode. Click status bar to retry login.'), loginCancelled: true };
+            return { webError: new Error('Login cancelled. Running in token-only mode. Click status bar to retry.'), loginCancelled: true };
         } else if (error.message === 'LOGIN_FAILED_SHARED') {
-            console.log('Claudemeter: Another instance failed login, falling back to token-only mode');
             return { webError: new Error('Login failed in another window. Running in token-only mode.'), loginCancelled: true };
         } else if (error.message === 'LOGIN_IN_PROGRESS') {
-            // Another instance is logging in - silently skip this cycle, will retry on next refresh
-            console.log('Claudemeter: Another instance is logging in, skipping this fetch');
             return { webError: null, loginCancelled: false };
         } else if (error.message === 'LOGIN_TIMEOUT') {
             return { webError: new Error('Login timed out. Click status bar to retry.'), loginCancelled: false };
         } else if (error.message.includes('Browser busy')) {
-            // Another instance is logging in - this is handled by the lock retry, but if it times out...
             return { webError: new Error('Another Claudemeter is logging in. Please wait and retry.'), loginCancelled: false };
-        } else {
-            console.error('Web scrape failed:', error);
-            return { webError: error, loginCancelled: false };
         }
+        return { webError: error, loginCancelled: false };
     } finally {
         if (scraper) {
-            fileLog('Closing scraper...');
+            fileLog('Legacy: Closing scraper...');
             await scraper.close();
-            fileLog('Scraper closed');
+            fileLog('Legacy: Scraper closed');
         }
     }
 }
@@ -268,7 +337,6 @@ async function setupTokenMonitoring(context) {
 
     await updateTokensFromJsonl(false);
 
-    const fs = require('fs');
     if (fs.existsSync(projectDir)) {
         jsonlWatcher = vscode.workspace.createFileSystemWatcher(
             new vscode.RelativePattern(projectDir, '*.jsonl')
@@ -293,9 +361,6 @@ async function setupTokenMonitoring(context) {
 }
 
 function setupCredentialsMonitoring(context) {
-    const fs = require('fs');
-    const path = require('path');
-
     // Read credentials on startup
     credentialsInfo = readCredentials();
     if (credentialsInfo) {
@@ -317,12 +382,7 @@ function setupCredentialsMonitoring(context) {
 
             if (!credentialsInfo) return;
 
-            // Detect account switch by orgId OR refresh token change.
-            // Personal accounts always have orgId=null, so refresh token is the
-            // only reliable signal when switching between two personal accounts.
-            // We use refreshToken (not accessToken) because access tokens rotate
-            // on every OAuth refresh, causing false positives.  Refresh tokens
-            // only change on a full /login flow (i.e. actual account switch).
+            // Detect account switch by orgId OR refresh token change
             const orgChanged = previous?.orgId && credentialsInfo.orgId !== previous.orgId;
             const tokenChanged = previous?.refreshToken && credentialsInfo.refreshToken &&
                 credentialsInfo.refreshToken !== previous.refreshToken;
@@ -334,16 +394,19 @@ function setupCredentialsMonitoring(context) {
                 fileLog(`Account switched (${hint})`);
                 fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
 
-                // Clear stale browser state and session cookies so next fetch
-                // uses the new account rather than replaying old cookies.
-                BrowserState.clear();
-                if (fs.existsSync(PATHS.BROWSER_SESSION_DIR)) {
-                    try {
-                        fs.rmSync(PATHS.BROWSER_SESSION_DIR, { recursive: true, force: true });
-                        fileLog('Browser session cleared for account switch');
-                    } catch (e) {
-                        fileLog(`Failed to clear browser session: ${e.message}`);
+                // Clear session so next fetch uses the new account
+                if (isLegacyMode()) {
+                    BrowserState.clear();
+                    if (fs.existsSync(PATHS.BROWSER_SESSION_DIR)) {
+                        try {
+                            fs.rmSync(PATHS.BROWSER_SESSION_DIR, { recursive: true, force: true });
+                            fileLog('Browser session cleared for account switch');
+                        } catch (e) {
+                            fileLog(`Failed to clear browser session: ${e.message}`);
+                        }
                     }
+                } else if (httpFetcher) {
+                    httpFetcher.clearSession();
                 }
                 loginWasCancelled = false;
                 isFirstFetch = true;
@@ -493,17 +556,6 @@ async function activate(context) {
     await setupTokenMonitoring(context);
     setupCredentialsMonitoring(context);
 
-    // Clean up browser when extension deactivates
-    context.subscriptions.push({
-        dispose: () => {
-            if (scraper) {
-                scraper.close().catch(err => {
-                    console.error('Error closing browser on dispose:', err);
-                });
-            }
-        }
-    });
-
     // Register commands
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.FETCH_NOW, async () => {
@@ -551,26 +603,27 @@ async function activate(context) {
             const debugChannel = getDebugChannel();
 
             debugChannel.appendLine(`\n=== DIAGNOSTICS (${new Date().toLocaleString()}) ===`);
+            debugChannel.appendLine(`Mode: ${isLegacyMode() ? 'Legacy (browser scraper)' : 'HTTP (lightweight)'}`);
 
-            if (scraper) {
+            if (isLegacyMode() && scraper) {
                 const diag = scraper.getDiagnostics();
-                debugChannel.appendLine('Scraper State:');
+                debugChannel.appendLine('Scraper State (Legacy):');
                 debugChannel.appendLine(`  Initialised: ${diag.isInitialized}`);
-                debugChannel.appendLine(`  Connected Browser: ${diag.isConnectedBrowser}`);
                 debugChannel.appendLine(`  Has Browser: ${diag.hasBrowser}`);
-                debugChannel.appendLine(`  Has Page: ${diag.hasPage}`);
                 debugChannel.appendLine(`  Has API Endpoint: ${diag.hasApiEndpoint}`);
-                debugChannel.appendLine(`  Has API Headers: ${diag.hasApiHeaders}`);
-                debugChannel.appendLine(`  Has Credits Endpoint: ${diag.hasCreditsEndpoint}`);
-                debugChannel.appendLine(`  Has Overage Endpoint: ${diag.hasOverageEndpoint}`);
-                debugChannel.appendLine(`  Captured Endpoints: ${diag.capturedEndpointsCount}`);
                 debugChannel.appendLine(`  Org ID: ${diag.currentOrgId || 'none'}`);
                 debugChannel.appendLine(`  Account: ${diag.accountName || 'unknown'}`);
-                debugChannel.appendLine(`  Email: ${diag.accountEmail || 'unknown'}`);
-                debugChannel.appendLine(`  Session Dir: ${diag.sessionDir}`);
-                debugChannel.appendLine(`  Has Existing Session: ${diag.hasExistingSession}`);
+            } else if (httpFetcher) {
+                const diag = httpFetcher.getDiagnostics();
+                debugChannel.appendLine('Fetcher State:');
+                debugChannel.appendLine(`  Has Cookie: ${diag.hasCookie}`);
+                debugChannel.appendLine(`  Cookie Expires: ${diag.cookieExpires || 'N/A'}`);
+                debugChannel.appendLine(`  Cookie Saved At: ${diag.cookieSavedAt || 'N/A'}`);
+                debugChannel.appendLine(`  Org ID: ${diag.orgId || 'none'}`);
+                debugChannel.appendLine(`  Subscription: ${diag.subscriptionType || 'unknown'}`);
+                debugChannel.appendLine(`  Rate Limit Tier: ${diag.rateLimitTier || 'unknown'}`);
             } else {
-                debugChannel.appendLine('Scraper not initialised');
+                debugChannel.appendLine('Fetcher not initialised');
             }
 
             debugChannel.appendLine('');
@@ -592,6 +645,10 @@ async function activate(context) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.RESET_CONNECTION, async () => {
+            if (!isLegacyMode()) {
+                vscode.window.showInformationMessage('Reset Connection is only available in legacy scraper mode. Use "Clear Session" instead.');
+                return;
+            }
             try {
                 if (scraper) {
                     const result = await scraper.reset();
@@ -609,19 +666,23 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.CLEAR_SESSION, async () => {
             try {
-                if (scraper) {
-                    const confirm = await vscode.window.showWarningMessage(
-                        'This will delete your saved browser session. You will need to log in to Claude.ai again. Continue?',
-                        { modal: true },
-                        'Yes, Clear Session'
-                    );
-                    if (confirm === 'Yes, Clear Session') {
+                const confirm = await vscode.window.showWarningMessage(
+                    'This will delete your saved session. You will need to log in to Claude.ai again. Continue?',
+                    { modal: true },
+                    'Yes, Clear Session'
+                );
+                if (confirm === 'Yes, Clear Session') {
+                    if (isLegacyMode()) {
+                        if (!scraper) scraper = new ClaudeUsageScraper();
                         const result = await scraper.clearSession();
-                        isFirstFetch = true;
+                        vscode.window.showInformationMessage(result.message);
+                    } else {
+                        if (!httpFetcher) httpFetcher = new ClaudeHttpFetcher();
+                        const result = httpFetcher.clearSession();
                         vscode.window.showInformationMessage(result.message);
                     }
-                } else {
-                    vscode.window.showWarningMessage('Scraper not initialised');
+                    isFirstFetch = true;
+                    loginWasCancelled = false;
                 }
             } catch (error) {
                 vscode.window.showErrorMessage(`Clear session failed: ${error.message}`);
@@ -632,8 +693,9 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.OPEN_BROWSER, async () => {
             try {
-                if (scraper) {
-                    vscode.window.showInformationMessage('Opening browser for Claude.ai login...');
+                vscode.window.showInformationMessage('Opening browser for Claude.ai login...');
+                if (isLegacyMode()) {
+                    if (!scraper) scraper = new ClaudeUsageScraper();
                     const result = await scraper.forceOpenBrowser();
                     if (result.success) {
                         vscode.window.showInformationMessage(result.message);
@@ -641,10 +703,21 @@ async function activate(context) {
                         vscode.window.showErrorMessage(result.message);
                     }
                 } else {
-                    vscode.window.showWarningMessage('Scraper not initialised');
+                    if (!httpFetcher) httpFetcher = new ClaudeHttpFetcher();
+                    await httpFetcher.login();
+                    const { webError } = await performFetch(true);
+                    if (webError) {
+                        vscode.window.showErrorMessage(`Fetch failed after login: ${webError.message}`);
+                    }
                 }
             } catch (error) {
-                vscode.window.showErrorMessage(`Failed to open browser: ${error.message}`);
+                if (error.message === 'LOGIN_CANCELLED') {
+                    vscode.window.showInformationMessage('Login cancelled.');
+                } else if (error.message === 'CHROME_NOT_FOUND') {
+                    vscode.window.showErrorMessage('Chromium-based browser required. Install Chrome, Chromium, Brave, or Edge.');
+                } else {
+                    vscode.window.showErrorMessage(`Failed to open browser: ${error.message}`);
+                }
             }
         })
     );

@@ -1,19 +1,31 @@
 // Project:   Claudemeter
 // File:      scraper.js
-// Purpose:   Browser automation for fetching Claude.ai usage data
+// Purpose:   Legacy browser automation for fetching Claude.ai usage data
 // Language:  JavaScript (CommonJS)
+//
+// LEGACY FALLBACK: This module is retained as an opt-in emergency fallback
+// because the HTTP fetcher relies on undocumented, internal Claude.ai API
+// endpoints (/usage, /prepaid/credits, /overage_spend_limit) that have no
+// public documentation or stability guarantees. Anthropic could change, gate,
+// or remove these endpoints at any time without notice. If that happens, this
+// browser-based scraper can still extract usage data by intercepting API
+// requests or scraping the rendered HTML — adapting to page-level changes that
+// would break the direct HTTP approach.
+//
+// Enable via "claudemeter.useLegacyScraper": true in settings.
+// This requires a Chromium-based browser installed on the system.
 //
 // License:   MIT
 // Copyright: (c) 2026 HyperSec
 
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const vscode = require('vscode');
 
-const lockfile = require('proper-lockfile');
-const { ClaudeAuth } = require('./auth');
+const { ClaudeAuth } = require('./legacyAuth');
+const { findChrome } = require('./httpFetcher');
 const {
     CONFIG_NAMESPACE,
     PATHS,
@@ -27,21 +39,10 @@ const {
     fileLog
 } = require('./utils');
 
-// Browser lock configuration
-// Stale after 6 minutes (login timeout is 5 min, add buffer)
-// Poll every 1 second for up to 90 seconds - covers typical fetch (30-45s) with buffer
-const BROWSER_LOCK_OPTIONS = {
-    stale: 360000,
-    retries: {
-        retries: 90,
-        factor: 1,
-        minTimeout: 1000,
-        maxTimeout: 1000
-    },
-    onCompromised: (err) => {
-        console.warn('Claudemeter: Browser lock was compromised:', err.message);
-    }
-};
+// Browser lock: simple file-based mutex (replaces proper-lockfile)
+const BROWSER_LOCK_TTL = 360000; // 6 minutes
+const BROWSER_LOCK_POLL = 1000;  // 1 second
+const BROWSER_LOCK_RETRIES = 90; // 90 seconds max wait
 
 // Shared browser state across all VS Code windows
 // States: 'ready' (session valid), 'login_failed' (all go token-only), 'logging_in' (wait)
@@ -93,35 +94,6 @@ const {
     getSchemaInfo,
 } = require('./apiSchema');
 
-// Chromium-based browser paths by platform
-const CHROMIUM_BROWSERS = {
-    linux: {
-        'google-chrome.desktop': ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/snap/bin/google-chrome'],
-        'chromium-browser.desktop': ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/snap/bin/chromium'],
-        'chromium.desktop': ['/usr/bin/chromium-browser', '/usr/bin/chromium', '/snap/bin/chromium'],
-        'brave-browser.desktop': ['/usr/bin/brave-browser', '/usr/bin/brave', '/snap/bin/brave', '/opt/brave.com/brave/brave-browser'],
-        'microsoft-edge.desktop': ['/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable'],
-        'vivaldi-stable.desktop': ['/usr/bin/vivaldi-stable', '/usr/bin/vivaldi'],
-        'opera.desktop': ['/usr/bin/opera'],
-    },
-    darwin: {
-        'com.google.chrome': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        'org.chromium.chromium': '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        'com.brave.browser': '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-        'com.microsoft.edgemac': '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-        'company.thebrowser.browser': '/Applications/Arc.app/Contents/MacOS/Arc',
-        'com.vivaldi.vivaldi': '/Applications/Vivaldi.app/Contents/MacOS/Vivaldi',
-        'com.operasoftware.opera': '/Applications/Opera.app/Contents/MacOS/Opera',
-    },
-    win32: {
-        'chrome': 'Google\\Chrome\\Application\\chrome.exe',
-        'chromium': 'Chromium\\Application\\chrome.exe',
-        'brave': 'BraveSoftware\\Brave-Browser\\Application\\brave.exe',
-        'msedge': 'Microsoft\\Edge\\Application\\msedge.exe',
-        'vivaldi': 'Vivaldi\\Application\\vivaldi.exe',
-        'opera': 'Opera\\launcher.exe',
-    }
-};
 
 class ClaudeUsageScraper {
     constructor() {
@@ -151,7 +123,6 @@ class ClaudeUsageScraper {
     // Acquire exclusive lock for browser operations (login, headed browser launch)
     // Other instances wait until lock is released or times out
     async acquireBrowserLock() {
-        // Skip if we already hold the lock
         if (this.releaseBrowserLock) {
             fileLog('Already holding browser lock, skipping acquire');
             return true;
@@ -159,14 +130,9 @@ class ClaudeUsageScraper {
 
         const debug = isDebugEnabled();
         const lockFile = PATHS.BROWSER_LOCK_FILE;
-
-        // Ensure lock file exists (proper-lockfile requires it)
-        if (!fs.existsSync(lockFile)) {
-            const dir = path.dirname(lockFile);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
-            fs.writeFileSync(lockFile, '');
+        const dir = path.dirname(lockFile);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
         }
 
         if (debug) {
@@ -174,27 +140,40 @@ class ClaudeUsageScraper {
         }
         fileLog('Attempting to acquire browser lock...');
 
-        try {
-            this.releaseBrowserLock = await lockfile.lock(lockFile, BROWSER_LOCK_OPTIONS);
+        for (let i = 0; i < BROWSER_LOCK_RETRIES; i++) {
+            try {
+                if (fs.existsSync(lockFile)) {
+                    const data = JSON.parse(fs.readFileSync(lockFile, 'utf-8'));
+                    if (Date.now() - data.timestamp < BROWSER_LOCK_TTL) {
+                        await sleep(BROWSER_LOCK_POLL);
+                        continue;
+                    }
+                }
+            } catch {
+                // Corrupt lock file, safe to overwrite
+            }
+
+            // Acquire the lock
+            fs.writeFileSync(lockFile, JSON.stringify({ timestamp: Date.now(), pid: process.pid }));
+            this.releaseBrowserLock = () => {
+                try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch { /* ignore */ }
+            };
             if (debug) {
                 getDebugChannel().appendLine('Browser lock acquired');
             }
             fileLog('Browser lock acquired');
             return true;
-        } catch (error) {
-            if (debug) {
-                getDebugChannel().appendLine(`Failed to acquire browser lock: ${error.message}`);
-            }
-            fileLog(`Failed to acquire browser lock: ${error.message}`);
-            throw new Error(`Browser busy (another Claudemeter instance is using the browser). Please wait and retry.`);
         }
+
+        fileLog('Failed to acquire browser lock: timeout');
+        throw new Error('Browser busy (another Claudemeter instance is using the browser). Please wait and retry.');
     }
 
     async releaseBrowserLockIfHeld() {
         if (this.releaseBrowserLock) {
             const debug = isDebugEnabled();
             try {
-                await this.releaseBrowserLock();
+                this.releaseBrowserLock();
                 this.releaseBrowserLock = null;
                 if (debug) {
                     getDebugChannel().appendLine('Browser lock released');
@@ -223,193 +202,9 @@ class ClaudeUsageScraper {
         });
     }
 
-    getDefaultBrowser() {
-        try {
-            if (process.platform === 'linux') {
-                return this.getDefaultBrowserLinux();
-            } else if (process.platform === 'darwin') {
-                return this.getDefaultBrowserMacOS();
-            } else if (process.platform === 'win32') {
-                return this.getDefaultBrowserWindows();
-            }
-        } catch (err) {
-            console.log('Default browser detection failed:', err.message);
-        }
-        return null;
-    }
-
-    getDefaultBrowserLinux() {
-        try {
-            const desktopFile = execSync('xdg-mime query default x-scheme-handler/http', {
-                encoding: 'utf8',
-                timeout: 5000
-            }).trim().toLowerCase();
-
-            console.log(`Linux default browser desktop file: ${desktopFile}`);
-
-            const browserMap = CHROMIUM_BROWSERS.linux;
-            for (const [pattern, paths] of Object.entries(browserMap)) {
-                if (desktopFile.includes(pattern.replace('.desktop', '')) || desktopFile === pattern) {
-                    for (const browserPath of paths) {
-                        if (fs.existsSync(browserPath)) {
-                            console.log(`Default browser is Chromium-based: ${browserPath}`);
-                            return browserPath;
-                        }
-                    }
-                }
-            }
-
-            console.log(`Default browser (${desktopFile}) is not Chromium-based or not recognised`);
-        } catch (err) {
-            console.log('xdg-mime query failed:', err.message);
-        }
-        return null;
-    }
-
-    getDefaultBrowserMacOS() {
-        try {
-            const bundleId = execSync(
-                'defaults read ~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers | grep -B1 "https" | grep "LSHandlerRoleAll" | head -1 | sed \'s/.*= "\\(.*\\)";/\\1/\'',
-                { encoding: 'utf8', timeout: 5000, shell: '/bin/bash' }
-            ).trim().toLowerCase();
-
-            console.log(`macOS default browser bundle ID: ${bundleId}`);
-
-            const browserMap = CHROMIUM_BROWSERS.darwin;
-            for (const [pattern, appPath] of Object.entries(browserMap)) {
-                if (bundleId.includes(pattern.toLowerCase())) {
-                    const systemPath = appPath;
-                    const userPath = appPath.replace('/Applications/', path.join(os.homedir(), 'Applications') + '/');
-
-                    if (fs.existsSync(systemPath)) {
-                        console.log(`Default browser is Chromium-based: ${systemPath}`);
-                        return systemPath;
-                    }
-                    if (fs.existsSync(userPath)) {
-                        console.log(`Default browser is Chromium-based: ${userPath}`);
-                        return userPath;
-                    }
-                }
-            }
-
-            console.log(`Default browser (${bundleId}) is not Chromium-based or not recognised`);
-        } catch (err) {
-            console.log('macOS default browser detection failed:', err.message);
-        }
-        return null;
-    }
-
-    getDefaultBrowserWindows() {
-        try {
-            const progId = execSync(
-                'reg query "HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice" /v ProgId',
-                { encoding: 'utf8', timeout: 5000 }
-            );
-
-            const match = progId.match(/ProgId\s+REG_SZ\s+(\S+)/i);
-            if (!match) return null;
-
-            const progIdValue = match[1].toLowerCase();
-            console.log(`Windows default browser ProgId: ${progIdValue}`);
-
-            const browserMap = CHROMIUM_BROWSERS.win32;
-            for (const [pattern, relativePath] of Object.entries(browserMap)) {
-                if (progIdValue.includes(pattern)) {
-                    const possiblePaths = [
-                        path.join(process.env.PROGRAMFILES || 'C:\\Program Files', relativePath),
-                        path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', relativePath),
-                        path.join(os.homedir(), 'AppData', 'Local', relativePath),
-                    ];
-
-                    for (const browserPath of possiblePaths) {
-                        if (fs.existsSync(browserPath)) {
-                            console.log(`Default browser is Chromium-based: ${browserPath}`);
-                            return browserPath;
-                        }
-                    }
-                }
-            }
-
-            console.log(`Default browser (${progIdValue}) is not Chromium-based or not recognised`);
-        } catch (err) {
-            console.log('Windows registry query failed:', err.message);
-        }
-        return null;
-    }
-
-    // Priority: default browser (if Chromium), then known browser paths
+    // Delegate to shared browser detection in httpFetcher.js
     findChrome() {
-        const defaultBrowser = this.getDefaultBrowser();
-        if (defaultBrowser) {
-            console.log(`Using default browser: ${defaultBrowser}`);
-            return defaultBrowser;
-        }
-
-        console.log('Default browser not Chromium-based, searching for installed browsers...');
-
-        const browserPaths = [];
-
-        if (process.platform === 'win32') {
-            browserPaths.push(
-                'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-                'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-                path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-                'C:\\AppInstall\\scoop\\apps\\googlechrome\\current\\chrome.exe',
-                path.join(os.homedir(), 'AppData', 'Local', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
-                'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
-                'C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
-                'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-                'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-            );
-        } else if (process.platform === 'darwin') {
-            browserPaths.push(
-                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-                path.join(os.homedir(), 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
-                '/Applications/Chromium.app/Contents/MacOS/Chromium',
-                path.join(os.homedir(), 'Applications', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
-                '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-                path.join(os.homedir(), 'Applications', 'Brave Browser.app', 'Contents', 'MacOS', 'Brave Browser'),
-                '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-                path.join(os.homedir(), 'Applications', 'Microsoft Edge.app', 'Contents', 'MacOS', 'Microsoft Edge'),
-                '/Applications/Arc.app/Contents/MacOS/Arc',
-                path.join(os.homedir(), 'Applications', 'Arc.app', 'Contents', 'MacOS', 'Arc'),
-                '/Applications/Vivaldi.app/Contents/MacOS/Vivaldi',
-                path.join(os.homedir(), 'Applications', 'Vivaldi.app', 'Contents', 'MacOS', 'Vivaldi'),
-                '/Applications/Opera.app/Contents/MacOS/Opera',
-                path.join(os.homedir(), 'Applications', 'Opera.app', 'Contents', 'MacOS', 'Opera')
-            );
-        } else {
-            browserPaths.push(
-                '/usr/bin/google-chrome',
-                '/usr/bin/google-chrome-stable',
-                '/snap/bin/google-chrome',
-                '/var/lib/flatpak/app/com.google.Chrome/current/active/export/bin/com.google.Chrome',
-                '/usr/bin/chromium-browser',
-                '/usr/bin/chromium',
-                '/snap/bin/chromium',
-                '/var/lib/flatpak/app/org.chromium.Chromium/current/active/export/bin/org.chromium.Chromium',
-                '/usr/bin/brave-browser',
-                '/usr/bin/brave',
-                '/snap/bin/brave',
-                '/opt/brave.com/brave/brave-browser',
-                '/var/lib/flatpak/app/com.brave.Browser/current/active/export/bin/com.brave.Browser',
-                '/usr/bin/microsoft-edge',
-                '/usr/bin/microsoft-edge-stable'
-            );
-        }
-
-        for (const browserPath of browserPaths) {
-            try {
-                if (fs.existsSync(browserPath)) {
-                    console.log(`Found browser at: ${browserPath}`);
-                    return browserPath;
-                }
-            } catch (err) {
-                // Continue to next path
-            }
-        }
-
-        return null;
+        return findChrome();
     }
 
     async tryConnectToExisting() {

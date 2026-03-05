@@ -47,11 +47,13 @@ const CONFIG_DIR = getConfigDir();
 
 const PATHS = {
     CONFIG_DIR: CONFIG_DIR,
+    SESSION_COOKIE_FILE: path.join(CONFIG_DIR, 'session-cookie.json'),
+    SESSION_DATA_FILE: path.join(CONFIG_DIR, 'session-data.json'),
+    USAGE_HISTORY_FILE: path.join(CONFIG_DIR, 'usage-history.json'),
+    // Legacy scraper paths (used when useLegacyScraper is enabled)
     BROWSER_SESSION_DIR: path.join(CONFIG_DIR, 'browser-session'),
     BROWSER_LOCK_FILE: path.join(CONFIG_DIR, 'browser.lock'),
     BROWSER_STATE_FILE: path.join(CONFIG_DIR, 'browser-state.json'),
-    SESSION_DATA_FILE: path.join(CONFIG_DIR, 'session-data.json'),
-    USAGE_HISTORY_FILE: path.join(CONFIG_DIR, 'usage-history.json')
 };
 
 // Claude Code default context window (tokens)
@@ -188,6 +190,7 @@ const TIMEOUTS = {
     SESSION_DURATION: 3600000
 };
 
+// Legacy scraper viewport (used when useLegacyScraper is enabled)
 const VIEWPORT = {
     WIDTH: 1280,
     HEIGHT: 800
