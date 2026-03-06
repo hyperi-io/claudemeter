@@ -1,3 +1,100 @@
+# [2.0.0](https://github.com/hyperi-io/claudemeter/compare/v1.3.10...v2.0.0) (2026-03-06)
+
+
+* feat!: Claudemeter v2 — streamlined HTTP fetching, account verification, HyperI rebrand ([21dd141](https://github.com/hyperi-io/claudemeter/commit/21dd1415c35523cc45673ec72a29a61675d39506))
+* feat!: v2 lightweight release — replace Puppeteer with HTTP cookie-based fetching ([6d780fc](https://github.com/hyperi-io/claudemeter/commit/6d780fcb19e6a255fea1a71365d8c251dc759c33))
+* feat!: v2 streamlined release — docs and submodule migration ([67dcc3b](https://github.com/hyperi-io/claudemeter/commit/67dcc3b4f05029f71ab64f44cd9fe02c364de1b7))
+
+
+### Features
+
+* v2 streamlined release — HTTP fetching, account verification, and UX polish ([67fead3](https://github.com/hyperi-io/claudemeter/commit/67fead31b818a7505c47d7d0846c44f389945d2f))
+
+
+### BREAKING CHANGES
+
+* v2 replaces Puppeteer browser automation with streamlined
+HTTP cookie-based fetching. Existing browser sessions are not migrated;
+a fresh login is required on first use of v2.
+
+## Features
+- HTTP cookie-based fetching: usage data via direct API calls (1-3s, no
+  browser overhead) replaces full Puppeteer browser automation (~200MB)
+- Self-contained 4.5MB bundle: puppeteer-core bundled via esbuild, no
+  node_modules at runtime
+- Account verification: after browser login, verifies the browser account
+  matches the Claude Code CLI account; rejects mismatched accounts with
+  error and re-login prompt showing the expected email
+- Account switch detection: credentials watcher detects CLI account changes,
+  clears login browser cache, prompts re-login for the new account
+- First-run login prompt: prompts user to log in on first v2 launch
+  instead of silently doing nothing
+- Extension version shown in status bar tooltip
+- Org UUID resolution via /api/bootstrap (CLI org ID != web org ID)
+
+## Bug Fixes
+- Lazy-load puppeteer-core and scraper module to prevent crash on load
+- Fix 404 on usage API by resolving correct web org UUID
+
+## Chores
+- Rebrand HyperSec to HyperI across codebase (marketplace publisher ID
+  stays hypersec, display name updated to HyperI)
+- Rename terminology: "lightweight" to "streamlined"
+- Migrate ai/ submodule to hyperi-ai/
+- Update README: account verification, Cloudflare check, account switch
+  flow, troubleshooting, privacy section
+
+# Conflicts:
+#	package-lock.json
+* v2 replaces Puppeteer browser automation with streamlined
+HTTP cookie-based fetching. Existing browser sessions are not migrated;
+a fresh login is required on first use of v2.
+
+## What's New in v2
+
+### Features
+- HTTP cookie-based fetching: usage data via direct API calls (1-3s, no
+  browser overhead) replaces full Puppeteer browser automation (~200MB)
+- Self-contained 4.5MB bundle: puppeteer-core bundled via esbuild, no
+  node_modules at runtime
+- Account verification: after browser login, verifies the browser account
+  matches the Claude Code CLI account; rejects mismatched accounts with
+  error and re-login prompt
+- Account switch detection: credentials watcher detects CLI account changes,
+  clears login browser cache, prompts re-login for the new account
+- First-run login prompt: prompts user to log in on first v2 launch
+  instead of silently doing nothing
+- Extension version shown in status bar tooltip
+- Org UUID resolution via /api/bootstrap (CLI org ID != web org ID)
+
+### Bug Fixes
+- Lazy-load puppeteer-core and scraper module to prevent crash on load
+- Fix 404 on usage API by resolving correct web org UUID
+
+### Chores
+- Rebrand HyperSec to HyperI across codebase (marketplace publisher ID
+  stays hypersec per VS Code Marketplace constraints, display name updated)
+- Rename terminology: "lightweight" to "streamlined"
+- Migrate ai/ submodule to hyperi-ai/
+
+### Documentation
+- README: document account verification, Cloudflare check, account switch
+  flow, new troubleshooting section for wrong account after login
+- README: update Privacy section — self-contained bundle, account verification
+- README: fix typos ("ony top of", "nee HyperSec" → "formerly HyperSec")
+* Replace browser automation with direct HTTP API calls.
+
+- Replace puppeteer (~200MB) with puppeteer-core (~2MB, no bundled Chromium)
+- All usage fetches now via native fetch() with stored sessionKey cookie (1-3s)
+- Browser only launched once for initial login flow
+- Retain legacy browser scraper as opt-in fallback (claudemeter.useLegacyScraper)
+  because usage API endpoints are undocumented and could change without notice
+- Remove proper-lockfile dependency, use file-based locks
+- Remove headless setting (no longer applicable)
+- Add httpFetcher.js as default fetch engine, legacyAuth.js for legacy scraper
+- Update README with v2 architecture, rationale, and troubleshooting
+- Update package.json settings and command titles
+
 ## [1.3.10](https://github.com/hyperi-io/claudemeter/compare/v1.3.9...v1.3.10) (2026-03-04)
 
 
