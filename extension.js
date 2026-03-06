@@ -40,7 +40,6 @@ let httpFetcher;
 let scraper; // Legacy browser-based scraper
 let usageData = null;
 let credentialsInfo = null;
-let isFirstFetch = true;
 let autoRefreshTimer;
 let localRefreshTimer;
 let serviceStatusTimer;
@@ -165,7 +164,6 @@ async function fetchUsageHttp(isManualRetry = false) {
         fileLog('Calling fetchUsageData()...');
         usageData = await httpFetcher.fetchUsageData();
         fileLog('fetchUsageData() completed successfully');
-        isFirstFetch = false;
         return { webError: null, loginCancelled: false };
     } catch (error) {
         fileLog(`fetchUsageHttp() error: ${error.message}`);
@@ -185,7 +183,6 @@ async function fetchUsageHttp(isManualRetry = false) {
                 fileLog('Login completed, retrying fetch...');
                 usageData = await httpFetcher.fetchUsageData();
                 fileLog('Post-login fetch successful');
-                isFirstFetch = false;
                 return { webError: null, loginCancelled: false };
             } catch (loginError) {
                 fileLog(`Login/fetch error: ${loginError.message}`);
@@ -219,8 +216,6 @@ async function fetchUsageLegacy(isManualRetry = false) {
         fileLog('Created new ClaudeUsageScraper instance (legacy mode)');
     }
 
-    let loginCancelled = false;
-
     try {
         const hasSession = scraper.hasExistingSession();
         fileLog(`Legacy: hasExistingSession() = ${hasSession}`);
@@ -241,7 +236,6 @@ async function fetchUsageLegacy(isManualRetry = false) {
         fileLog('Legacy: Calling fetchUsageData()...');
         usageData = await scraper.fetchUsageData();
         fileLog('Legacy: fetchUsageData() completed successfully');
-        isFirstFetch = false;
 
         return { webError: null, loginCancelled: false };
     } catch (error) {
@@ -395,15 +389,14 @@ function setupCredentialsMonitoring(context) {
 
             if (!credentialsInfo) return;
 
-            // Detect account switch by orgId OR refresh token change
-            const orgChanged = previous?.orgId && credentialsInfo.orgId !== previous.orgId;
-            const tokenChanged = previous?.refreshToken && credentialsInfo.refreshToken &&
-                credentialsInfo.refreshToken !== previous.refreshToken;
+            // Detect account switch by orgId change (including null transitions
+            // for personal ↔ org switches). Token rotation is NOT a switch signal
+            // — refresh tokens rotate during normal OAuth refresh cycles.
+            const orgChanged = previous && credentialsInfo.orgId !== previous.orgId;
 
-            if (orgChanged || tokenChanged) {
-                const hint = orgChanged
-                    ? `${previous.orgId.slice(0, 8)}... → ${credentialsInfo.orgId?.slice(0, 8)}...`
-                    : 'refresh token changed';
+            if (orgChanged) {
+                const fmt = id => id ? `${id.slice(0, 8)}...` : 'personal';
+                const hint = `${fmt(previous.orgId)} → ${fmt(credentialsInfo.orgId)}`;
                 fileLog(`Account switched (${hint})`);
                 fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
 
@@ -424,7 +417,6 @@ function setupCredentialsMonitoring(context) {
                     httpFetcher.clearSession({ clearLoginBrowserCache: true });
                 }
                 loginWasCancelled = false;
-                isFirstFetch = true;
 
                 // Prompt user to log in for the new account
                 const action = await vscode.window.showInformationMessage(
@@ -675,7 +667,6 @@ async function activate(context) {
             try {
                 if (scraper) {
                     const result = await scraper.reset();
-                    isFirstFetch = true;
                     vscode.window.showInformationMessage(result.message);
                 } else {
                     vscode.window.showWarningMessage('Scraper not initialised');
@@ -704,7 +695,6 @@ async function activate(context) {
                         const result = httpFetcher.clearSession();
                         vscode.window.showInformationMessage(result.message);
                     }
-                    isFirstFetch = true;
                     loginWasCancelled = false;
                 }
             } catch (error) {
