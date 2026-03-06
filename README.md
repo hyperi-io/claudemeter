@@ -6,7 +6,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/hyperi-io/claudemeter)](https://github.com/hyperi-io/claudemeter)
 
 ![Icon](assets/claudemeter-logo-trim.png)
-> Monitor your Claude Code usage in real time, with full limit information.  
+> Monitor your Claude Code usage in real time, with full limit information.
 > *No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'*
 
 ![Tooltip](assets/tooltip.png)
@@ -46,9 +46,11 @@
 
 Claudemeter v2 uses streamlined HTTP requests to fetch your usage data directly from Claude.ai's API endpoints. A browser is only needed once for the initial login — after that, your session cookie is stored locally and all subsequent fetches complete in 1-3 seconds with no browser overhead.
 
+When you log in, the extension verifies that the browser account matches the account used by Claude Code CLI. If the accounts don't match, it will prompt you to log in with the correct account.
+
 > **Why not use the Claude CLI's OAuth token?** The CLI's OAuth scopes (`user:inference`, `user:profile`, etc.) don't grant access to the usage/billing endpoints. Only the `sessionKey` cookie from a browser login works. If Anthropic ever expands the CLI scopes, the browser login could be eliminated entirely.
 
-> **Why keep puppeteer-core?** The usage API endpoints are undocumented and could change without notice. `puppeteer-core` (~2MB, no bundled Chromium) handles the login flow and powers an opt-in legacy scraper fallback if the API breaks. See `claudemeter.useLegacyScraper` in settings.
+> **Why keep puppeteer-core?** The usage API endpoints are undocumented and could change without notice. `puppeteer-core` (bundled into the extension, no bundled Chromium) handles the login flow and powers an opt-in legacy scraper fallback if the API breaks. See `claudemeter.useLegacyScraper` in settings.
 
 ## Installation
 
@@ -59,16 +61,14 @@ Claudemeter v2 uses streamlined HTTP requests to fetch your usage data directly 
 
 ## First-Time Setup
 
-The extension will **automatically fetch usage data** when VS Code starts. If you haven't logged in before:
+1. On first launch, the extension prompts you to log in
+2. Click **Log In Now** — a browser window opens to Claude.ai
+3. Complete the Cloudflare verification ("Are you human?") if prompted
+4. Log in with your credentials (Google, email, etc.)
+5. The extension verifies the browser account matches your CLI account, saves the session cookie locally, and closes the browser
+6. All future fetches use fast HTTP requests — no browser needed
 
-1. A browser window will open for you to log in to Claude.ai
-2. Log in with your credentials (Google, email, etc.)
-3. Once logged in, the extension saves your session cookie locally
-4. The browser closes and all future fetches use fast HTTP requests — no browser needed
-
-![Login 1](assets/login-1.png)
-![Login 2](assets/login-2.png)
-![Login 3](assets/login-3.png)
+When switching Claude Code accounts, the extension detects the change and prompts you to re-login. The login browser cache is cleared so you get a fresh login for the new account.
 
 ## Configuration
 
@@ -167,10 +167,10 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 - **Options**: `percent`, `barLight`, `barSolid`, `barSquare`, `barCircle`
 - **Description**: How to display usage values in the status bar:
   - **percent**: Percentage (e.g., 60%)
-  - **barLight**: Light blocks (e.g., ▓▓▓░░)
-  - **barSolid**: Solid blocks (e.g., ███░░)
-  - **barSquare**: Squares (e.g., ■■■□□)
-  - **barCircle**: Circles (e.g., ●●●○○)
+  - **barLight**: Light blocks (e.g., ????)
+  - **barSolid**: Solid blocks (e.g., ????)
+  - **barSquare**: Squares (e.g., ?????)
+  - **barCircle**: Circles (e.g., ?????)
 
 ### `claudemeter.statusBar.alignment`
 
@@ -239,12 +239,18 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - Check if you can see your usage at [claude.ai/settings](https://claude.ai/settings)
 - [Report an issue](https://github.com/hyperi-io/claudemeter/issues) so the extension can be updated
 
+### Wrong account after login
+
+- If the extension detects the browser account doesn't match the CLI account, it will prompt you to log in again with the correct account
+- Run **Claudemeter: Clear Session (Re-login)** if the issue persists
+
 ## Privacy & Security
 
 - **No credentials stored**: The extension never stores or transmits your login credentials
 - **Local session cookie**: Your `sessionKey` cookie is saved locally at `~/.config/claudemeter/session-cookie.json` (or platform equivalent) and is only sent to `claude.ai`
 - **No data transmission**: Usage data stays on your machine
-- **No bundled browser**: Uses your existing system browser for login only (via `puppeteer-core`)
+- **Self-contained**: `puppeteer-core` is bundled into the extension (no external `node_modules` at runtime). It uses your existing system browser for login only — no Chromium is downloaded or bundled.
+- **Account verification**: The extension verifies the browser login matches the CLI account before saving the session
 - **Open source**: All code is available for review
 
 ## Feedback & Issues
@@ -256,21 +262,21 @@ If you encounter any issues or have suggestions:
 3. Submit a new issue with:
    - VS Code version
    - Extension version
-   - Error messages from the Output panel (View → Output → Claudemeter - Token Monitor)
+   - Error messages from the Output panel (View > Output > Claudemeter - Token Monitor)
    - Steps to reproduce
 
 ## Authors
 
 ![HyperI Logo](assets/hyperi-logo.png)
 
-Paying it forward by the hoopy froods at HyperI (nee HyperSec)
+Paying it forward by the hoopy froods at HyperI (formerly HyperSec)
 <https://hyperi.io>
 
 ## Development
 
 ### Optional AI Submodule (HyperI Internal)
 
-This repo includes an optional `ai/` submodule containing the HyperI AI assistant meta layer ony top of Claude Code and coding standards. It's a private repo - external contributors can safely ignore it.
+This repo includes an optional `ai/` submodule containing the HyperI AI assistant meta layer on top of Claude Code and coding standards. It's a private repo - external contributors can safely ignore it.
 
 ```bash
 # HyperI devs only - init the submodule if you have access
