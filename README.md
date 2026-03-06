@@ -72,9 +72,6 @@ When switching Claude Code accounts, the extension detects the change and prompt
 
 ## Configuration
 
-![Settings1](assets/settings1.png)
-![Settings1](assets/settings2.png)
-
 Open VS Code Settings and search for "Claudemeter" to configure:
 
 ### `claudemeter.fetchOnStartup`
