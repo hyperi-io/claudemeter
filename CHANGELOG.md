@@ -1,3 +1,10 @@
+## [2.0.2](https://github.com/hyperi-io/claudemeter/compare/v2.0.1...v2.0.2) (2026-03-06)
+
+
+### Bug Fixes
+
+* use orgId-only comparison for account switch detection ([bd1ac2e](https://github.com/hyperi-io/claudemeter/commit/bd1ac2e3000d50e8e3ef697a5d198a04921e2da7))
+
 ## [2.0.1](https://github.com/hyperi-io/claudemeter/compare/v2.0.0...v2.0.1) (2026-03-06)
 
 
