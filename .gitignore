@@ -49,6 +49,8 @@ RELEASE_NOTES_*.md
 # ===========================================
 # HyperI AI Development Tooling (LOCAL ONLY)
 # ===========================================
+# AI submodule (private repo, local dev only)
+hyperi-ai/
 # AI assistant files (Claude, Cursor, Codex, Gemini)
 CLAUDE.md
 STATE.md

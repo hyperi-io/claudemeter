@@ -1,5 +1,0 @@
-[submodule "hyperi-ai"]
-	path = hyperi-ai
-	url = https://github.com/hyperi-io/hyperi-ai.git
-	update = rebase
-	fetchRecurseSubmodules = true
