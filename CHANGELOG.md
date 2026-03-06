@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/hyperi-io/claudemeter/compare/v2.0.0...v2.0.1) (2026-03-06)
+
+
+### Bug Fixes
+
+* show token gauge in tokenOnlyMode without requiring login ([#11](https://github.com/hyperi-io/claudemeter/issues/11)) ([38df997](https://github.com/hyperi-io/claudemeter/commit/38df9973652c5f32370a615e8523b9d50dd40c28))
+
 # [2.0.0](https://github.com/hyperi-io/claudemeter/compare/v1.3.10...v2.0.0) (2026-03-06)
 
 
