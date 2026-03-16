@@ -13,7 +13,7 @@ jobs:
     name: Security
     runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -55,7 +55,7 @@ jobs:
 
       - name: Install Gitleaks
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar xz
           chmod +x gitleaks
 
       - name: Run Gitleaks
@@ -65,13 +65,12 @@ jobs:
     name: Quality
     runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm ci
@@ -106,13 +105,12 @@ jobs:
     needs: [security, quality]
     runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm ci
@@ -124,7 +122,7 @@ jobs:
         run: npx @vscode/vsce package --no-dependencies
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: claudemeter-vsix
           path: '*.vsix'

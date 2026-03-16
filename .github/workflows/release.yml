@@ -11,7 +11,7 @@ jobs:
     name: Security Gate
     runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -33,7 +33,7 @@ jobs:
 
       - name: Install Gitleaks
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar xz
           chmod +x gitleaks
 
       - name: Run Gitleaks
@@ -56,21 +56,20 @@ jobs:
     steps:
       - name: Generate GitHub App Token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm ci
@@ -79,7 +78,7 @@ jobs:
         id: semantic
         uses: cycjimmy/semantic-release-action@v4
         with:
-          semantic_version: 24
+          semantic_version: 25
           extra_plugins: |
             @semantic-release/changelog@6
             @semantic-release/git@10
@@ -98,21 +97,20 @@ jobs:
     steps:
       - name: Generate GitHub App Token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: v${{ needs.release.outputs.new_release_version }}
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm ci
