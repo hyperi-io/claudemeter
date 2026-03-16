@@ -1,3 +1,10 @@
+## [2.0.6](https://github.com/hyperi-io/claudemeter/compare/v2.0.5...v2.0.6) (2026-03-16)
+
+
+### Bug Fixes
+
+* update all CI dependencies to latest versions ([#12](https://github.com/hyperi-io/claudemeter/issues/12)) ([02e5ea7](https://github.com/hyperi-io/claudemeter/commit/02e5ea793e7578b451abff1414d04d626c932513))
+
 ## [2.0.5](https://github.com/hyperi-io/claudemeter/compare/v2.0.4...v2.0.5) (2026-03-16)
 
 
