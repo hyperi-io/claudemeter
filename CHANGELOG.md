@@ -1,3 +1,10 @@
+## [2.0.5](https://github.com/hyperi-io/claudemeter/compare/v2.0.4...v2.0.5) (2026-03-16)
+
+
+### Bug Fixes
+
+* add sec commit type to semantic-release config ([6db6691](https://github.com/hyperi-io/claudemeter/commit/6db669156dfc0bc5f061f5f2aab6203078044b4d))
+
 ## [2.0.4](https://github.com/hyperi-io/claudemeter/compare/v2.0.3...v2.0.4) (2026-03-16)
 
 
