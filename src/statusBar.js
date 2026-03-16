@@ -7,7 +7,7 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
 const vscode = require('vscode');
-const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, calculateResetClockTimeExpanded, getCurrencySymbol, getUse24HourTime } = require('./utils');
+const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, calculateResetClockTimeExpanded, getCurrencySymbol, getUse24HourTime, formatCompact } = require('./utils');
 const { fetchServiceStatus, getStatusDisplay, formatStatusTime, STATUS_PAGE_URL } = require('./serviceStatus');
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 
@@ -625,12 +625,20 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
         tooltipLines.push(`**Session ${sessionPercent}%**`);
         if (tokenPercent !== null) {
-            tooltipLines.push(`Tokens: ${sessionData.tokenUsage.current.toLocaleString()} / ${sessionData.tokenUsage.limit.toLocaleString()} (${tokenPercent}%)`);
+            tooltipLines.push(`Tokens: ${formatCompact(sessionData.tokenUsage.current)} / ${formatCompact(sessionData.tokenUsage.limit)} (${tokenPercent}%)`);
         }
         tooltipLines.push(`Resets ${sessionResetTimeExpanded}`);
+        const tokenLimitOverride = config.get('tokenLimit', 0);
+        if (tokenLimitOverride > 0) {
+            tooltipLines.push(`⚙ Context window override: ${formatCompact(tokenLimitOverride)}`);
+        }
     } else if (tokenPercent !== null) {
         tooltipLines.push('**Session**');
-        tooltipLines.push(`Tokens: ${sessionData.tokenUsage.current.toLocaleString()} / ${sessionData.tokenUsage.limit.toLocaleString()} (${tokenPercent}%)`);
+        tooltipLines.push(`Tokens: ${formatCompact(sessionData.tokenUsage.current)} / ${formatCompact(sessionData.tokenUsage.limit)} (${tokenPercent}%)`);
+        const tokenLimitOverride = config.get('tokenLimit', 0);
+        if (tokenLimitOverride > 0) {
+            tooltipLines.push(`⚙ Context window override: ${formatCompact(tokenLimitOverride)}`);
+        }
     }
 
     let weeklyPercent = null;

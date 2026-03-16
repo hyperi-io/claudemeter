@@ -465,7 +465,7 @@ async function updateTokensFromJsonl(silent = false) {
                         currentSession = await sessionTracker.startSession('Claude Code session (auto-created)');
                         debugLog(`Created new session: ${currentSession.sessionId}`);
                     }
-                    await sessionTracker.updateTokens(usage.totalTokens, getTokenLimit());
+                    await sessionTracker.updateTokens(usage.totalTokens, getTokenLimit(usage.modelIds));
                 }
 
                 const sessionData = await sessionTracker.getCurrentSession();

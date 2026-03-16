@@ -250,10 +250,10 @@
         },
         "claudemeter.tokenLimit": {
           "type": "number",
-          "default": 200000,
-          "minimum": 1000,
+          "default": 0,
+          "minimum": 0,
           "maximum": 2000000,
-          "description": "Context window token limit (200,000 default for Claude models)"
+          "description": "Context window token limit override (0 = auto-detect from model). Set manually to force a specific limit."
         },
         "claudemeter.tokenOnlyMode": {
           "type": "boolean",

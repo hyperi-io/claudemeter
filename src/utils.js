@@ -57,8 +57,7 @@ const PATHS = {
     BROWSER_STATE_FILE: path.join(CONFIG_DIR, 'browser-state.json'),
 };
 
-// Claude Code default context window (tokens)
-const DEFAULT_TOKEN_LIMIT = 200000;
+const { FALLBACK_LIMIT: DEFAULT_TOKEN_LIMIT } = require('./modelContextWindows');
 
 // File-based debug logging with instance identification
 // Each instance identified by short hash + project name for easy differentiation
@@ -236,9 +235,25 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function getTokenLimit() {
+// Resolve token limit with priority: user override > model detection > fallback
+// modelIds: optional array of model IDs detected from session JSONL
+// Setting value 0 = auto-detect from model (default)
+function getTokenLimit(modelIds = null) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    return config.get('tokenLimit', DEFAULT_TOKEN_LIMIT);
+    const userOverride = config.get('tokenLimit', 0);
+
+    // User explicitly set a non-zero value — honour it as global override
+    if (userOverride > 0) {
+        return userOverride;
+    }
+
+    // Model-aware resolution
+    if (modelIds && modelIds.length > 0) {
+        const { resolveSessionContextWindow } = require('./modelContextWindows');
+        return resolveSessionContextWindow(modelIds);
+    }
+
+    return DEFAULT_TOKEN_LIMIT;
 }
 
 function getTimeFormat() {

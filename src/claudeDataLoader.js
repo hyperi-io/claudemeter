@@ -360,6 +360,7 @@ class ClaudeDataLoader {
             let highestMessageCount = 0;
             let highestSessionFile = null;
             let activeSessionCount = 0;
+            const detectedModels = new Set();
 
             for (const fileInfo of recentFiles) {
                 try {
@@ -372,6 +373,11 @@ class ClaudeDataLoader {
                             const entry = JSON.parse(lines[i]);
 
                             if (entry.type === 'assistant' && entry.message?.usage) {
+                                const model = entry.message?.model;
+                                if (model && model !== '<synthetic>') {
+                                    detectedModels.add(model);
+                                }
+
                                 const usage = entry.message.usage;
                                 const cacheRead = usage.cache_read_input_tokens || 0;
 
@@ -397,13 +403,18 @@ class ClaudeDataLoader {
                 }
             }
 
+            const modelIds = Array.from(detectedModels);
+
             if (highestCacheRead > 0) {
+                const resolvedLimit = getTokenLimit(modelIds);
                 this.log(`Found ${activeSessionCount} active session(s), showing highest usage:`);
                 this.log(`   File: ${highestSessionFile}`);
+                this.log(`   Models detected: ${modelIds.join(', ') || 'none'}`);
+                this.log(`   Context window: ${resolvedLimit.toLocaleString()} tokens`);
                 this.log(`   Cache creation: ${highestCacheCreation.toLocaleString()}`);
                 this.log(`   Cache read: ${highestCacheRead.toLocaleString()}`);
                 this.log(`   Session total (cache_read): ${highestCacheRead.toLocaleString()} tokens`);
-                this.log(`   Percentage: ${((highestCacheRead / getTokenLimit()) * 100).toFixed(2)}%`);
+                this.log(`   Percentage: ${((highestCacheRead / resolvedLimit) * 100).toFixed(2)}%`);
             }
 
             return {
@@ -414,7 +425,8 @@ class ClaudeDataLoader {
                 cacheReadTokens: highestCacheRead,
                 messageCount: highestMessageCount,
                 isActive: highestCacheRead > 0,
-                activeSessionCount: activeSessionCount
+                activeSessionCount: activeSessionCount,
+                modelIds: modelIds,
             };
 
         } catch (error) {
