@@ -1,3 +1,10 @@
+# [2.1.0](https://github.com/hyperi-io/claudemeter/compare/v2.0.6...v2.1.0) (2026-03-17)
+
+
+### Features
+
+* auto-detect context window from Claude Code model selection ([fb5406c](https://github.com/hyperi-io/claudemeter/commit/fb5406c0162ef08eade0fcfb4f676499e5deb2a0))
+
 ## [2.0.6](https://github.com/hyperi-io/claudemeter/compare/v2.0.5...v2.0.6) (2026-03-16)
 
 
