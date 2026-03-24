@@ -1,3 +1,10 @@
+## [2.1.4](https://github.com/hyperi-io/claudemeter/compare/v2.1.3...v2.1.4) (2026-03-24)
+
+
+### Bug Fixes
+
+* show account email and org type (Personal/Team/Enterprise) in tooltip ([2ef57ea](https://github.com/hyperi-io/claudemeter/commit/2ef57ea68f2f6c9bbff4b50400e69f334078a7d2))
+
 ## [2.1.3](https://github.com/hyperi-io/claudemeter/compare/v2.1.2...v2.1.3) (2026-03-24)
 
 
