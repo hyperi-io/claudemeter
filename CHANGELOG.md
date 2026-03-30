@@ -1,3 +1,10 @@
+## [2.1.5](https://github.com/hyperi-io/claudemeter/compare/v2.1.4...v2.1.5) (2026-03-30)
+
+
+### Bug Fixes
+
+* expand pop culture status messages with 200+ new quotes ([2046077](https://github.com/hyperi-io/claudemeter/commit/2046077dd45487c75144fbe5e2c6bbab53b553d2))
+
 ## [2.1.4](https://github.com/hyperi-io/claudemeter/compare/v2.1.3...v2.1.4) (2026-03-24)
 
 
