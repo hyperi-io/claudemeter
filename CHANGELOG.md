@@ -1,3 +1,15 @@
+# [2.2.0](https://github.com/hyperi-io/claudemeter/compare/v2.1.5...v2.2.0) (2026-04-02)
+
+
+### Features
+
+* add AI/ML training restriction policy and crawler blocklist ([ca7cddc](https://github.com/hyperi-io/claudemeter/commit/ca7cddca4a332044058c66698b017e5918676236))
+
+
+### Reverts
+
+* restore MIT LICENSE, remove FSL/AI policy files (erroneously applied) ([d38e916](https://github.com/hyperi-io/claudemeter/commit/d38e916c73d969092f24e967f802bb656710ccf3))
+
 ## [2.1.5](https://github.com/hyperi-io/claudemeter/compare/v2.1.4...v2.1.5) (2026-03-30)
 
 
