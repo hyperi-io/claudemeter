@@ -18,6 +18,7 @@ esbuild.js
 src/**
 extension.js
 scripts/**
+build/**
 
 # Dependencies (all bundled by esbuild)
 node_modules/**

@@ -1,7 +1,17 @@
 const esbuild = require('esbuild');
+const path = require('path');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+
+// Aliased packages: replace the real module with a build-time stub so its
+// transitive deps get dropped from the bundle. See build/proxy-agent-stub.js
+// for the full rationale — short version: puppeteer's proxy-agent chain
+// drags in basic-ftp + pac-proxy-agent code paths that we never execute,
+// and those are a recurring source of CVEs.
+const aliases = {
+    'proxy-agent': path.resolve(__dirname, 'build/proxy-agent-stub.js'),
+};
 
 async function main() {
     const ctx = await esbuild.context({
@@ -14,6 +24,7 @@ async function main() {
         platform: 'node',
         outfile: 'dist/extension.js',
         external: ['vscode', 'typescript'],
+        alias: aliases,
         logLevel: 'info',
         plugins: [
             {
