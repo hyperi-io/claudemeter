@@ -1,3 +1,10 @@
+## [2.2.2](https://github.com/hyperi-io/claudemeter/compare/v2.2.1...v2.2.2) (2026-04-11)
+
+
+### Bug Fixes
+
+* patch transitive CVEs in basic-ftp, vite, lodash via overrides ([35fac38](https://github.com/hyperi-io/claudemeter/commit/35fac38d9c5df6f20325384f960112863156bc49))
+
 ## [2.2.1](https://github.com/hyperi-io/claudemeter/compare/v2.2.0...v2.2.1) (2026-04-11)
 
 
