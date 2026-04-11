@@ -1,3 +1,10 @@
+## [2.2.4](https://github.com/hyperi-io/claudemeter/compare/v2.2.3...v2.2.4) (2026-04-11)
+
+
+### Bug Fixes
+
+* update marketplace description and docs for recent features ([59eaf9f](https://github.com/hyperi-io/claudemeter/commit/59eaf9f255d52be83edb0cca77cadaafdebe7f63))
+
 ## [2.2.3](https://github.com/hyperi-io/claudemeter/compare/v2.2.2...v2.2.3) (2026-04-11)
 
 
