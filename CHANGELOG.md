@@ -1,3 +1,10 @@
+## [2.2.1](https://github.com/hyperi-io/claudemeter/compare/v2.2.0...v2.2.1) (2026-04-11)
+
+
+### Bug Fixes
+
+* robust account detection, 1M context, multi-instance session safety ([43ec08a](https://github.com/hyperi-io/claudemeter/commit/43ec08a5d269f0a4ca1222ccd826e1928cf3e43a)), closes [#18](https://github.com/hyperi-io/claudemeter/issues/18)
+
 # [2.2.0](https://github.com/hyperi-io/claudemeter/compare/v2.1.5...v2.2.0) (2026-04-02)
 
 
