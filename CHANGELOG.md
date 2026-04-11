@@ -1,3 +1,10 @@
+## [2.2.3](https://github.com/hyperi-io/claudemeter/compare/v2.2.2...v2.2.3) (2026-04-11)
+
+
+### Bug Fixes
+
+* stub proxy-agent to drop basic-ftp from bundle ([d15fbeb](https://github.com/hyperi-io/claudemeter/commit/d15fbebb7c257170f6d6783de48242786d31052f))
+
 ## [2.2.2](https://github.com/hyperi-io/claudemeter/compare/v2.2.1...v2.2.2) (2026-04-11)
 
 
