@@ -4,8 +4,10 @@
 [![GitHub Stars](https://img.shields.io/github/stars/hyperi-io/claudemeter)](https://github.com/hyperi-io/claudemeter)
 
 ![Icon](assets/claudemeter-logo-trim.png)
-> Monitor your Claude Code usage in real time, with full limit information.
+> VSCode Extension. Monitor your Claude Code usage proactively in real time, with full limit information.
 > *No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'*
+>
+> Tracks session, weekly, and token limits across all Claude plans.
 
 ![Tooltip](assets/tooltip.png)
 
@@ -46,11 +48,12 @@ Claudemeter automatically detects your context window size — no manual configu
 
 Claude Code defaults all models to **200K context**, even on Max plans. Extended context (1M, 2M, etc.) is only active when you explicitly enable it via the model suffix — for example, selecting `opus[1m]` in the Claude Code model picker.
 
-Claudemeter detects this using three signals (highest wins):
+Claudemeter detects this using four signals (highest wins):
 
 1. **Claude Code model setting** — reads the `claudeCode.selectedModel` VS Code setting (e.g. `opus[1m]` → 1M)
-2. **Observed token usage** — if `cache_read` tokens exceed 200K during a session, the limit is at least that high
-3. **JSONL model IDs** — future-proofing for when Claude Code writes the suffix into session files
+2. **1M eligibility** — reads `s1mAccessCache[orgUuid].hasAccess` from `~/.claude.json` so accounts with 1M entitlement (Max/Team/Enterprise, or Pro pay-as-you-go) are detected without a suffix
+3. **Observed token usage** — if `cache_read` tokens exceed 200K during a session, the limit is at least that high
+4. **JSONL model IDs** — future-proofing for when Claude Code writes the suffix into session files
 
 The suffix format is dynamic: `[1m]` = 1M tokens, `[2m]` = 2M, `[500k]` = 500K. No code changes needed when Anthropic increases context sizes.
 
@@ -70,7 +73,7 @@ When you log in, the extension verifies that the browser account matches the acc
 
 ### Prerequisites
 
-- VS Code 1.109.0 or higher
+- VS Code 1.110.0 or higher
 - A Chromium-based browser for login (Chrome, Chromium, Brave, Edge, Arc, Vivaldi, or Opera)
 
 ## First-Time Setup
@@ -82,7 +85,9 @@ When you log in, the extension verifies that the browser account matches the acc
 5. The extension verifies the browser account matches your CLI account, saves the session cookie locally, and closes the browser
 6. All future fetches use fast HTTP requests — no browser needed
 
-When switching Claude Code accounts, the extension detects the change and prompts you to re-login. The login browser cache is cleared so you get a fresh login for the new account.
+When switching Claude Code accounts, the extension detects the change instantly via file watchers on `~/.claude/.credentials.json` and `~/.claude.json`, and prompts you to re-login. Switches between two personal accounts are detected via the account email and UUID (not just org UUID), so you won't be left looking at stale usage data. The login browser cache is cleared so you get a fresh login for the new account.
+
+Multiple VS Code windows running claudemeter at the same time are safe — the session-data file is locked and atomically merged so concurrent writers don't clobber each other.
 
 ## Configuration
 
@@ -247,6 +252,8 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - **`Claudemeter: Show Debug Output`** - Open debug output channel
 - **`Claudemeter: Login to Claude.ai`** - Open browser for login
 - **`Claudemeter: Clear Session (Re-login)`** - Clear saved session and force re-login
+- **`Claudemeter: Resync Account (after /login switch)`** - Force a re-read of Claude Code credentials and refresh usage (useful if an account switch wasn't detected automatically)
+- **`Claudemeter: Dump State (for bug reports)`** - Print a redacted snapshot of current state (identity, resolved org, cache, live sessions) to an output channel — attach this to issues to speed up diagnosis
 - **`Claudemeter: Reset Browser Connection (Legacy)`** - Reset browser connection (legacy scraper mode only)
 
 ## Troubleshooting
@@ -283,6 +290,7 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - **Local session cookie**: Your `sessionKey` cookie is saved locally at `~/.config/claudemeter/session-cookie.json` (or platform equivalent) and is only sent to `claude.ai`
 - **No data transmission**: Usage data stays on your machine
 - **Self-contained**: `puppeteer-core` is bundled into the extension (no external `node_modules` at runtime). It uses your existing system browser for login only — no Chromium is downloaded or bundled.
+- **Minimal attack surface**: puppeteer's proxy-agent chain (which drags in an FTP client and related code we never execute) is stubbed at build time and dropped from the bundle, shrinking the shipped VSIX and removing a recurring source of transitive CVEs.
 - **Account verification**: The extension verifies the browser login matches the CLI account before saving the session
 - **Open source**: All code is available for review
 
