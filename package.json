@@ -116,6 +116,11 @@
         "command": "claudemeter.resyncAccount",
         "title": "Resync Account (after /login switch)",
         "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.dumpState",
+        "title": "Dump State (for bug reports)",
+        "category": "Claudemeter"
       }
     ],
     "configuration": {

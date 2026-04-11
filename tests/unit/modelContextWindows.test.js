@@ -247,6 +247,28 @@ describe('resolveSessionContextWindow', () => {
         expect(resolveSessionContextWindow(null, 0)).toBe(STANDARD_LIMIT);
         expect(resolveSessionContextWindow(undefined, 0)).toBe(STANDARD_LIMIT);
     });
+
+    // Eligibility signal — Bug 1: s1mAccessCache says the account qualifies
+    // for 1M context even though no observed token has confirmed it yet.
+    it('returns 1M from eligibility signal alone', () => {
+        expect(resolveSessionContextWindow(['claude-opus-4-6'], 0, 0, 1000000)).toBe(1000000);
+    });
+
+    it('returns 1M from eligibility even when alias unset and observed is low', () => {
+        expect(resolveSessionContextWindow(['claude-opus-4-6'], 50000, 0, 1000000)).toBe(1000000);
+    });
+
+    it('prefers observed tokens when they exceed eligibility', () => {
+        expect(resolveSessionContextWindow(['claude-opus-4-6'], 1500000, 0, 1000000)).toBe(1500000);
+    });
+
+    it('prefers eligibility when observed is below standard', () => {
+        expect(resolveSessionContextWindow(['claude-opus-4-6'], 100000, 0, 1000000)).toBe(1000000);
+    });
+
+    it('zero eligibility is treated as no signal', () => {
+        expect(resolveSessionContextWindow(['claude-opus-4-6'], 0, 0, 0)).toBe(STANDARD_LIMIT);
+    });
 });
 
 describe('getPlanContextSummary', () => {

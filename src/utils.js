@@ -29,6 +29,7 @@ const COMMANDS = {
     CLEAR_SESSION: 'claudemeter.clearSession',
     OPEN_BROWSER: 'claudemeter.openBrowser',
     RESYNC_ACCOUNT: 'claudemeter.resyncAccount',
+    DUMP_STATE: 'claudemeter.dumpState',
 };
 
 // Cross-platform config directory following OS conventions
@@ -239,6 +240,14 @@ function sleep(ms) {
 // modelIds: optional array of model IDs detected from session JSONL
 // maxObservedTokens: highest token count seen in session (e.g. cache_read)
 // Setting value 0 = auto-detect (default)
+//
+// Eligibility signals used (priority order handled inside resolveSessionContextWindow):
+//   1. User override from claudemeter.tokenLimit setting (wins unconditionally)
+//   2. Observed tokens that exceed 200K (definitive proof of extended context)
+//   3. Claude Code's own s1mAccessCache for the currently logged-in org
+//   4. claudeCode.selectedModel alias with [Nm] suffix
+//   5. Model IDs in the JSONL with [Nm] suffix (rare)
+//   6. Default 200K
 function getTokenLimit(modelIds = null, maxObservedTokens = 0) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const userOverride = config.get('tokenLimit', 0);
@@ -248,12 +257,32 @@ function getTokenLimit(modelIds = null, maxObservedTokens = 0) {
         return userOverride;
     }
 
-    // Read Claude Code's selected model to detect context suffix (e.g. "opus[1m]")
-    const { resolveSessionContextWindow, parseModelAlias } = require('./modelContextWindows');
+    const { resolveSessionContextWindow, parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
+
+    // Claude Code's selected model picker may embed an explicit suffix
     const ccModel = vscode.workspace.getConfiguration('claudeCode').get('selectedModel', '');
     const aliasDeclaredLimit = parseModelAlias(ccModel);
 
-    return resolveSessionContextWindow(modelIds, maxObservedTokens, aliasDeclaredLimit);
+    // Claude Code's own eligibility cache. Read lazily to avoid cycles and to
+    // re-check on every call (file is small, cost is negligible). When the
+    // cache says hasAccess === true, we can claim 1M before any extended-
+    // context request has actually been made.
+    let eligibilityLimit = 0;
+    try {
+        const { hasMaxContextAccess } = require('./claudeConfigReader');
+        if (hasMaxContextAccess() === true) {
+            eligibilityLimit = 1000000;
+        }
+    } catch {
+        // If the config reader throws, treat eligibility as unknown (0).
+    }
+
+    return resolveSessionContextWindow(
+        modelIds,
+        maxObservedTokens,
+        aliasDeclaredLimit,
+        eligibilityLimit
+    );
 }
 
 function getTimeFormat() {

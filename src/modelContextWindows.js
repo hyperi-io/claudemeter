@@ -9,18 +9,25 @@
 // Model ID format from JSONL: "claude-{family}-{major}-{minor}" with optional context suffix
 // e.g. "claude-opus-4-6", "claude-sonnet-4-6[1m]", "claude-opus-4-6[2m]"
 //
-// Claude Code defaults ALL models to 200K context, even on Max plans.
-// Extended context is only active when the user explicitly enables it
-// via a suffix like [1m] or [2m] in the Claude Code model selector.
+// 1M context is GA (since March 2026) and is the default for Max, Team, and
+// Enterprise accounts on Opus 4.6 and Sonnet 4.6 — no explicit suffix required.
+// Pro accounts stay at 200K by default (extra-usage pay-as-you-go).
 //
-// The suffix is parsed dynamically: [Nm] = N * 1,000,000 tokens.
-// This is future-proof — when context grows to 2M, 5M, etc., it just works.
+// Claude Code strips the [1m]/[Nm] suffix before writing model IDs to the
+// JSONL, so JSONL-based detection only works if (a) the user explicitly
+// chose a suffixed alias in the picker AND (b) Claude Code writes it through
+// (rare) — so we can't rely on it. Instead we use Claude Code's own
+// s1mAccessCache in ~/.claude.json as the authoritative eligibility signal.
+//
+// The suffix parser is still here as a future-proof belt-and-braces for when
+// larger contexts (2M, 5M, …) get added.
 //
 // Detection strategy (priority order):
-//   1. Read Claude Code's VS Code setting `claudeCode.selectedModel` (e.g. "opus[1m]")
-//   2. Check model IDs from JSONL for [Nm] suffix (future-proofing)
-//   3. If observed tokens exceed 200K, infer extended context
-//   4. Default: 200K
+//   1. Observed tokens > STANDARD_LIMIT → definitive evidence of extended context
+//   2. eligibilityLimit from caller (Claude Code's s1mAccessCache says yes)
+//   3. aliasDeclaredLimit from claudeCode.selectedModel "opus[1m]"-style setting
+//   4. JSONL-declared suffix (future-proofing, rarely present in practice)
+//   5. Default: STANDARD_LIMIT (200K)
 
 const STANDARD_LIMIT = 200000;
 const FALLBACK_LIMIT = STANDARD_LIMIT;
@@ -98,11 +105,25 @@ function getModelContextWindow(modelId) {
     return parsed.contextLimit || STANDARD_LIMIT;
 }
 
-// Given an array of model IDs seen in a session, return the resolved context window.
-// Uses the highest of: alias limit, suffix-declared limit, observed token count, or 200K.
-// aliasDeclaredLimit: context limit from claudeCode.selectedModel setting (e.g. 1000000)
-// maxObservedTokens: highest token count seen in the session (e.g. cache_read)
-function resolveSessionContextWindow(modelIds, maxObservedTokens = 0, aliasDeclaredLimit = 0) {
+// Given observed session state, return the resolved context window in tokens.
+// All inputs are optional — pass what's available and the function will pick
+// the largest credible limit.
+//
+// Parameters:
+//   modelIds           — array of model IDs seen in the session JSONL
+//   maxObservedTokens  — highest token count actually seen (e.g. cache_read)
+//   aliasDeclaredLimit — limit from claudeCode.selectedModel (e.g. 1_000_000 for "opus[1m]")
+//   eligibilityLimit   — limit implied by account eligibility (e.g. 1_000_000 if
+//                        Claude Code's s1mAccessCache shows hasAccess === true)
+//
+// Resolution rule: return the maximum of STANDARD_LIMIT and every positive signal.
+// Any one positive signal is enough to bump the ceiling above 200K.
+function resolveSessionContextWindow(
+    modelIds,
+    maxObservedTokens = 0,
+    aliasDeclaredLimit = 0,
+    eligibilityLimit = 0
+) {
     const jsonlDeclaredLimit = getHighestDeclaredLimit(modelIds);
 
     // If observed tokens exceed the standard limit, the actual limit is at least that high
@@ -110,7 +131,13 @@ function resolveSessionContextWindow(modelIds, maxObservedTokens = 0, aliasDecla
         ? maxObservedTokens
         : 0;
 
-    return Math.max(STANDARD_LIMIT, aliasDeclaredLimit, jsonlDeclaredLimit, observedFloor);
+    return Math.max(
+        STANDARD_LIMIT,
+        aliasDeclaredLimit,
+        jsonlDeclaredLimit,
+        observedFloor,
+        eligibilityLimit
+    );
 }
 
 // Return context window info for tooltip display

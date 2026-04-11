@@ -33,7 +33,21 @@ const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
 const { CONFIG_NAMESPACE, COMMANDS, PATHS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
-const { CREDENTIALS_PATH, readCredentials, formatSubscriptionType, formatRateLimitTier } = require('./src/credentialsReader');
+const {
+    CREDENTIALS_PATH,
+    readCredentials,
+    formatSubscriptionType,
+    formatRateLimitTier,
+    getIdentityKey,
+    identityChanged,
+} = require('./src/credentialsReader');
+const {
+    CLAUDE_CONFIG_PATH,
+    getOAuthAccount,
+    hasMaxContextAccess,
+    findSessionForWorkspace,
+    getLiveSessions,
+} = require('./src/claudeConfigReader');
 
 let statusBarItem;
 let httpFetcher;
@@ -47,6 +61,7 @@ let sessionTracker;
 let claudeDataLoader;
 let jsonlWatcher;
 let credentialsWatcher;
+let claudeConfigWatcher;
 let currentWorkspacePath = null;
 
 // Prevents auto-retry after user closes login browser
@@ -366,6 +381,102 @@ async function setupTokenMonitoring(context) {
     debugLog(`   Watching: ${projectDir}/*.jsonl`);
 }
 
+// Build a full diagnostic state dump for bug reports. No secrets (we
+// deliberately omit the OAuth access/refresh tokens and the sessionKey
+// cookie value itself — only boolean "has" and expiry are reported).
+//
+// The dump is the single source of truth for "what does claudemeter see
+// right now?". Reports with a dump attached are triagable; reports without
+// one typically require a round trip to reproduce.
+function buildStateDump() {
+    const creds = (() => {
+        try { return readCredentials(); } catch { return null; }
+    })();
+
+    const oauthAccount = (() => {
+        try { return getOAuthAccount(); } catch { return null; }
+    })();
+
+    const s1mAccess = (() => {
+        try { return hasMaxContextAccess(); } catch { return null; }
+    })();
+
+    const liveSessions = (() => {
+        try { return getLiveSessions(); } catch { return []; }
+    })();
+
+    const workspaceSession = (() => {
+        try { return findSessionForWorkspace(currentWorkspacePath); } catch { return null; }
+    })();
+
+    const fetcherDiag = (() => {
+        try {
+            if (httpFetcher && typeof httpFetcher.getDiagnostics === 'function') {
+                return httpFetcher.getDiagnostics();
+            }
+        } catch { /* ignore */ }
+        return null;
+    })();
+
+    // Redact anything that looks sensitive. The dump is safe to paste into
+    // public issue trackers.
+    const safeCreds = creds ? {
+        orgId: creds.orgId,
+        accountUuid: creds.accountUuid,
+        email: creds.email,
+        displayName: creds.displayName,
+        organizationName: creds.organizationName,
+        organizationRole: creds.organizationRole,
+        billingType: creds.billingType,
+        hasAvailableSubscription: creds.hasAvailableSubscription,
+        subscriptionType: creds.subscriptionType,
+        rateLimitTier: creds.rateLimitTier,
+        hasAccessToken: !!creds.accessToken,
+        hasRefreshToken: !!creds.refreshToken,
+    } : null;
+
+    const tokenLimitResolved = (() => {
+        try { return getTokenLimit(); } catch { return null; }
+    })();
+
+    return {
+        timestamp: new Date().toISOString(),
+        version: getExtensionVersion(),
+        mode: isLegacyMode() ? 'legacy-scraper' : 'http-fetcher',
+        workspacePath: currentWorkspacePath,
+        identity: getIdentityKey(creds),
+        credentials: safeCreds,
+        oauthAccount,
+        s1mAccessCacheForCurrentOrg: s1mAccess,
+        tokenLimit: tokenLimitResolved,
+        liveSessionsCount: liveSessions.length,
+        workspaceSession: workspaceSession ? {
+            pid: workspaceSession.pid,
+            sessionId: workspaceSession.sessionId,
+            cwd: workspaceSession.cwd,
+            startedAt: workspaceSession.startedAt,
+            kind: workspaceSession.kind,
+            entrypoint: workspaceSession.entrypoint,
+        } : null,
+        fetcher: fetcherDiag,
+        usage: usageData ? {
+            timestamp: usageData.timestamp,
+            usagePercent: usageData.usagePercent,
+            usagePercentWeek: usageData.usagePercentWeek,
+            hasMonthlyCredits: !!usageData.monthlyCredits,
+        } : null,
+    };
+}
+
+function getExtensionVersion() {
+    try {
+        const pkg = require('./package.json');
+        return pkg.version;
+    } catch {
+        return 'unknown';
+    }
+}
+
 function setupCredentialsMonitoring(context) {
     // Read credentials on startup
     credentialsInfo = readCredentials();
@@ -375,71 +486,105 @@ function setupCredentialsMonitoring(context) {
         fileLog('No Claude Code credentials found');
     }
 
-    // Watch for account switches
+    // Account identity lives in TWO files:
+    //   - ~/.claude/.credentials.json — OAuth tokens (legacy identity fallback)
+    //   - ~/.claude.json              — oauthAccount block (new source of truth)
+    //
+    // Claude Code writes both on login, but only .claude.json's oauthAccount
+    // is guaranteed to contain orgId/accountUuid/email on newer builds.
+    // We watch both so an account swap is detected no matter which file the
+    // current Claude Code version rewrites.
+    //
+    // Account-switch detection uses the identity tuple (accountUuid, email,
+    // orgId). ANY field differing counts as a switch — this catches:
+    //   - personal → personal (same email missing from .credentials.json
+    //     historically, but accountUuid differs in oauthAccount)
+    //   - personal → org (orgId transition)
+    //   - org → org (different orgId)
+    //
+    // Token fields are NOT used — OAuth rotates refresh tokens during normal
+    // refresh cycles, which would cause false positives.
+
+    const handleIdentityMaybeChanged = async (sourceLabel) => {
+        const previous = credentialsInfo;
+        credentialsInfo = readCredentials();
+
+        if (!credentialsInfo) return;
+
+        const previousKey = getIdentityKey(previous);
+        const currentKey = getIdentityKey(credentialsInfo);
+        const hadPrevious = previousKey !== null;
+        const switched = hadPrevious && identityChanged(previousKey, currentKey);
+
+        if (!switched) {
+            await updateStatusBarWithAllData();
+            return;
+        }
+
+        const fmt = (key) => {
+            if (!key) return '(none)';
+            const id = key.accountUuid || key.email || key.orgId;
+            return id ? `${String(id).slice(0, 8)}...` : '(none)';
+        };
+        fileLog(`Account switched via ${sourceLabel} (${fmt(previousKey)} → ${fmt(currentKey)})`);
+        fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
+
+        // Clear session so next fetch uses the new account
+        if (isLegacyMode()) {
+            getLegacyBrowserState().clear();
+            if (fs.existsSync(PATHS.BROWSER_SESSION_DIR)) {
+                try {
+                    fs.rmSync(PATHS.BROWSER_SESSION_DIR, { recursive: true, force: true });
+                    fileLog('Browser session cleared for account switch');
+                } catch (e) {
+                    fileLog(`Failed to clear browser session: ${e.message}`);
+                }
+            }
+        } else if (httpFetcher) {
+            // Clear login browser cache so the browser opens fresh for the
+            // new account rather than auto-logging in as the old one
+            httpFetcher.clearSession({ clearLoginBrowserCache: true });
+        }
+        loginWasCancelled = false;
+
+        // Prompt user to log in for the new account
+        const action = await vscode.window.showInformationMessage(
+            'Claudemeter: Account switched. Log in to refresh usage data.',
+            'Log In Again',
+            'Later'
+        );
+        if (action === 'Log In Again') {
+            performFetch(true).catch(err => {
+                fileLog(`Post-switch fetch failed: ${err.message}`);
+            });
+        }
+    };
+
+    // Watcher 1: ~/.claude/.credentials.json
     const credentialsDir = path.dirname(CREDENTIALS_PATH);
     if (fs.existsSync(credentialsDir)) {
         credentialsWatcher = vscode.workspace.createFileSystemWatcher(
             new vscode.RelativePattern(credentialsDir, '.credentials.json')
         );
-
-        const handleCredentialsChange = async () => {
-            const previous = credentialsInfo;
-            credentialsInfo = readCredentials();
-
-            if (!credentialsInfo) return;
-
-            // Detect account switch by orgId change (including null transitions for
-            // personal ↔ org switches). Token fields are NOT used — Claude routinely
-            // rotates refresh tokens during normal OAuth refresh cycles, which would
-            // cause false positives if we tracked them.
-            // Personal → personal switches cannot be detected this way; the
-            // "Resync Account" command (claudemeter.resyncAccount) handles that case.
-            const orgChanged = previous && credentialsInfo.orgId !== previous.orgId;
-
-            if (orgChanged) {
-                const fmt = id => id ? `${id.slice(0, 8)}...` : 'personal';
-                const hint = `${fmt(previous.orgId)} → ${fmt(credentialsInfo.orgId)}`;
-                fileLog(`Account switched (${hint})`);
-                fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
-
-                // Clear session so next fetch uses the new account
-                if (isLegacyMode()) {
-                    getLegacyBrowserState().clear();
-                    if (fs.existsSync(PATHS.BROWSER_SESSION_DIR)) {
-                        try {
-                            fs.rmSync(PATHS.BROWSER_SESSION_DIR, { recursive: true, force: true });
-                            fileLog('Browser session cleared for account switch');
-                        } catch (e) {
-                            fileLog(`Failed to clear browser session: ${e.message}`);
-                        }
-                    }
-                } else if (httpFetcher) {
-                    // Clear login browser cache so the browser opens fresh for the
-                    // new account rather than auto-logging in as the old one
-                    httpFetcher.clearSession({ clearLoginBrowserCache: true });
-                }
-                loginWasCancelled = false;
-
-                // Prompt user to log in for the new account
-                const action = await vscode.window.showInformationMessage(
-                    'Claudemeter: Account switched. Log in to refresh usage data.',
-                    'Log In Again',
-                    'Later'
-                );
-                if (action === 'Log In Again') {
-                    performFetch(true).catch(err => {
-                        fileLog(`Post-switch fetch failed: ${err.message}`);
-                    });
-                }
-            } else {
-                await updateStatusBarWithAllData();
-            }
-        };
-
-        credentialsWatcher.onDidChange(handleCredentialsChange);
-        credentialsWatcher.onDidCreate(handleCredentialsChange);
+        const handler = () => handleIdentityMaybeChanged('.credentials.json');
+        credentialsWatcher.onDidChange(handler);
+        credentialsWatcher.onDidCreate(handler);
         context.subscriptions.push(credentialsWatcher);
         fileLog('Watching ~/.claude/.credentials.json for account changes');
+    }
+
+    // Watcher 2: ~/.claude.json (new source of truth for account identity)
+    const claudeConfigDir = path.dirname(CLAUDE_CONFIG_PATH);
+    const claudeConfigName = path.basename(CLAUDE_CONFIG_PATH);
+    if (fs.existsSync(claudeConfigDir)) {
+        claudeConfigWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(claudeConfigDir, claudeConfigName)
+        );
+        const handler = () => handleIdentityMaybeChanged('.claude.json');
+        claudeConfigWatcher.onDidChange(handler);
+        claudeConfigWatcher.onDidCreate(handler);
+        context.subscriptions.push(claudeConfigWatcher);
+        fileLog('Watching ~/.claude.json for account changes');
     }
 }
 
@@ -751,6 +896,20 @@ async function activate(context) {
                     vscode.window.showErrorMessage(`Failed to open browser: ${error.message}`);
                 }
             }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(COMMANDS.DUMP_STATE, async () => {
+            const dump = buildStateDump();
+            const channel = vscode.window.createOutputChannel('Claudemeter - State Dump');
+            channel.appendLine(`=== CLAUDEMETER STATE DUMP (${new Date().toLocaleString()}) ===`);
+            channel.appendLine('');
+            channel.appendLine('Copy everything below this line into a bug report:');
+            channel.appendLine('----------------------------------------------------');
+            channel.appendLine(JSON.stringify(dump, null, 2));
+            channel.appendLine('----------------------------------------------------');
+            channel.show(true);
         })
     );
 

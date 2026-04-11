@@ -52,6 +52,7 @@ const {
 } = require('./utils');
 
 const { readCredentials } = require('./credentialsReader');
+const { AccountIdentityCache } = require('./accountIdentityCache');
 
 // Browser-like headers to pass Cloudflare challenge
 const BROWSER_HEADERS = {
@@ -126,7 +127,27 @@ const LOGIN_LOCK_TTL = 5 * 60 * 1000; // 5 minutes
 
 class ClaudeHttpFetcher {
     constructor() {
-        this.accountInfo = null;
+        this._identityCache = new AccountIdentityCache();
+        // Prime the cache from current credentials so the first fetch has a
+        // baseline to detect switches against. If credentials are missing
+        // (fresh install), the cache stays empty and no switch fires.
+        try {
+            this._identityCache.noteCurrentIdentity(readCredentials());
+        } catch {
+            // Ignore — identity stays unknown.
+        }
+    }
+
+    // Back-compat accessor: some legacy call sites and diagnostics expect
+    // this.accountInfo to work as a plain property. Delegate to the cache.
+    get accountInfo() {
+        return this._identityCache.getAccountInfo();
+    }
+    set accountInfo(value) {
+        this._identityCache.setResolvedWebOrgId(
+            this._identityCache.getResolvedWebOrgId(),
+            value
+        );
     }
 
     // --- Cookie Management ---
@@ -193,7 +214,7 @@ class ClaudeHttpFetcher {
                     fileLog('Cleared login browser cache for account switch');
                 }
             }
-            this._cachedOrgId = null;
+            this._identityCache.clear();
             return { success: true, message: 'Session cleared. Next fetch will prompt for login.' };
         } catch (error) {
             fileLog(`Error clearing session: ${error.message}`);
@@ -268,8 +289,19 @@ class ClaudeHttpFetcher {
 
     // Resolve the correct web org UUID via /api/bootstrap.
     // The CLI credentials orgId differs from the web session orgId.
+    //
+    // Before hitting the network, refresh the identity cache against the
+    // current on-disk credentials. If the user switched accounts out of
+    // band (another terminal, another VS Code window), this flushes the
+    // stale cached web org UUID so we re-resolve against /api/bootstrap.
     async _resolveOrgId() {
-        if (this._cachedOrgId) return this._cachedOrgId;
+        const { changed } = this._identityCache.noteCurrentIdentity(readCredentials());
+        if (changed) {
+            fileLog('Identity change detected before fetch — invalidating cached web org UUID');
+        }
+
+        const cached = this._identityCache.getResolvedWebOrgId();
+        if (cached) return cached;
 
         fileLog('Resolving web org UUID via /api/bootstrap...');
         const data = await this._fetchEndpoint(`${CLAUDE_URLS.BASE}/api/bootstrap`);
@@ -283,16 +315,16 @@ class ClaudeHttpFetcher {
         const org = memberships[0].organization;
         const orgUuid = org.uuid;
         const orgName = org.name;
-        this._cachedOrgId = orgUuid;
 
         const orgType = detectOrgType(orgName, org);
 
-        this.accountInfo = {
+        const accountInfo = {
             name: data.account?.display_name || data.account?.full_name,
             email: data.account?.email_address,
             orgName,
             orgType,
         };
+        this._identityCache.setResolvedWebOrgId(orgUuid, accountInfo);
 
         // Log full org object for debugging — helps discover team/enterprise fields
         const orgFields = Object.keys(org).filter(k => k !== 'uuid').join(', ');
@@ -314,6 +346,24 @@ class ClaudeHttpFetcher {
             throw new Error('SESSION_EXPIRED');
         }
 
+        // One retry on SESSION_EXPIRED: if the first attempt fails with
+        // SESSION_EXPIRED, the cached web org UUID may be stale against a
+        // just-switched account. Invalidate it and re-resolve once. If the
+        // second attempt also fails, escalate — that's a real auth problem
+        // that the user needs to resolve via login flow.
+        try {
+            return await this._fetchUsageDataOnce(cookie, debug, debugChannel);
+        } catch (err) {
+            if (err.message !== 'SESSION_EXPIRED') {
+                throw err;
+            }
+            fileLog('SESSION_EXPIRED on first attempt — invalidating resolved org UUID and retrying once');
+            this._identityCache.invalidateResolved();
+            return this._fetchUsageDataOnce(cookie, debug, debugChannel);
+        }
+    }
+
+    async _fetchUsageDataOnce(cookie, debug, debugChannel) {
         const orgId = await this._resolveOrgId();
         const baseUrl = `${CLAUDE_URLS.BASE}/api/organizations/${orgId}`;
         const usageUrl = `${baseUrl}/usage`;
@@ -358,6 +408,23 @@ class ClaudeHttpFetcher {
         fileLog('Usage data fetched successfully');
 
         return processApiResponse(usageData, creditsData, overageData, this.accountInfo);
+    }
+
+    // Called externally (e.g. by the watcher in extension.js) to notify the
+    // fetcher that the on-disk identity may have changed. If the identity
+    // tuple differs from the cached one, the fetcher's resolved-org cache
+    // is cleared so the next fetch re-resolves against the new account.
+    //
+    // Returns { changed, previous, current } — the caller can use `changed`
+    // to decide whether to also clear the session cookie (account switch)
+    // or leave it alone (personal↔personal on the same device typically
+    // still requires a cookie reset too, but that's the caller's call).
+    notifyIdentityMaybeChanged() {
+        try {
+            return this._identityCache.noteCurrentIdentity(readCredentials());
+        } catch {
+            return { changed: false, previous: null, current: null };
+        }
     }
 
     // --- Login Flow (puppeteer-core, lazy loaded) ---
@@ -644,6 +711,7 @@ class ClaudeHttpFetcher {
         const cookie = this._readCookie();
         const creds = readCredentials();
         const schemaInfo = getSchemaInfo();
+        const identity = this._identityCache.toDiagnostics();
 
         return {
             hasCookie: !!cookie,
@@ -654,6 +722,7 @@ class ClaudeHttpFetcher {
             rateLimitTier: creds?.rateLimitTier || null,
             accountName: this.accountInfo?.name || null,
             accountEmail: this.accountInfo?.email || null,
+            identityCache: identity,
             schemaVersion: schemaInfo.version,
             schemaFields: schemaInfo.usageFields,
             schemaEndpoints: schemaInfo.endpoints,
