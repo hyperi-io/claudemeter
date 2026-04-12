@@ -1,3 +1,16 @@
+# [2.3.0](https://github.com/hyperi-io/claudemeter/compare/v2.2.4...v2.3.0) (2026-04-12)
+
+
+### Bug Fixes
+
+* align context window detection with recent Claude Code changes ([bb60f39](https://github.com/hyperi-io/claudemeter/commit/bb60f39abbf4d0f6f1ef512a16c162905056d384))
+* exclude tests, vitest config and renovate config from VSIX ([55efe1b](https://github.com/hyperi-io/claudemeter/commit/55efe1b078a51de3f5963554ecb91c6334d4c328))
+
+
+### Features
+
+* new tokensDisplay option for Tk status bar item ([507a495](https://github.com/hyperi-io/claudemeter/commit/507a49564dcb281e32c97afb324aced6e2776396))
+
 ## [2.2.4](https://github.com/hyperi-io/claudemeter/compare/v2.2.3...v2.2.4) (2026-04-11)
 
 
