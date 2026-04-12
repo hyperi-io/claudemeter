@@ -208,35 +208,48 @@ describe('resolveSessionContextWindow', () => {
         expect(resolveSessionContextWindow(models, 0)).toBe(2000000);
     });
 
-    it('uses observed tokens when they exceed standard limit', () => {
+    // NOTE: the tests below assert the post-ratchet-fix behaviour.
+    // resolveSessionContextWindow is now a deprecated delegator to
+    // contextWindowResolver.resolveContextWindow — observed tokens
+    // are treated as a LOWER BOUND and snapped to the next known
+    // tier (200K -> 1M -> 2M), never returned raw. See
+    // tests/unit/contextWindowResolver.test.js for the full matrix.
+
+    it('snaps observed tokens to next tier when they exceed standard limit', () => {
         const models = ['claude-opus-4-6'];
-        expect(resolveSessionContextWindow(models, 250000)).toBe(250000);
+        expect(resolveSessionContextWindow(models, 250000)).toBe(1000000);
     });
 
-    it('uses alias limit when higher than observed tokens', () => {
+    it('alias limit wins over observed tokens when both present', () => {
         const models = ['claude-opus-4-6'];
         expect(resolveSessionContextWindow(models, 250000, 1000000)).toBe(1000000);
     });
 
-    it('uses observed tokens when higher than alias limit', () => {
+    it('observed > alias: snap to next tier above the highest signal', () => {
         const models = ['claude-opus-4-6'];
-        expect(resolveSessionContextWindow(models, 1500000, 1000000)).toBe(1500000);
+        // Old behaviour returned the raw observed value (1500000). New
+        // behaviour: alias wins as authoritative, so we get 1M.
+        expect(resolveSessionContextWindow(models, 1500000, 1000000)).toBe(1000000);
     });
 
     it('returns 200K when observed tokens exactly at boundary', () => {
         expect(resolveSessionContextWindow(['claude-opus-4-6'], 200000)).toBe(STANDARD_LIMIT);
     });
 
-    it('returns observed count when just over 200K', () => {
-        expect(resolveSessionContextWindow(['claude-opus-4-6'], 200001)).toBe(200001);
+    it('snaps to 1M when observed is just over 200K', () => {
+        // Old behaviour returned the raw 200001. New behaviour snaps
+        // to the next known tier (1M) because 200001 is not itself a
+        // valid context window size.
+        expect(resolveSessionContextWindow(['claude-opus-4-6'], 200001)).toBe(1000000);
     });
 
     it('returns 200K for empty model list with low tokens', () => {
         expect(resolveSessionContextWindow([], 0)).toBe(STANDARD_LIMIT);
     });
 
-    it('returns observed count for empty model list with high tokens', () => {
-        expect(resolveSessionContextWindow([], 300000)).toBe(300000);
+    it('snaps to 1M for empty model list with high observed tokens', () => {
+        // Old behaviour returned the raw 300000. New: snap to 1M tier.
+        expect(resolveSessionContextWindow([], 300000)).toBe(1000000);
     });
 
     it('returns alias limit for empty model list', () => {
@@ -248,8 +261,10 @@ describe('resolveSessionContextWindow', () => {
         expect(resolveSessionContextWindow(undefined, 0)).toBe(STANDARD_LIMIT);
     });
 
-    // Eligibility signal — Bug 1: s1mAccessCache says the account qualifies
-    // for 1M context even though no observed token has confirmed it yet.
+    // Eligibility signal — Bug 1: s1mAccessCache says the account
+    // qualifies for 1M context even though no observed token has
+    // confirmed it yet. In the new resolver this is the `cc-eligibility`
+    // path at priority 6.
     it('returns 1M from eligibility signal alone', () => {
         expect(resolveSessionContextWindow(['claude-opus-4-6'], 0, 0, 1000000)).toBe(1000000);
     });
@@ -258,8 +273,11 @@ describe('resolveSessionContextWindow', () => {
         expect(resolveSessionContextWindow(['claude-opus-4-6'], 50000, 0, 1000000)).toBe(1000000);
     });
 
-    it('prefers observed tokens when they exceed eligibility', () => {
-        expect(resolveSessionContextWindow(['claude-opus-4-6'], 1500000, 0, 1000000)).toBe(1500000);
+    it('eligibility wins over observed even with observed above eligibility', () => {
+        // Old behaviour preferred observed (1500000). New: eligibility
+        // says 1M authoritatively, so the limit stays at 1M. Observed
+        // is treated as a lower bound that can't exceed a known tier.
+        expect(resolveSessionContextWindow(['claude-opus-4-6'], 1500000, 0, 1000000)).toBe(1000000);
     });
 
     it('prefers eligibility when observed is below standard', () => {

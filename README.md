@@ -46,18 +46,27 @@
 
 Claudemeter automatically detects your context window size — no manual configuration needed.
 
-Claude Code defaults all models to **200K context**, even on Max plans. Extended context (1M, 2M, etc.) is only active when you explicitly enable it via the model suffix — for example, selecting `opus[1m]` in the Claude Code model picker.
+Anthropic's March 2026 GA rollout made **1M context the default** for Max, Team, and Enterprise plans on Opus 4.6 and Sonnet 4.6 — no `[1m]` suffix required. Pro and Free plans stay at 200K unless a user explicitly picks a `[1m]`-suffixed alias or tops up via pay-as-you-go.
 
-Claudemeter detects this using four signals (highest wins):
+Because Claude Code strips the `[1m]` suffix from model IDs before writing them to session logs, and because Claude Code's own `s1mAccessCache` can go stale, claudemeter can't rely on any single source. Instead it uses a priority chain and labels the result honestly in the tooltip:
 
-1. **Claude Code model setting** — reads the `claudeCode.selectedModel` VS Code setting (e.g. `opus[1m]` → 1M)
-2. **1M eligibility** — reads `s1mAccessCache[orgUuid].hasAccess` from `~/.claude.json` so accounts with 1M entitlement (Max/Team/Enterprise, or Pro pay-as-you-go) are detected without a suffix
-3. **Observed token usage** — if `cache_read` tokens exceed 200K during a session, the limit is at least that high
-4. **JSONL model IDs** — future-proofing for when Claude Code writes the suffix into session files
+1. **User override** — `claudemeter.tokenLimit` setting, if set (authoritative)
+2. **Explicit alias suffix** — `claudeCode.selectedModel: "opus[1m]"` (authoritative)
+3. **JSONL suffix** — a model ID with `[Nm]` in session logs (authoritative, rare in practice)
+4. **Live plan + model rule table** — `capabilities` from `/api/bootstrap` + model family from session logs matched against a data-driven rule table (e.g. `claude_max` + `opus-4.6+` → 1M)
+5. **Local plan + model rule table** — same table, but plan comes from `.credentials.json subscriptionType` (used when the live API isn't available, e.g. `tokenOnlyMode`)
+6. **Claude Code's `s1mAccessCache`** — used only as a last-resort corroborating signal, never as a negative
+7. **Observed usage snap-to-tier** — if all authoritative signals fail but observed tokens exceed 200K, snap up to the next known tier (200K → 1M → 2M) and label the result as `(inferred)`
+8. **Standard fallback** — 200K
 
-The suffix format is dynamic: `[1m]` = 1M tokens, `[2m]` = 2M, `[500k]` = 500K. No code changes needed when Anthropic increases context sizes.
+The tooltip shows the source:
 
-When extended context is active, the tooltip shows **"Context: 1.0M (extended)"**. To override auto-detection, set `claudemeter.tokenLimit` to a specific value.
+- `Context: 1.0M` — from an authoritative signal (user override, explicit alias, JSONL suffix)
+- `Context: 1.0M (configured)` — from Claude Code's own eligibility cache
+- `Context: 1.0M (inferred)` — from a rule-table match or observed-usage snap
+- `Context: 200K` — standard fallback, no signal
+
+The rule table is future-proof via numeric `minVersion` comparison — when Anthropic ships Opus 4.7 or 5.0 with the same defaults, the existing rules keep matching without a code change. To override auto-detection, set `claudemeter.tokenLimit` to a specific value.
 
 ## How It Works
 
@@ -200,7 +209,7 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 - **Type**: Number
 - **Default**: `100`
 - **Range**: `0-10000`
-- **Description**: Status bar priority (higher values position items closer to the center). Requires window reload to take effect.
+- **Description**: Status bar priority (higher values position items closer to the centre). Requires window reload to take effect.
 
 ### `claudemeter.debug`
 

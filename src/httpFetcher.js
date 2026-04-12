@@ -318,17 +318,30 @@ class ClaudeHttpFetcher {
 
         const orgType = detectOrgType(orgName, org);
 
+        // Extract the authoritative plan signals from the org object so
+        // the context-window resolver can use them. `capabilities` is
+        // the clean plan-token list (e.g. ['claude_max', 'chat'] for Max,
+        // ['chat'] for Free). `rate_limit_tier` carries the multiplier
+        // variant (e.g. 'default_claude_max_20x') as a secondary signal.
+        // Both are optional — if the API ever stops returning them the
+        // resolver falls back to local credentials.
+        const capabilities = Array.isArray(org.capabilities) ? org.capabilities.slice() : null;
+        const webRateLimitTier = typeof org.rate_limit_tier === 'string' ? org.rate_limit_tier : null;
+
         const accountInfo = {
             name: data.account?.display_name || data.account?.full_name,
             email: data.account?.email_address,
             orgName,
             orgType,
+            capabilities,
+            webRateLimitTier,
         };
         this._identityCache.setResolvedWebOrgId(orgUuid, accountInfo);
 
         // Log full org object for debugging — helps discover team/enterprise fields
         const orgFields = Object.keys(org).filter(k => k !== 'uuid').join(', ');
-        fileLog(`Resolved org: ${orgUuid.slice(0, 8)}... (${orgName}) type=${orgType || 'unknown'} fields=[${orgFields}]`);
+        const capSummary = capabilities ? capabilities.join(',') : 'none';
+        fileLog(`Resolved org: ${orgUuid.slice(0, 8)}... (${orgName}) type=${orgType || 'unknown'} capabilities=[${capSummary}] rate_limit_tier=${webRateLimitTier || 'none'} fields=[${orgFields}]`);
         return orgUuid;
     }
 

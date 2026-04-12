@@ -106,38 +106,32 @@ function getModelContextWindow(modelId) {
 }
 
 // Given observed session state, return the resolved context window in tokens.
-// All inputs are optional — pass what's available and the function will pick
-// the largest credible limit.
 //
-// Parameters:
-//   modelIds           — array of model IDs seen in the session JSONL
-//   maxObservedTokens  — highest token count actually seen (e.g. cache_read)
-//   aliasDeclaredLimit — limit from claudeCode.selectedModel (e.g. 1_000_000 for "opus[1m]")
-//   eligibilityLimit   — limit implied by account eligibility (e.g. 1_000_000 if
-//                        Claude Code's s1mAccessCache shows hasAccess === true)
+// DEPRECATED: this function was the entry point for the old
+// Math.max-based resolver, which treated `maxObservedTokens` as a
+// definitive limit when it exceeded 200K. That caused the 2026-04
+// ratchet bug where the stored session limit would creep up to
+// match the raw observed usage, producing a permanent ~100% Tk%.
 //
-// Resolution rule: return the maximum of STANDARD_LIMIT and every positive signal.
-// Any one positive signal is enough to bump the ceiling above 200K.
+// It is kept only as a thin delegator to contextWindowResolver so
+// any remaining callers (inside or outside the repo) transparently
+// get the fixed behaviour. New code should call
+// `resolveContextWindow` directly with the richer signal set.
 function resolveSessionContextWindow(
     modelIds,
     maxObservedTokens = 0,
     aliasDeclaredLimit = 0,
     eligibilityLimit = 0
 ) {
-    const jsonlDeclaredLimit = getHighestDeclaredLimit(modelIds);
-
-    // If observed tokens exceed the standard limit, the actual limit is at least that high
-    const observedFloor = maxObservedTokens > STANDARD_LIMIT
-        ? maxObservedTokens
-        : 0;
-
-    return Math.max(
-        STANDARD_LIMIT,
+    const { resolveContextWindow } = require('./contextWindowResolver');
+    const result = resolveContextWindow({
+        modelIds,
+        observedFloor: maxObservedTokens,
         aliasDeclaredLimit,
-        jsonlDeclaredLimit,
-        observedFloor,
-        eligibilityLimit
-    );
+        jsonlDeclaredLimit: getHighestDeclaredLimit(modelIds),
+        s1mHasAccess: eligibilityLimit >= 1_000_000 ? true : null,
+    });
+    return result.limit;
 }
 
 // Return context window info for tooltip display

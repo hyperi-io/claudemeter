@@ -211,7 +211,7 @@
           "default": 100,
           "minimum": 0,
           "maximum": 10000,
-          "description": "Status bar priority (higher values position items closer to the center). Requires window reload to take effect."
+          "description": "Status bar priority (higher values position items closer to the centre). Requires window reload to take effect."
         },
         "claudemeter.statusBar.usageFormat": {
           "type": "string",

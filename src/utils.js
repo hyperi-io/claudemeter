@@ -236,53 +236,83 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Resolve token limit with priority: user override > CC setting > observed usage > fallback
-// modelIds: optional array of model IDs detected from session JSONL
-// maxObservedTokens: highest token count seen in session (e.g. cache_read)
-// Setting value 0 = auto-detect (default)
+// Resolve the token limit for the current session, returning the full
+// {limit, source, confidence} triple from contextWindowResolver.
 //
-// Eligibility signals used (priority order handled inside resolveSessionContextWindow):
-//   1. User override from claudemeter.tokenLimit setting (wins unconditionally)
-//   2. Observed tokens that exceed 200K (definitive proof of extended context)
-//   3. Claude Code's own s1mAccessCache for the currently logged-in org
-//   4. claudeCode.selectedModel alias with [Nm] suffix
-//   5. Model IDs in the JSONL with [Nm] suffix (rare)
-//   6. Default 200K
-function getTokenLimit(modelIds = null, maxObservedTokens = 0) {
+// Accepts an optional `ctx` object with any of these pre-fetched signals:
+//   modelIds         - array of model IDs from JSONL (e.g. from claudeDataLoader)
+//   observedFloor    - max cache_read tokens observed (e.g. highestCacheRead)
+//   capabilities     - live /api/bootstrap org.capabilities array
+//                      (from httpFetcher AccountIdentityCache.accountInfo.capabilities)
+//   subscriptionType - local .credentials.json subscriptionType fallback
+//
+// Signals not passed in ctx are resolved here from VS Code settings /
+// ~/.claude.json etc. This design lets call sites that already have
+// the live API signals pass them in for the most accurate result,
+// while simpler call sites can call with just modelIds/observedFloor.
+function resolveTokenLimit(ctx = {}) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const userOverride = config.get('tokenLimit', 0);
 
-    // User explicitly set a non-zero value — honour it as global override
-    if (userOverride > 0) {
-        return userOverride;
-    }
-
-    const { resolveSessionContextWindow, parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
+    const { resolveContextWindow } = require('./contextWindowResolver');
+    const { parseModelAlias, getHighestDeclaredLimit } = require('./modelContextWindows');
 
     // Claude Code's selected model picker may embed an explicit suffix
     const ccModel = vscode.workspace.getConfiguration('claudeCode').get('selectedModel', '');
     const aliasDeclaredLimit = parseModelAlias(ccModel);
 
-    // Claude Code's own eligibility cache. Read lazily to avoid cycles and to
-    // re-check on every call (file is small, cost is negligible). When the
-    // cache says hasAccess === true, we can claim 1M before any extended-
-    // context request has actually been made.
-    let eligibilityLimit = 0;
+    // JSONL model IDs may (rarely) carry [Nm] suffixes. Claude Code
+    // strips these in practice, but the parser is kept for future-
+    // proofing in case the behaviour changes.
+    const jsonlDeclaredLimit = getHighestDeclaredLimit(ctx.modelIds || null);
+
+    // Claude Code's own eligibility cache. Read lazily (file is small,
+    // cost negligible) and only trusted as a corroborating signal —
+    // never as a definitive negative, since we've seen it go stale
+    // with hasAccess:false on accounts that were genuinely running
+    // 1M context at the time.
+    let s1mHasAccess = null;
     try {
         const { hasMaxContextAccess } = require('./claudeConfigReader');
-        if (hasMaxContextAccess() === true) {
-            eligibilityLimit = 1000000;
-        }
+        s1mHasAccess = hasMaxContextAccess();
     } catch {
-        // If the config reader throws, treat eligibility as unknown (0).
+        s1mHasAccess = null;
     }
 
-    return resolveSessionContextWindow(
-        modelIds,
-        maxObservedTokens,
+    // Local subscription fallback (used when live capabilities aren't
+    // available — tokenOnlyMode, pre-first-fetch, offline).
+    let subscriptionType = ctx.subscriptionType || null;
+    if (!subscriptionType) {
+        try {
+            const { readCredentials } = require('./credentialsReader');
+            const creds = readCredentials();
+            subscriptionType = creds?.subscriptionType || null;
+        } catch {
+            subscriptionType = null;
+        }
+    }
+
+    return resolveContextWindow({
+        userOverride,
         aliasDeclaredLimit,
-        eligibilityLimit
-    );
+        jsonlDeclaredLimit,
+        capabilities: ctx.capabilities || null,
+        subscriptionType,
+        s1mHasAccess,
+        modelIds: ctx.modelIds || null,
+        observedFloor: ctx.observedFloor || 0,
+    });
+}
+
+// Back-compat wrapper that returns just the numeric limit. New callers
+// that want the source/confidence metadata should use resolveTokenLimit
+// directly. This wrapper is intentionally conservative — existing call
+// sites that read a bare number continue to work.
+function getTokenLimit(modelIds = null, maxObservedTokens = 0) {
+    return resolveTokenLimit({
+        modelIds,
+        observedFloor: maxObservedTokens,
+    }).limit;
 }
 
 function getTimeFormat() {
@@ -437,6 +467,7 @@ module.exports = {
     VIEWPORT,
     CLAUDE_URLS,
     getTokenLimit,
+    resolveTokenLimit,
     getTimeFormat,
     getUse24HourTime,
     getUseCountdownTimer,

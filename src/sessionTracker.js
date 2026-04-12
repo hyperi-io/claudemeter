@@ -292,7 +292,13 @@ class SessionTracker {
         return this.currentSession;
     }
 
-    async updateTokens(tokensUsed, tokenLimit = null) {
+    // tokensUsed: current observed cache_read total
+    // tokenLimit: resolved limit in tokens (falls back to getTokenLimit() if null)
+    // resolvedMeta: optional {source, confidence} from contextWindowResolver,
+    //               persisted alongside the limit so the tooltip can show
+    //               where the value came from (e.g. 'rule:max-opus-4.6+',
+    //               'inferred', 'standard').
+    async updateTokens(tokensUsed, tokenLimit = null, resolvedMeta = null) {
         const limit = tokenLimit || getTokenLimit();
         const data = await this.loadData({ useCache: false });
 
@@ -322,6 +328,10 @@ class SessionTracker {
         session.tokenUsage.limit = limit;
         session.tokenUsage.remaining = limit - tokensUsed;
         session.tokenUsage.lastUpdate = new Date().toISOString();
+        if (resolvedMeta && typeof resolvedMeta === 'object') {
+            session.tokenUsage.limitSource = resolvedMeta.source || null;
+            session.tokenUsage.limitConfidence = resolvedMeta.confidence || null;
+        }
 
         await this.saveData(data);
     }

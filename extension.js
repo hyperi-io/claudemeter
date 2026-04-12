@@ -32,7 +32,7 @@ const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refresh
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
-const { CONFIG_NAMESPACE, COMMANDS, PATHS, getTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
+const { CONFIG_NAMESPACE, COMMANDS, PATHS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
 const {
     CREDENTIALS_PATH,
     readCredentials,
@@ -609,7 +609,24 @@ async function updateTokensFromJsonl(silent = false) {
                         currentSession = await sessionTracker.startSession('Claude Code session (auto-created)');
                         debugLog(`Created new session: ${currentSession.sessionId}`);
                     }
-                    await sessionTracker.updateTokens(usage.totalTokens, getTokenLimit(usage.modelIds, usage.totalTokens));
+                    // Build the full signal context so the resolver can use
+                    // the authoritative live API signals when available.
+                    // capabilities + webRateLimitTier come from the most
+                    // recent /api/bootstrap response via the identity cache;
+                    // they'll be null on tokenOnlyMode or before the first
+                    // fetch completes, and the resolver falls back to local
+                    // credentials in that case.
+                    const liveAccountInfo = httpFetcher?.accountInfo || null;
+                    const resolved = resolveTokenLimit({
+                        modelIds: usage.modelIds,
+                        observedFloor: usage.totalTokens,
+                        capabilities: liveAccountInfo?.capabilities || null,
+                        subscriptionType: credentialsInfo?.subscriptionType || null,
+                    });
+                    if (!silent) {
+                        debugLog(`Context window resolved: ${resolved.limit.toLocaleString()} (source=${resolved.source}, confidence=${resolved.confidence})`);
+                    }
+                    await sessionTracker.updateTokens(usage.totalTokens, resolved.limit, resolved);
                 }
 
                 const sessionData = await sessionTracker.getCurrentSession();
