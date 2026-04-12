@@ -20,6 +20,12 @@ extension.js
 scripts/**
 build/**
 
+# Tests and dev configs (not needed by end users)
+tests/**
+vitest.config.js
+renovate.json
+.mcp.json
+
 # Dependencies (all bundled by esbuild)
 node_modules/**
 
