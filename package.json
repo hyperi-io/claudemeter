@@ -232,6 +232,21 @@
           ],
           "markdownDescription": "How to display usage values in the status bar"
         },
+        "claudemeter.statusBar.tokensDisplay": {
+          "type": "string",
+          "enum": [
+            "both",
+            "bar",
+            "count"
+          ],
+          "default": "both",
+          "enumDescriptions": [
+            "Progress bar AND token count (e.g. Tk ●●○○○ 275k/1000k)",
+            "Progress bar / percent only (e.g. Tk ●●○○○)",
+            "Token count only (e.g. Tk 275k/1000k)"
+          ],
+          "markdownDescription": "How to display the **Tk** (token usage) item in the status bar:\n\n- **both** _(default)_: progress bar alongside token count\n- **bar**: progress bar or percentage only (matches pre-2.3.0 behaviour)\n- **count**: token count only, in thousands\n\nToken count shows a denominator (e.g. `275k/1000k`) when the context window limit is known; when the limit is inferred, the denominator is omitted to avoid misrepresenting an uncertain value."
+        },
         "claudemeter.thresholds.warning": {
           "type": "number",
           "default": 80,

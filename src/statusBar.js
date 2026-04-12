@@ -11,6 +11,11 @@ const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, calculateResetClock
 const { fetchServiceStatus, getStatusDisplay, formatStatusTime, STATUS_PAGE_URL } = require('./serviceStatus');
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
+const {
+    formatTokensDisplay,
+    formatTokensDisplayCompact,
+    DISPLAY_BOTH,
+} = require('./statusBarFormatters');
 
 const LABEL_TEXT = 'Claude';
 
@@ -53,6 +58,19 @@ function getStatusBarPriority() {
 function getUsageFormat() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     return config.get('statusBar.usageFormat', 'barCircle');
+}
+
+/**
+ * Get the tokens display setting (claudemeter.statusBar.tokensDisplay).
+ * Controls whether the Tk status bar item shows the bar/percent
+ * indicator, the k-count, or both. Default is 'both' so users
+ * upgrading from 2.2.x see the new k-count alongside the existing
+ * indicator.
+ * @returns {string} One of: bar, count, both
+ */
+function getTokensDisplay() {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    return config.get('statusBar.tokensDisplay', DISPLAY_BOTH);
 }
 
 /**
@@ -255,7 +273,7 @@ function setAllTooltips(tooltip) {
     });
 }
 
-function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus) {
+function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo = null) {
     statusBarItems.label.hide();
     statusBarItems.session.hide();
     statusBarItems.weekly.hide();
@@ -274,8 +292,18 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
     if (weeklyPercent !== null) {
         parts.push(`Wk${formatPercent(weeklyPercent, true)}`);
     }
+    // Tk rendering uses the new tokensDisplay setting to choose between
+    // bar/percent, k-count, or both. In compact mode the 'bar' variant
+    // becomes 'percent' because compact mode has no room for a literal
+    // progress bar.
     if (tokenPercent !== null) {
-        parts.push(`Tk${formatPercent(tokenPercent, true)}`);
+        parts.push(formatTokensDisplayCompact({
+            display: getTokensDisplay(),
+            percent: tokenPercent,
+            current: tokensInfo?.current ?? null,
+            limit: tokensInfo?.limit ?? null,
+            knownLimit: tokensInfo?.knownLimit ?? false,
+        }));
     } else {
         parts.push('Tk-');
     }
@@ -321,7 +349,8 @@ function renderMultiPanelMode(
     showCredits,
     sonnetThresholds,
     opusThresholds,
-    creditsThresholds
+    creditsThresholds,
+    tokensInfo = null
 ) {
     statusBarItems.compact.hide();
     lastDisplayedValues.compactText = null;
@@ -378,7 +407,14 @@ function renderMultiPanelMode(
     let newTokensText;
     let tokensVisible;
     if (tokenPercent !== null) {
-        const tokenDisplay = formatPercent(tokenPercent);
+        const tokenDisplay = formatTokensDisplay({
+            display: getTokensDisplay(),
+            percent: tokenPercent,
+            current: tokensInfo?.current ?? null,
+            limit: tokensInfo?.limit ?? null,
+            knownLimit: tokensInfo?.knownLimit ?? false,
+            usageFormat: getUsageFormat(),
+        });
         newTokensText = `${tokenStatus.icon ? tokenStatus.icon + ' ' : ''}Tk ${tokenDisplay}`;
         tokensVisible = true;
     } else {
@@ -623,7 +659,22 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     if (sessionData && sessionData.tokenUsage) {
         const limit = sessionData.tokenUsage.limit;
         const isExtended = limit > STANDARD_LIMIT;
-        tooltipLines.push(`Context: ${formatCompact(limit)}${isExtended ? ' (extended)' : ''}`);
+        // When the limit came from a non-authoritative source (rule
+        // table match, observed-floor snap, standard fallback), we
+        // say so in the tooltip — that way users who see a surprising
+        // number know we're inferring rather than reading ground truth.
+        const confidence = sessionData.tokenUsage.limitConfidence || null;
+        let suffix = '';
+        if (isExtended && confidence === 'authoritative') {
+            suffix = ' (extended)';
+        } else if (confidence === 'inferred') {
+            suffix = ' (inferred)';
+        } else if (confidence === 'configured') {
+            suffix = ' (configured)';
+        } else if (isExtended) {
+            suffix = ' (extended)';
+        }
+        tooltipLines.push(`Context: ${formatCompact(limit)}${suffix}`);
     } else if (credentialsInfo) {
         const ccModel = vscode.workspace.getConfiguration('claudeCode').get('selectedModel', '');
         const aliasLimit = parseModelAlias(ccModel);
@@ -641,10 +692,24 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     let tokenPercent = null;
     let tokenStatus = { icon: '', color: undefined, level: 'normal' };
+    let tokensInfo = null;
 
     if (sessionData && sessionData.tokenUsage) {
         tokenPercent = Math.round((sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100);
         tokenStatus = getIconAndColor(tokenPercent, tokenThresholds.warning, tokenThresholds.error);
+        // The knownLimit flag tells formatTokensDisplay whether to show
+        // a denominator in count/both modes. Limits from authoritative
+        // or configured sources (user override, explicit [1m] alias,
+        // rule table, cc eligibility) are considered known; inferred
+        // and standard fallbacks are not.
+        const confidence = sessionData.tokenUsage.limitConfidence || null;
+        const knownLimit = confidence === 'authoritative' || confidence === 'configured';
+        tokensInfo = {
+            percent: tokenPercent,
+            current: sessionData.tokenUsage.current,
+            limit: sessionData.tokenUsage.limit,
+            knownLimit,
+        };
     }
 
     if (usageData) {
@@ -753,7 +818,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     }
 
     if (displayMode === DISPLAY_MODES.COMPACT) {
-        renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus);
+        renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo);
     } else {
         renderMultiPanelMode(
             displayMode,
@@ -771,7 +836,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             showCredits,
             sonnetThresholds,
             opusThresholds,
-            creditsThresholds
+            creditsThresholds,
+            tokensInfo
         );
     }
 }

@@ -197,6 +197,18 @@ Open VS Code Settings and search for "Claudemeter" to configure:
   - **barSquare**: Squares (e.g., ?????)
   - **barCircle**: Circles (e.g., ?????)
 
+### `claudemeter.statusBar.tokensDisplay`
+
+- **Type**: String
+- **Default**: `both` (new in 2.3.0 — previously behaved as `bar`)
+- **Options**: `both`, `bar`, `count`
+- **Description**: Controls the **Tk** (token usage) indicator specifically:
+  - **both**: progress bar and token count side by side (e.g. `Tk ●●○○○ 275k/1000k`)
+  - **bar**: progress bar or percentage only (e.g. `Tk ●●○○○`) — matches pre-2.3.0 behaviour
+  - **count**: token count only, in thousands (e.g. `Tk 275k/1000k`)
+- The token count shows a denominator (e.g. `275k/1000k`) only when the context window limit is known from an authoritative or configured source. When the limit is inferred, the denominator is omitted so the display doesn't misrepresent an uncertain value.
+- The existing `claudemeter.statusBar.usageFormat` setting still controls the bar/percent half in `bar` and `both` modes.
+
 ### `claudemeter.statusBar.alignment`
 
 - **Type**: String
