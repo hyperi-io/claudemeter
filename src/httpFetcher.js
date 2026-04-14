@@ -99,6 +99,52 @@ const CHROMIUM_BROWSERS = {
     }
 };
 
+// Pick the right org membership for fetching claude.ai usage data.
+//
+// When a user has both an Anthropic Console (API) org and a claude.ai
+// subscription (Free/Pro/Max/Team/Enterprise), /api/bootstrap returns
+// multiple memberships. The API-only org has capabilities=['api'] and
+// does NOT expose /api/organizations/{id}/usage — fetching from it
+// returns 401, which our error heuristic misclassifies as SESSION_EXPIRED,
+// triggering a pointless login flow.
+//
+// Selection priority:
+//   1. Filter to memberships with a claude.ai capability ('chat' or any
+//      'claude_*' plan token). If capabilities is missing entirely, keep
+//      the membership (permissive for unknown API shapes).
+//   2. Among the filtered pool, prefer a uuid exact-match against the
+//      CLI creds orgId — honours the user's explicit /login choice.
+//   3. Otherwise return the first filtered membership.
+//   4. If the filter yields nothing (every org is API-only or empty),
+//      fall back to credsOrgId match or memberships[0] — same as legacy
+//      behaviour, so we don't regress edge cases.
+function hasClaudeAiCapability(membership) {
+    const caps = membership?.organization?.capabilities;
+    // Unknown shape: keep it. Some legacy bootstrap responses may omit
+    // capabilities entirely; better to try than to drop the only entry.
+    if (!Array.isArray(caps)) return true;
+    return caps.some(c =>
+        c === 'chat' ||
+        (typeof c === 'string' && c.startsWith('claude_'))
+    );
+}
+
+function selectMembership(memberships, credsOrgId = null) {
+    if (!Array.isArray(memberships) || memberships.length === 0) {
+        return null;
+    }
+
+    const claudeAi = memberships.filter(hasClaudeAiCapability);
+    const pool = claudeAi.length > 0 ? claudeAi : memberships;
+
+    if (credsOrgId) {
+        const match = pool.find(m => m?.organization?.uuid === credsOrgId);
+        if (match) return match;
+    }
+
+    return pool[0];
+}
+
 // Detect organization type from bootstrap data.
 // Personal accounts have org names like "Derek's Organization".
 // Team/Enterprise accounts have custom org names and may expose explicit type fields.
@@ -310,9 +356,12 @@ class ClaudeHttpFetcher {
             throw new Error('NO_ORG_ID');
         }
 
-        // Use first org (personal account). If there are multiple,
-        // prefer the one matching the CLI credentials org name.
-        const org = memberships[0].organization;
+        // Pick the right membership. Falls back to memberships[0] only when
+        // no claude.ai-capable org exists (all API-only) — preserves legacy
+        // behaviour for edge cases without breaking the common multi-org case.
+        const creds = readCredentials();
+        const picked = selectMembership(memberships, creds?.orgId || null);
+        const org = picked.organization;
         const orgUuid = org.uuid;
         const orgName = org.name;
 
@@ -500,10 +549,24 @@ class ClaudeHttpFetcher {
 
         let browser = null;
         let page = null;
+        let userDataDir = null;
 
         try {
             // Lazy-load puppeteer-core
             const puppeteer = require('puppeteer-core');
+
+            // Migrate: older builds kept a persistent ~/.config/claudemeter/login-session
+            // dir. We now use an ephemeral tempdir per login, so delete the legacy
+            // directory if present.
+            const legacyLoginDir = path.join(PATHS.CONFIG_DIR, 'login-session');
+            if (fs.existsSync(legacyLoginDir)) {
+                try {
+                    fs.rmSync(legacyLoginDir, { recursive: true, force: true });
+                    fileLog('Removed legacy persistent login-session dir');
+                } catch (err) {
+                    fileLog(`Could not remove legacy login-session: ${err.message}`);
+                }
+            }
 
             const chromePath = findChrome();
             if (!chromePath) {
@@ -516,7 +579,10 @@ class ClaudeHttpFetcher {
             }
 
             const port = await this._findAvailablePort();
-            const userDataDir = path.join(PATHS.CONFIG_DIR, 'login-session');
+            // Fresh tempdir per login so the browser has no tab history,
+            // cache, or cookies between runs. The sessionKey cookie we need
+            // is extracted via page.cookies() before the dir is cleaned up.
+            userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claudemeter-login-'));
 
             browser = await puppeteer.launch({
                 headless: false,
@@ -541,6 +607,28 @@ class ClaudeHttpFetcher {
 
             page = await browser.newPage();
             await page.setUserAgent(BROWSER_HEADERS['User-Agent']);
+
+            // Pre-inject the saved sessionKey cookie if we have one. When the
+            // cookie is still valid (common case: misclassified SESSION_EXPIRED,
+            // transient server glitch) Claude's login page redirects straight
+            // to the dashboard and _waitForSessionKey finds the cookie without
+            // any user interaction. If the cookie is actually dead, the server
+            // ignores it and the user logs in as normal.
+            const existingCookie = this._readCookie();
+            if (existingCookie?.sessionKey) {
+                try {
+                    await page.setCookie({
+                        url: CLAUDE_URLS.BASE,
+                        name: 'sessionKey',
+                        value: existingCookie.sessionKey,
+                        httpOnly: true,
+                        secure: true,
+                    });
+                    fileLog('Pre-injected saved sessionKey — skipping login if still valid');
+                } catch (err) {
+                    fileLog(`Cookie pre-injection failed: ${err.message}`);
+                }
+            }
 
             await page.goto(CLAUDE_URLS.LOGIN, {
                 waitUntil: 'networkidle2',
@@ -582,12 +670,10 @@ class ClaudeHttpFetcher {
                 const browserEmail = bootstrapData?.account?.email_address || null;
 
                 if (cliEmail && browserEmail && cliEmail.toLowerCase() !== browserEmail.toLowerCase()) {
-                    // Wrong account — clear browser cache and force re-login
+                    // Wrong account — prompt user to log in as the correct account
+                    // in the same browser window. The tempdir is always wiped after
+                    // this flow, so no cached browser state carries over.
                     fileLog(`Account mismatch: browser=${browserEmail}, CLI=${cliEmail}`);
-                    const loginSessionDir = path.join(PATHS.CONFIG_DIR, 'login-session');
-                    if (fs.existsSync(loginSessionDir)) {
-                        fs.rmSync(loginSessionDir, { recursive: true, force: true });
-                    }
                     await vscode.window.showErrorMessage(
                         `Wrong account. Browser is signed in as ${browserEmail} but Claude Code is using ${cliEmail}. Please log in with the correct account.`,
                         { modal: false }
@@ -670,6 +756,16 @@ class ClaudeHttpFetcher {
                     }
                 } catch {
                     // Ignore close errors
+                }
+            }
+            // Remove the per-login tempdir so no tab history, cache, or cookies
+            // persist between runs. The sessionKey we care about is already
+            // saved in our own session-cookie.json at this point.
+            if (userDataDir && fs.existsSync(userDataDir)) {
+                try {
+                    fs.rmSync(userDataDir, { recursive: true, force: true });
+                } catch (err) {
+                    fileLog(`Failed to clean login tempdir ${userDataDir}: ${err.message}`);
                 }
             }
             this._releaseLoginLock();
@@ -915,4 +1011,5 @@ function getDefaultBrowserWindows() {
 module.exports = {
     ClaudeHttpFetcher,
     findChrome,
+    selectMembership,
 };
