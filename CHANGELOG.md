@@ -1,3 +1,10 @@
+## [2.3.1](https://github.com/hyperi-io/claudemeter/compare/v2.3.0...v2.3.1) (2026-04-14)
+
+
+### Bug Fixes
+
+* skip API-only orgs and make login browser stateless ([3902e04](https://github.com/hyperi-io/claudemeter/commit/3902e04be068b0c4afdf726b8bb289c9dd6c4be1))
+
 # [2.3.0](https://github.com/hyperi-io/claudemeter/compare/v2.2.4...v2.3.0) (2026-04-12)
 
 
