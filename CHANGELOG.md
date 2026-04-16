@@ -1,3 +1,10 @@
+## [2.3.2](https://github.com/hyperi-io/claudemeter/compare/v2.3.1...v2.3.2) (2026-04-16)
+
+
+### Bug Fixes
+
+* display 1M+ token counts in compact m-format ([28aef27](https://github.com/hyperi-io/claudemeter/commit/28aef27c3a78d4722f3a46862d66e2043bab1111))
+
 ## [2.3.1](https://github.com/hyperi-io/claudemeter/compare/v2.3.0...v2.3.1) (2026-04-14)
 
 
