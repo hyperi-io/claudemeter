@@ -1,3 +1,10 @@
+## [2.3.3](https://github.com/hyperi-io/claudemeter/compare/v2.3.2...v2.3.3) (2026-04-16)
+
+
+### Bug Fixes
+
+* **deps:** update puppeteer-core to v24.41.0 ([#26](https://github.com/hyperi-io/claudemeter/issues/26)) ([83576f1](https://github.com/hyperi-io/claudemeter/commit/83576f199057d5a709fe8a4d1a88b94fba8c49be))
+
 ## [2.3.2](https://github.com/hyperi-io/claudemeter/compare/v2.3.1...v2.3.2) (2026-04-16)
 
 
