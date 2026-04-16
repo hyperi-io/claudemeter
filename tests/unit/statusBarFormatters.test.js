@@ -43,16 +43,40 @@ describe('formatTokenCount', () => {
         expect(formatTokenCount(275000)).toBe('275k');
     });
 
-    it('formats 1M as 1000k', () => {
-        expect(formatTokenCount(1000000)).toBe('1000k');
+    it('formats 1M as 1m (no decimal for exact)', () => {
+        expect(formatTokenCount(1000000)).toBe('1m');
     });
 
-    it('formats 1.25M as 1250k', () => {
-        expect(formatTokenCount(1250000)).toBe('1250k');
+    it('formats 1.25M as 1.3m (rounds to 0.1)', () => {
+        expect(formatTokenCount(1250000)).toBe('1.3m');
     });
 
-    it('formats 2M as 2000k', () => {
-        expect(formatTokenCount(2000000)).toBe('2000k');
+    it('formats 1.5M as 1.5m', () => {
+        expect(formatTokenCount(1500000)).toBe('1.5m');
+    });
+
+    it('formats 2M as 2m (strips .0)', () => {
+        expect(formatTokenCount(2000000)).toBe('2m');
+    });
+
+    it('formats 999999 as 1000k (still below 1m threshold)', () => {
+        expect(formatTokenCount(999999)).toBe('1000k');
+    });
+
+    it('formats 1050000 as 1.1m (rounds 1.05 up)', () => {
+        expect(formatTokenCount(1050000)).toBe('1.1m');
+    });
+
+    it('formats 1010000 as 1m (1.01 rounds down to exact 1)', () => {
+        expect(formatTokenCount(1010000)).toBe('1m');
+    });
+
+    it('formats 1040000 as 1m (1.04 rounds down)', () => {
+        expect(formatTokenCount(1040000)).toBe('1m');
+    });
+
+    it('formats 1900000 as 1.9m', () => {
+        expect(formatTokenCount(1900000)).toBe('1.9m');
     });
 
     it('handles negative defensively as 0k', () => {
@@ -170,7 +194,7 @@ describe('formatTokensDisplay — count mode', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('275k/1000k');
+        expect(result).toBe('275k/1m');
     });
 
     it('count mode with unknown limit omits denominator', () => {
@@ -185,7 +209,7 @@ describe('formatTokensDisplay — count mode', () => {
         expect(result).toBe('275k');
     });
 
-    it('count mode with known limit at 0 shows 0k/1000k', () => {
+    it('count mode with known limit at 0 shows 0k/1m', () => {
         const result = formatTokensDisplay({
             display: 'count',
             percent: 0,
@@ -194,7 +218,7 @@ describe('formatTokensDisplay — count mode', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('0k/1000k');
+        expect(result).toBe('0k/1m');
     });
 
     it('count mode with 200K limit', () => {
@@ -222,7 +246,7 @@ describe('formatTokensDisplay — both mode (default)', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○ 275k/1000k');
+        expect(result).toBe('●○○○○ 275k/1m');
     });
 
     it('both mode with unknown limit omits denominator', () => {
@@ -249,7 +273,7 @@ describe('formatTokensDisplay — both mode (default)', () => {
             knownLimit: true,
             usageFormat: 'percent',
         });
-        expect(result).toBe('27% 275k/1000k');
+        expect(result).toBe('27% 275k/1m');
     });
 
     it('both mode at 100% looks right', () => {
@@ -261,7 +285,7 @@ describe('formatTokensDisplay — both mode (default)', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●●●●● 1000k/1000k');
+        expect(result).toBe('●●●●● 1m/1m');
     });
 });
 
@@ -274,7 +298,7 @@ describe('formatTokensDisplay — fallback and edge cases', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○ 275k/1000k');
+        expect(result).toBe('●○○○○ 275k/1m');
     });
 
     it('treats unknown display value as both', () => {
@@ -286,7 +310,7 @@ describe('formatTokensDisplay — fallback and edge cases', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○ 275k/1000k');
+        expect(result).toBe('●○○○○ 275k/1m');
     });
 });
 
@@ -294,8 +318,8 @@ describe('formatTokensDisplayCompact — compact mode variants', () => {
     // Compact mode uses the `Tk-NN%` convention instead of a literal bar,
     // so the 'bar' label really means 'percentage'. The three modes are:
     //   bar    -> `Tk-36%`
-    //   count  -> `Tk-275k` (with /1000k if known)
-    //   both   -> `Tk-36% 275k` (with /1000k if known)
+    //   count  -> `Tk-275k` (with /1m if known at 1M limit)
+    //   both   -> `Tk-36% 275k` (with /1m if known at 1M limit)
 
     it('bar mode returns percent-only string', () => {
         const result = formatTokensDisplayCompact({
@@ -316,7 +340,7 @@ describe('formatTokensDisplayCompact — compact mode variants', () => {
             limit: 1000000,
             knownLimit: true,
         });
-        expect(result).toBe('Tk-275k/1000k');
+        expect(result).toBe('Tk-275k/1m');
     });
 
     it('count mode with unknown limit omits denominator', () => {
@@ -338,7 +362,7 @@ describe('formatTokensDisplayCompact — compact mode variants', () => {
             limit: 1000000,
             knownLimit: true,
         });
-        expect(result).toBe('Tk-36% 275k/1000k');
+        expect(result).toBe('Tk-36% 275k/1m');
     });
 
     it('both mode with unknown limit shows percent (snapped) + count (no denominator)', () => {
@@ -359,7 +383,7 @@ describe('formatTokensDisplayCompact — compact mode variants', () => {
             limit: 1000000,
             knownLimit: true,
         });
-        expect(result).toBe('Tk-36% 275k/1000k');
+        expect(result).toBe('Tk-36% 275k/1m');
     });
 
     it('compact with no data returns Tk-- as before', () => {

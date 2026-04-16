@@ -58,6 +58,25 @@ module.exports = [
         },
     },
     {
+        // Vitest test files use ESM-style imports (`import { describe, ... } from 'vitest'`)
+        // alongside CommonJS require() for local modules.
+        files: ['tests/**/*.js', 'tests/**/*.test.js'],
+        languageOptions: {
+            sourceType: 'module',
+            globals: {
+                describe: 'readonly',
+                it: 'readonly',
+                test: 'readonly',
+                expect: 'readonly',
+                beforeAll: 'readonly',
+                beforeEach: 'readonly',
+                afterAll: 'readonly',
+                afterEach: 'readonly',
+                vi: 'readonly',
+            },
+        },
+    },
+    {
         ignores: ['node_modules/**', '.tmp/**', '*.vsix'],
     },
 ];

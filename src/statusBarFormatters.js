@@ -31,18 +31,24 @@ const BAR_STYLES = {
 // Placeholder shown when there's no data to render.
 const NO_DATA = '-';
 
-// Format a raw token count as rounded "k". Stays in k-units
-// all the way up so users can scan multiple Tk indicators and
-// compare them without mental unit conversion.
+// Format a raw token count. Uses "k" below 1M and "m" at 1M and above so
+// large context windows (1M / 2M / etc.) stay compact and readable in the
+// status bar — e.g. "355k/1m" instead of "355k/1000k".
 //
 //   0       -> "0k"
 //   275000  -> "275k"
-//   1250000 -> "1250k"
+//   1000000 -> "1m"     (exact: strip trailing .0)
+//   1250000 -> "1.3m"   (round to nearest 0.1)
+//   2000000 -> "2m"
 //
 // Defensive for NaN/null/negative: any of those collapse to "0k".
 function formatTokenCount(n) {
     if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
         return '0k';
+    }
+    if (n >= 1000000) {
+        const s = (n / 1000000).toFixed(1);
+        return s.endsWith('.0') ? `${s.slice(0, -2)}m` : `${s}m`;
     }
     const k = Math.round(n / 1000);
     return `${k}k`;
