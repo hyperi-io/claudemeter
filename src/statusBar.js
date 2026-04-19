@@ -243,6 +243,7 @@ let isSpinnerActive = false;
 
 let statusBarItems = {
     label: null,
+    rateLimit: null,     // transient — shown only when rateLimitState.active
     session: null,
     weekly: null,
     sonnet: null,
@@ -525,12 +526,23 @@ function createStatusBarItem(context) {
 
     statusBarItems.label = vscode.window.createStatusBarItem(
         alignment,
-        basePriority
+        basePriority + 1
     );
     statusBarItems.label.command = COMMANDS.FETCH_NOW;
     statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
     statusBarItems.label.show();
     context.subscriptions.push(statusBarItems.label);
+
+    // Transient rate-limit panel — appears only when rateLimitState.active.
+    // Priority: between the Claude label (+1) and session (-1) so it
+    // visually associates with the label group.
+    statusBarItems.rateLimit = vscode.window.createStatusBarItem(
+        alignment,
+        basePriority
+    );
+    statusBarItems.rateLimit.command = COMMANDS.FETCH_NOW;
+    // Initially hidden — shown only when rate-limit state becomes active.
+    context.subscriptions.push(statusBarItems.rateLimit);
 
     statusBarItems.session = vscode.window.createStatusBarItem(
         alignment,
@@ -584,7 +596,88 @@ function createStatusBarItem(context) {
     return statusBarItems.label;
 }
 
-function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null) {
+// Category → badge text + ThemeColor for the transient RL panel.
+const RATE_LIMIT_DISPLAY = {
+    quota:            { text: '$(error) RL',         color: 'errorForeground' },
+    spending_cap:     { text: '$(credit-card) RL',   color: 'charts.orange'   },
+    server_throttle:  { text: '$(debug-pause) RL',   color: 'editorWarning.foreground' },
+    request_rejected: { text: '$(warning) RL',       color: 'editorWarning.foreground' },
+    generic:          { text: '$(error) RL',         color: 'errorForeground' },
+    unknown:          { text: '$(question) RL',      color: 'editorWarning.foreground' },
+};
+
+function renderRateLimitPanel(rateLimitState) {
+    const item = statusBarItems.rateLimit;
+    if (!item) return;
+
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    const enabled = config.get('rateLimit.enabled', true);
+
+    if (!enabled || !rateLimitState || !rateLimitState.active) {
+        item.hide();
+        return;
+    }
+
+    const display = RATE_LIMIT_DISPLAY[rateLimitState.category] || RATE_LIMIT_DISPLAY.unknown;
+    item.text = display.text;
+    item.color = display.color ? new vscode.ThemeColor(display.color) : undefined;
+    item.tooltip = buildRateLimitTooltip(rateLimitState);
+    item.show();
+}
+
+function buildRateLimitTooltip(state) {
+    const lines = [];
+    lines.push('**Rate limited** — Claude Code reported a rate-limit event');
+    lines.push('');
+
+    switch (state.category) {
+        case 'quota':
+            lines.push('Your usage quota is exhausted.');
+            break;
+        case 'spending_cap':
+            lines.push('Your spending-cap (extra usage) is exhausted.');
+            break;
+        case 'server_throttle':
+            lines.push('Anthropic is throttling server-side (transient, usually ~1-2 min).');
+            lines.push('This is separate from your quota — no action needed, just retry.');
+            break;
+        case 'request_rejected':
+            lines.push('A single request was rejected. Usually retryable.');
+            break;
+        case 'generic':
+            lines.push('Generic rate-limit response from Claude Code.');
+            break;
+        case 'unknown':
+            lines.push('Unrecognised rate-limit format. Please [open an issue](https://github.com/hyperi-io/claudemeter/issues/new) with the debug log.');
+            if (state.unknownSample) {
+                lines.push('');
+                lines.push(`> ${state.unknownSample}`);
+            }
+            break;
+    }
+
+    if (state.resetTime) {
+        const tz = state.resetTime.tz ? ` (${state.resetTime.tz})` : '';
+        const mm = String(state.resetTime.minute).padStart(2, '0');
+        lines.push('');
+        lines.push(`Resets ${state.resetTime.hour}:${mm}${tz}`);
+    }
+
+    if (state.firstSeen && state.lastSeen && state.firstSeen.getTime() !== state.lastSeen.getTime()) {
+        lines.push('');
+        lines.push(`Burst: ${state.firstSeen.toLocaleTimeString()} → ${state.lastSeen.toLocaleTimeString()}`);
+    }
+
+    const md = new vscode.MarkdownString(lines.join('  \n'));
+    md.isTrusted = true;
+    return md;
+}
+
+function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null, rateLimitState = null) {
+    // Rate-limit panel is independent of everything else — show/hide
+    // purely based on state.active regardless of session/usage data.
+    renderRateLimitPanel(rateLimitState);
+
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
     const showSonnet = config.get('statusBar.showSonnet', false);

@@ -32,6 +32,7 @@ const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refresh
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
+const { scanTail: scanRateLimitTail } = require('./src/rateLimitDetector');
 const { CONFIG_NAMESPACE, COMMANDS, PATHS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
 const {
     CREDENTIALS_PATH,
@@ -54,6 +55,8 @@ let httpFetcher;
 let scraper; // Legacy browser-based scraper
 let usageData = null;
 let credentialsInfo = null;
+let rateLimitState = null;         // from rateLimitDetector.scanTail; null = hidden
+const loggedUnknownTemplates = new Set();  // per-session dedup for unknown-template debug log
 let autoRefreshTimer;
 let localRefreshTimer;
 let serviceStatusTimer;
@@ -280,7 +283,66 @@ async function fetchUsageLegacy(isManualRetry = false) {
 async function updateStatusBarWithAllData() {
     const sessionData = sessionTracker ? await sessionTracker.getCurrentSession() : null;
     const activityStats = getActivityStats(usageData, sessionData);
-    updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo);
+    updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo, rateLimitState);
+}
+
+// Read the tail of the given JSONL, parse entries, run the rate-limit
+// detector, and update the shared state. Called from the jsonlWatcher
+// callbacks (sub-second latency from Claude Code write → UI update).
+async function updateRateLimitState(jsonlPath) {
+    try {
+        const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+        if (!config.get('rateLimit.enabled', true)) {
+            rateLimitState = null;
+            await updateStatusBarWithAllData();
+            return;
+        }
+
+        const lookbackMs = config.get('rateLimit.lookbackMs', 300000);
+        const safetyTimeoutMs = config.get('rateLimit.safetyTimeoutMs', 1800000);
+
+        // Tail: read last ~200 lines. Simple readFileSync is fine because
+        // JSONLs are small; the watcher only fires when the file changes.
+        let raw;
+        try {
+            raw = fs.readFileSync(jsonlPath, 'utf8');
+        } catch (err) {
+            // File vanished between watcher fire and read. Treat as inactive.
+            debugLog(`updateRateLimitState: cannot read ${jsonlPath}: ${err.message}`);
+            rateLimitState = null;
+            await updateStatusBarWithAllData();
+            return;
+        }
+
+        const lines = raw.trimEnd().split('\n');
+        const tail = lines.slice(Math.max(0, lines.length - 200));
+        const entries = [];
+        for (const line of tail) {
+            if (!line) continue;
+            try {
+                entries.push(JSON.parse(line));
+            } catch (_e) {
+                // Skip malformed lines silently — one bad line shouldn't kill the scan.
+            }
+        }
+
+        const newState = scanRateLimitTail(entries, new Date(), { lookbackMs, safetyTimeoutMs });
+
+        // Log unknown-template events once per unique prefix so users can
+        // report new shapes for Team/Enterprise accounts.
+        if (newState.active && newState.category === 'unknown' && newState.unknownSample) {
+            const key = newState.unknownSample;
+            if (!loggedUnknownTemplates.has(key)) {
+                loggedUnknownTemplates.add(key);
+                fileLog(`RL unknown template: "${key}" — please report at https://github.com/hyperi-io/claudemeter/issues`);
+            }
+        }
+
+        rateLimitState = newState;
+        await updateStatusBarWithAllData();
+    } catch (err) {
+        debugLog(`updateRateLimitState error: ${err.message}`);
+    }
 }
 
 function createAutoRefreshTimer(minutes) {
@@ -366,11 +428,13 @@ async function setupTokenMonitoring(context) {
         jsonlWatcher.onDidChange(async (uri) => {
             debugLog(`JSONL file changed: ${uri.fsPath}`);
             await updateTokensFromJsonl(false);
+            await updateRateLimitState(uri.fsPath);
         });
 
         jsonlWatcher.onDidCreate(async (uri) => {
             debugLog(`New JSONL file created: ${uri.fsPath}`);
             await updateTokensFromJsonl(false);
+            await updateRateLimitState(uri.fsPath);
         });
 
         context.subscriptions.push(jsonlWatcher);
