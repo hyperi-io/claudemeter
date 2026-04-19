@@ -8,7 +8,11 @@
 
 const vscode = require('vscode');
 const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, calculateResetClockTimeExpanded, getCurrencySymbol, getUse24HourTime, formatCompact } = require('./utils');
-const { fetchServiceStatus, getStatusDisplay, formatStatusTime, STATUS_PAGE_URL } = require('./serviceStatus');
+const {
+    getStatusDisplay, formatStatusTime, STATUS_PAGE_URL,
+    refreshStatus: refreshServiceStatusInternal,
+    getCurrentStatus: getServiceStatusFromCache,
+} = require('./serviceStatus');
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
 const {
@@ -18,10 +22,6 @@ const {
 } = require('./statusBarFormatters');
 
 const LABEL_TEXT = 'Claude';
-
-// Service status state
-let currentServiceStatus = null;
-let serviceStatusError = null;
 
 /**
  * Check if service status display is enabled in settings
@@ -116,9 +116,10 @@ function formatPercent(percent, forCompact = false) {
  * @returns {string} Label text like "Claude" or "$(warning) Claude" when issues
  */
 function getLabelTextWithStatus() {
-    if (isServiceStatusEnabled() && currentServiceStatus && currentServiceStatus.indicator !== 'none') {
+    const current = getServiceStatusFromCache();
+    if (isServiceStatusEnabled() && current && current.indicator !== 'none') {
         // Only show icon when there's an issue (not operational)
-        const display = getStatusDisplay(currentServiceStatus.indicator);
+        const display = getStatusDisplay(current.indicator);
         return `${display.icon} ${LABEL_TEXT}`;
     }
     return `${LABEL_TEXT}`;
@@ -129,8 +130,9 @@ function getLabelTextWithStatus() {
  * @returns {vscode.ThemeColor|undefined}
  */
 function getServiceStatusColor() {
-    if (isServiceStatusEnabled() && currentServiceStatus) {
-        const display = getStatusDisplay(currentServiceStatus.indicator);
+    const current = getServiceStatusFromCache();
+    if (isServiceStatusEnabled() && current) {
+        const display = getStatusDisplay(current.indicator);
         if (display.color) {
             return new vscode.ThemeColor(display.color);
         }
@@ -144,64 +146,55 @@ function getServiceStatusColor() {
  */
 function getServiceStatusTooltipLines() {
     const lines = [];
+    if (!isServiceStatusEnabled()) return lines;
 
-    if (!isServiceStatusEnabled()) {
-        return lines;
-    }
-
-    if (currentServiceStatus) {
-        const display = getStatusDisplay(currentServiceStatus.indicator);
+    const current = getServiceStatusFromCache();
+    if (current) {
+        const display = getStatusDisplay(current.indicator);
         lines.push('');
         lines.push(`**Service Status:** ${display.label}`);
-        if (currentServiceStatus.description && currentServiceStatus.description !== display.label) {
-            lines.push(`${currentServiceStatus.description}`);
+        if (current.description && current.description !== display.label) {
+            lines.push(`${current.description}`);
         }
-        if (currentServiceStatus.updatedAt) {
-            lines.push(`Last checked: ${formatStatusTime(currentServiceStatus.updatedAt)}`);
+        if (current.updatedAt) {
+            lines.push(`Last checked: ${formatStatusTime(current.updatedAt)}`);
         }
         lines.push(`[View status page](${STATUS_PAGE_URL})`);
-    } else if (serviceStatusError) {
-        lines.push('');
-        lines.push('**Service Status:** Unable to fetch');
+    } else {
+        // No successful fetch yet — may be startup (null) or an error.
+        // We still don't expose the error here; a separate design could
+        // add a "(unable to fetch)" line, but for now silence is fine.
     }
-
     return lines;
 }
 
 /**
- * Refresh service status from API
- * Updates the label if status bar items exist
+ * Refresh service status from API and re-render the label. State
+ * persistence lives in serviceStatus.js; this wrapper just chains the
+ * fetch with a label update.
+ * @returns {Promise<object|null>} the fetched status, or null on failure
  */
 async function refreshServiceStatus() {
     if (!isServiceStatusEnabled()) {
         return null;
     }
 
-    try {
-        currentServiceStatus = await fetchServiceStatus();
-        serviceStatusError = null;
+    const result = await refreshServiceStatusInternal();
 
-        // Update label text if initialized (only show icon when there's an issue)
-        if (statusBarItems.label && !isSpinnerActive) {
-            statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
-            statusBarItems.label.color = getServiceStatusColor();
-        }
-        // Compact mode picks up service status via getLabelTextWithStatus() on next render cycle
-
-        return currentServiceStatus;
-    } catch (error) {
-        serviceStatusError = error;
-        currentServiceStatus = null;
-        return null;
+    // Update label text if initialised (only show icon when there's an issue)
+    if (statusBarItems.label && !isSpinnerActive) {
+        statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+        statusBarItems.label.color = getServiceStatusColor();
     }
+    return result;
 }
 
 /**
- * Get current service status (cached)
+ * Get current service status (cached) — reads from serviceStatus module.
  * @returns {object|null}
  */
 function getServiceStatus() {
-    return currentServiceStatus;
+    return getServiceStatusFromCache();
 }
 
 const DISPLAY_MODES = {

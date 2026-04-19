@@ -13,6 +13,12 @@ const STATUS_PAGE_URL = 'https://status.claude.com';
 
 // Status indicators from Atlassian Statuspage
 // none = operational, minor = degraded, major = partial outage, critical = major outage
+//
+// Icons chosen to be visually distinct per level (previously partial
+// and major both used $(error), which hid the severity escalation):
+//   - minor:    $(pulse)          irregular heartbeat — service alive but wobbly
+//   - major:    $(flame)          things on fire — partial outage
+//   - critical: $(cloud-offline)  cloud services down — total outage
 const STATUS_INDICATORS = {
     none: {
         icon: '$(check)',
@@ -21,19 +27,19 @@ const STATUS_INDICATORS = {
         level: 'operational'
     },
     minor: {
-        icon: '$(warning)',
+        icon: '$(pulse)',
         label: 'Degraded',
         color: 'editorWarning.foreground',
         level: 'degraded'
     },
     major: {
-        icon: '$(error)',
+        icon: '$(flame)',
         label: 'Partial Outage',
         color: 'errorForeground',
         level: 'outage'
     },
     critical: {
-        icon: '$(error)',
+        icon: '$(cloud-offline)',
         label: 'Major Outage',
         color: 'errorForeground',
         level: 'critical'
@@ -49,6 +55,16 @@ const STATUS_INDICATORS = {
 let cachedStatus = null;
 let lastFetchTime = 0;
 const CACHE_TTL_MS = 60000; // Cache for 1 minute
+
+// UI-observable state (previously lived in statusBar.js):
+//   - currentStatus: last successful fetch result, consumed by renderers
+//   - currentError:  set when a refresh fails; cleared on next success
+// These are separate from `cachedStatus` above (which is the 60s API-
+// result cache used inside fetchServiceStatus). Two caches, two jobs:
+// the API cache limits outbound calls; the UI cache holds the last-
+// good result for rendering between refresh ticks.
+let currentStatus = null;
+let currentError = null;
 
 /**
  * Fetch service status from status.claude.com API
@@ -144,11 +160,62 @@ function clearStatusCache() {
     lastFetchTime = 0;
 }
 
+/**
+ * Refresh the service-status UI state. Wraps fetchServiceStatus with
+ * state persistence: on success, stores into `currentStatus` and clears
+ * `currentError`; on failure, stores into `currentError` and nulls out
+ * the status so the caller knows the data is stale.
+ *
+ * Callers should re-render after this resolves (state is now updated).
+ *
+ * @returns {Promise<{indicator: string, description: string, updatedAt: string}|null>}
+ */
+async function refreshStatus() {
+    try {
+        currentStatus = await fetchServiceStatus();
+        currentError = null;
+        return currentStatus;
+    } catch (error) {
+        currentError = error;
+        currentStatus = null;
+        return null;
+    }
+}
+
+/**
+ * Return the cached UI-observable status (from the last successful
+ * refresh). Returns null if we've never fetched or the last refresh
+ * failed.
+ */
+function getCurrentStatus() {
+    return currentStatus;
+}
+
+/**
+ * Return the error from the last refresh, if any. Cleared on next
+ * successful refresh.
+ */
+function getCurrentError() {
+    return currentError;
+}
+
+/**
+ * Reset the UI-observable state. Used by tests; not called in prod.
+ */
+function resetState() {
+    currentStatus = null;
+    currentError = null;
+}
+
 module.exports = {
     fetchServiceStatus,
     getStatusDisplay,
     formatStatusTime,
     clearStatusCache,
+    refreshStatus,
+    getCurrentStatus,
+    getCurrentError,
+    resetState,
     STATUS_PAGE_URL,
     STATUS_INDICATORS
 };
