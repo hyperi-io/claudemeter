@@ -1182,7 +1182,14 @@ function getActivityDescription(level) {
 
                 // -- The Office (US, 2005-2013) --
                 'That\'s what she said. About the token levels.',
-                'I am Beyonce, always. Token-wise, at least.'
+                'I am Beyonce, always. Token-wise, at least.',
+
+                // -- SimCity 2000 (1993) — 5x weighting so it lands often --
+                'Reticulating splines...your splines should always be well reticulated',
+                'Reticulating splines...your splines should always be well reticulated',
+                'Reticulating splines...your splines should always be well reticulated',
+                'Reticulating splines...your splines should always be well reticulated',
+                'Reticulating splines...your splines should always be well reticulated'
             ]
         }
     };

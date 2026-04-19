@@ -7,7 +7,7 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
 const vscode = require('vscode');
-const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, getCurrencySymbol, getUse24HourTime } = require('./utils');
+const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, getCurrencySymbol, getUse24HourTime, fileLog } = require('./utils');
 const {
     getStatusDisplay, formatStatusTime, STATUS_PAGE_URL,
     refreshStatus: refreshServiceStatusInternal,
@@ -80,12 +80,12 @@ function getTokensDisplay() {
  * when disabled, invalid, or when 'custom' is chosen with no customIcon.
  */
 function resolveHappyHourIcon(config) {
-    const choice = config.get('happyHour.icon', 'beer');
+    const choice = config.get('happyHour.icon', 'sparkle');
     if (choice === 'custom') {
         const custom = config.get('happyHour.customIcon', '');
         return (typeof custom === 'string' && custom.length > 0) ? custom : null;
     }
-    return HAPPY_HOUR_ICONS[choice] || HAPPY_HOUR_ICONS.beer;
+    return HAPPY_HOUR_ICONS[choice] || HAPPY_HOUR_ICONS.sparkle;
 }
 
 /**
@@ -156,6 +156,7 @@ function composeCurrentLabel({ isRefreshing = false } = {}) {
         happyHourIcon: hh.icon,
         happyHourEndsAt: hh.endsAt,
         isRefreshing,
+        use24Hour: getUse24HourTime(),
     });
 
     // Extended tooltip lines: append service-status footer ("Last checked:
@@ -215,7 +216,7 @@ async function refreshServiceStatus() {
     const result = await refreshServiceStatusInternal();
 
     // Update label text if initialised (only show icon when there's an issue)
-    if (statusBarItems.label && !isSpinnerActive) {
+    if (statusBarItems.label) {
         statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
         statusBarItems.label.color = getServiceStatusColor();
     }
@@ -236,13 +237,15 @@ const DISPLAY_MODES = {
     COMPACT: 'compact'
 };
 
-const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-let spinnerIndex = 0;
-let spinnerInterval = null;
+// The spinner is a dedicated status-bar panel just right of the Claude
+// label, rather than a manually-animated suffix on the label text. It
+// uses VS Code's built-in `$(sync~spin)` codicon, which auto-rotates
+// without needing our own setInterval.
 let isSpinnerActive = false;
 
 let statusBarItems = {
     label: null,
+    spinner: null,       // transient — shown only while a fetch is in flight
     rateLimit: null,     // transient — shown only when rateLimitState.active
     session: null,
     weekly: null,
@@ -292,11 +295,15 @@ function hideAllMetricItems() {
     statusBarItems.compact.hide();
 }
 
+// Apply the main Claude usage tooltip to every primary panel. Transient
+// panels (spinner, rateLimit) own their own tooltips — "Checking Claude..."
+// on the spinner and the category-specific rate-limit details on rateLimit
+// — so they are intentionally excluded here.
 function setAllTooltips(tooltip) {
-    Object.values(statusBarItems).forEach(item => {
-        if (item) {
-            item.tooltip = tooltip;
-        }
+    Object.entries(statusBarItems).forEach(([key, item]) => {
+        if (!item) return;
+        if (key === 'spinner' || key === 'rateLimit') return;
+        item.tooltip = tooltip;
     });
 }
 
@@ -519,76 +526,93 @@ function renderMultiPanelMode(
 
 // Main functions
 
-// Priority offset keeps our items grouped together in the status bar
+// Fractional priority offsets keep our items grouped — integer-priority
+// items from other extensions (Copilot, etc.) sit at whole numbers and
+// cannot slot between basePriority+0.2 and basePriority+0.9, so our
+// cluster stays contiguous regardless of what else is on the bar.
 function createStatusBarItem(context) {
     const alignment = getStatusBarAlignment();
     const basePriority = getStatusBarPriority();
 
     statusBarItems.label = vscode.window.createStatusBarItem(
         alignment,
-        basePriority + 1
+        basePriority + 0.9
     );
     statusBarItems.label.command = COMMANDS.FETCH_NOW;
     statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
     statusBarItems.label.show();
     context.subscriptions.push(statusBarItems.label);
 
+    // Transient spinner panel — appears only while a fetch is in flight.
+    // Sits just right of the label using $(sync~spin) which VS Code
+    // auto-animates, so we don't need an interval-driven frame loop.
+    statusBarItems.spinner = vscode.window.createStatusBarItem(
+        alignment,
+        basePriority + 0.85
+    );
+    statusBarItems.spinner.text = '$(sync~spin)';
+    statusBarItems.spinner.tooltip = 'Checking Claude...';
+    statusBarItems.spinner.command = COMMANDS.FETCH_NOW;
+    // Initially hidden — shown only during startSpinner().
+    context.subscriptions.push(statusBarItems.spinner);
+
     // Transient rate-limit panel — appears only when rateLimitState.active.
-    // Priority: between the Claude label (+1) and session (-1) so it
-    // visually associates with the label group.
+    // Positioned between the label and session so it visually associates
+    // with the label group.
     statusBarItems.rateLimit = vscode.window.createStatusBarItem(
         alignment,
-        basePriority
+        basePriority + 0.8
     );
     statusBarItems.rateLimit.command = COMMANDS.FETCH_NOW;
     // Initially hidden — shown only when rate-limit state becomes active.
     context.subscriptions.push(statusBarItems.rateLimit);
+    fileLog(`createStatusBarItem: rateLimit panel created at priority ${basePriority + 0.8}`);
 
     statusBarItems.session = vscode.window.createStatusBarItem(
         alignment,
-        basePriority - 1
+        basePriority + 0.7
     );
     statusBarItems.session.command = COMMANDS.FETCH_NOW;
     context.subscriptions.push(statusBarItems.session);
 
     statusBarItems.weekly = vscode.window.createStatusBarItem(
         alignment,
-        basePriority - 2
+        basePriority + 0.6
     );
     statusBarItems.weekly.command = COMMANDS.FETCH_NOW;
     context.subscriptions.push(statusBarItems.weekly);
 
     statusBarItems.sonnet = vscode.window.createStatusBarItem(
         alignment,
-        basePriority - 3
+        basePriority + 0.5
     );
     statusBarItems.sonnet.command = COMMANDS.FETCH_NOW;
     context.subscriptions.push(statusBarItems.sonnet);
 
     statusBarItems.opus = vscode.window.createStatusBarItem(
         alignment,
-        basePriority - 4
+        basePriority + 0.4
     );
     statusBarItems.opus.command = COMMANDS.FETCH_NOW;
     context.subscriptions.push(statusBarItems.opus);
 
     statusBarItems.credits = vscode.window.createStatusBarItem(
         alignment,
-        basePriority - 5
+        basePriority + 0.3
     );
     statusBarItems.credits.command = COMMANDS.FETCH_NOW;
     context.subscriptions.push(statusBarItems.credits);
 
     statusBarItems.tokens = vscode.window.createStatusBarItem(
         alignment,
-        basePriority - 6
+        basePriority + 0.2
     );
     statusBarItems.tokens.command = COMMANDS.FETCH_NOW;
     context.subscriptions.push(statusBarItems.tokens);
 
     statusBarItems.compact = vscode.window.createStatusBarItem(
         alignment,
-        basePriority - 1
+        basePriority + 0.7
     );
     statusBarItems.compact.command = COMMANDS.FETCH_NOW;
     context.subscriptions.push(statusBarItems.compact);
@@ -608,12 +632,26 @@ const RATE_LIMIT_DISPLAY = {
 
 function renderRateLimitPanel(rateLimitState) {
     const item = statusBarItems.rateLimit;
-    if (!item) return;
+    if (!item) {
+        fileLog('RL render: SKIP — statusBarItems.rateLimit is null (createStatusBarItem did not run?)');
+        return;
+    }
 
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const enabled = config.get('rateLimit.enabled', true);
 
-    if (!enabled || !rateLimitState || !rateLimitState.active) {
+    if (!enabled) {
+        fileLog('RL render: HIDE — rateLimit.enabled=false in config');
+        item.hide();
+        return;
+    }
+    if (!rateLimitState) {
+        fileLog('RL render: HIDE — rateLimitState is null');
+        item.hide();
+        return;
+    }
+    if (!rateLimitState.active) {
+        fileLog(`RL render: HIDE — rateLimitState.active=false (successAfter=${rateLimitState.successAfter ? rateLimitState.successAfter.toISOString() : 'none'})`);
         item.hide();
         return;
     }
@@ -623,6 +661,7 @@ function renderRateLimitPanel(rateLimitState) {
     item.color = display.color ? new vscode.ThemeColor(display.color) : undefined;
     item.tooltip = buildRateLimitTooltip(rateLimitState);
     item.show();
+    fileLog(`RL render: SHOW category=${rateLimitState.category} text="${display.text}"`);
 }
 
 function buildRateLimitTooltip(state) {
@@ -670,6 +709,7 @@ function buildRateLimitTooltip(state) {
 
     const md = new vscode.MarkdownString(lines.join('  \n'));
     md.isTrusted = true;
+    md.supportThemeIcons = true;
     return md;
 }
 
@@ -706,35 +746,31 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     const tokenOnlyMode = config.get('tokenOnlyMode', false);
 
     if (!usageData && !sessionData) {
-        if (!isSpinnerActive) {
-            if (statusBarItems.label) {
-                statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
-                statusBarItems.label.color = getServiceStatusColor();
-            }
-            if (tokenOnlyMode) {
-                // In token-only mode, show token gauge as waiting (no web fetch needed)
-                setAllTooltips('Waiting for Claude Code session...');
-                hideAllMetricItems();
-                if (displayMode === DISPLAY_MODES.COMPACT) {
-                    statusBarItems.compact.text = `${getLabelTextWithStatus()} Tk --`;
-                    statusBarItems.compact.show();
-                } else {
-                    statusBarItems.tokens.text = 'Tk --';
-                    statusBarItems.tokens.show();
-                }
-            } else {
-                setAllTooltips('Click to fetch Claude usage data');
-                hideAllMetricItems();
-            }
-        }
-        return;
-    }
-
-    if (!isSpinnerActive) {
         if (statusBarItems.label) {
             statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
             statusBarItems.label.color = getServiceStatusColor();
         }
+        if (tokenOnlyMode) {
+            // In token-only mode, show token gauge as waiting (no web fetch needed)
+            setAllTooltips('Waiting for Claude Code session...');
+            hideAllMetricItems();
+            if (displayMode === DISPLAY_MODES.COMPACT) {
+                statusBarItems.compact.text = `${getLabelTextWithStatus()} Tk --`;
+                statusBarItems.compact.show();
+            } else {
+                statusBarItems.tokens.text = 'Tk --';
+                statusBarItems.tokens.show();
+            }
+        } else {
+            setAllTooltips('Click to fetch Claude usage data');
+            hideAllMetricItems();
+        }
+        return;
+    }
+
+    if (statusBarItems.label) {
+        statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+        statusBarItems.label.color = getServiceStatusColor();
     }
 
     // Compute derived values used by both the tooltip composer and
@@ -806,9 +842,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     const markdown = new vscode.MarkdownString(markdownBody);
     markdown.isTrusted = true;  // Enable clickable links
-    if (!isSpinnerActive) {
-        setAllTooltips(markdown);
-    }
+    markdown.supportThemeIcons = true;  // Render $(codicon-name) glyphs
+    setAllTooltips(markdown);
 
     if (displayMode === DISPLAY_MODES.COMPACT) {
         renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo);
@@ -836,38 +871,18 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 }
 
 function startSpinner() {
-    if (spinnerInterval) return;
-
-    spinnerIndex = 0;
+    if (isSpinnerActive) return;
     isSpinnerActive = true;
-
-    setAllTooltips('Checking Claude...');
-
-    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
-    const isCompactMode = displayMode === DISPLAY_MODES.COMPACT;
-
-    if (isCompactMode && statusBarItems.compact) {
-        const currentText = statusBarItems.compact.text || LABEL_TEXT;
-        const baseText = currentText.replace(/ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/, '');
-        spinnerInterval = setInterval(() => {
-            statusBarItems.compact.text = `${baseText} ${spinnerFrames[spinnerIndex]}`;
-            spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
-        }, 80);
-    } else if (statusBarItems.label) {
-        spinnerInterval = setInterval(() => {
-            statusBarItems.label.text = `${getLabelTextWithStatus()} ${spinnerFrames[spinnerIndex]}`;
-            spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
-        }, 80);
+    if (statusBarItems.spinner) {
+        statusBarItems.spinner.show();
     }
 }
 
 function stopSpinner(webError = null, tokenError = null) {
-    if (spinnerInterval) {
-        clearInterval(spinnerInterval);
-        spinnerInterval = null;
-    }
     isSpinnerActive = false;
+    if (statusBarItems.spinner) {
+        statusBarItems.spinner.hide();
+    }
 
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
@@ -893,9 +908,7 @@ function stopSpinner(webError = null, tokenError = null) {
         setAllTooltips(errorTooltip);
 
         if (isCompactMode && statusBarItems.compact) {
-            const currentText = statusBarItems.compact.text || LABEL_TEXT;
-            const baseText = currentText.replace(/ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/, '');
-            statusBarItems.compact.text = `${baseText} ✗`;
+            statusBarItems.compact.text = `${statusBarItems.compact.text || LABEL_TEXT} ✗`;
             statusBarItems.compact.color = new vscode.ThemeColor('errorForeground');
         } else if (statusBarItems.label) {
             statusBarItems.label.text = `${getLabelTextWithStatus()} ✗`;
@@ -943,9 +956,7 @@ function stopSpinner(webError = null, tokenError = null) {
         setAllTooltips(errorTooltip);
 
         if (isCompactMode && statusBarItems.compact) {
-            const currentText = statusBarItems.compact.text || getLabelTextWithStatus();
-            const baseText = currentText.replace(/ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/, '');
-            statusBarItems.compact.text = `${baseText} ⚠`;
+            statusBarItems.compact.text = `${statusBarItems.compact.text || getLabelTextWithStatus()} ⚠`;
             statusBarItems.compact.color = new vscode.ThemeColor('editorWarning.foreground');
         } else if (statusBarItems.label) {
             statusBarItems.label.text = `${getLabelTextWithStatus()} ⚠`;
@@ -953,14 +964,37 @@ function stopSpinner(webError = null, tokenError = null) {
         }
     } else {
         if (isCompactMode && statusBarItems.compact) {
-            const currentText = statusBarItems.compact.text || getLabelTextWithStatus();
-            statusBarItems.compact.text = currentText.replace(/ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/, '');
             statusBarItems.compact.color = getServiceStatusColor();
         } else if (statusBarItems.label) {
             statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
             statusBarItems.label.color = getServiceStatusColor();
         }
     }
+}
+
+// Dev-only: force-render the RL panel ignoring the enabled config
+// gate. Used by the TEST_RATE_LIMIT command to isolate render-path
+// verification from user-config and watcher/detector concerns.
+function forceRenderRateLimitPanel(rateLimitState) {
+    const item = statusBarItems.rateLimit;
+    if (!item) {
+        fileLog('RL force-render: FAIL — statusBarItems.rateLimit is null');
+        return false;
+    }
+
+    if (!rateLimitState || !rateLimitState.active) {
+        item.hide();
+        fileLog('RL force-render: HIDE (state null or inactive)');
+        return true;
+    }
+
+    const display = RATE_LIMIT_DISPLAY[rateLimitState.category] || RATE_LIMIT_DISPLAY.unknown;
+    item.text = display.text;
+    item.color = display.color ? new vscode.ThemeColor(display.color) : undefined;
+    item.tooltip = buildRateLimitTooltip(rateLimitState);
+    item.show();
+    fileLog(`RL force-render: SHOW category=${rateLimitState.category} text="${display.text}" priority=${item.priority ?? '?'}`);
+    return true;
 }
 
 module.exports = {
@@ -970,5 +1004,6 @@ module.exports = {
     stopSpinner,
     refreshServiceStatus,
     getServiceStatus,
+    forceRenderRateLimitPanel,
     DISPLAY_MODES
 };

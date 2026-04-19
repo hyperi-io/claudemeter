@@ -123,6 +123,11 @@
         "command": "claudemeter.dumpState",
         "title": "Dump State (for bug reports)",
         "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.testRateLimit",
+        "title": "Simulate Rate Limit (dev/test)",
+        "category": "Claudemeter"
       }
     ],
     "configuration": {
@@ -285,6 +290,10 @@
         "claudemeter.happyHour.icon": {
           "type": "string",
           "enum": [
+            "sparkle",
+            "watch",
+            "zap",
+            "star",
             "beer",
             "cocktail",
             "wine",
@@ -297,9 +306,13 @@
             "party",
             "custom"
           ],
-          "default": "beer",
+          "default": "sparkle",
           "enumDescriptions": [
-            "🍺 Beer (default)",
+            "Sparkle (monochrome codicon, default) — subtle, unobtrusive",
+            "Watch (monochrome codicon) — subtle, time-themed",
+            "Zap (monochrome codicon) — lightning bolt",
+            "Star (monochrome codicon)",
+            "🍺 Beer",
             "🍹 Cocktail",
             "🍷 Wine",
             "🥂 Champagne",
@@ -311,7 +324,7 @@
             "🎉 Party",
             "Custom — set claudemeter.happyHour.customIcon"
           ],
-          "markdownDescription": "Icon shown during happy hour. Set to `custom` and provide `claudemeter.happyHour.customIcon` to use any emoji."
+          "markdownDescription": "Icon shown during happy hour. The first four options are monochrome VS Code codicons that inherit the status-bar text colour (subtle, unobtrusive). The remainder are full-colour emoji. Set to `custom` and provide `claudemeter.happyHour.customIcon` to use any glyph (emoji or `$(codicon-name)` syntax)."
         },
         "claudemeter.happyHour.customIcon": {
           "type": "string",

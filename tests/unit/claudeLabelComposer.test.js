@@ -145,7 +145,14 @@ describe('composeClaudeLabel — tooltip section order', () => {
 });
 
 describe('HAPPY_HOUR_ICONS', () => {
-    it('exports the enum-name → emoji table', () => {
+    it('exposes monochrome codicon options', () => {
+        expect(HAPPY_HOUR_ICONS.sparkle).toBe('$(sparkle)');
+        expect(HAPPY_HOUR_ICONS.watch).toBe('$(watch)');
+        expect(HAPPY_HOUR_ICONS.zap).toBe('$(zap)');
+        expect(HAPPY_HOUR_ICONS.star).toBe('$(star-full)');
+    });
+
+    it('exposes full-colour emoji options', () => {
         expect(HAPPY_HOUR_ICONS.beer).toBe('🍺');
         expect(HAPPY_HOUR_ICONS.cocktail).toBe('🍹');
         expect(HAPPY_HOUR_ICONS.wine).toBe('🍷');
@@ -160,5 +167,16 @@ describe('HAPPY_HOUR_ICONS', () => {
 
     it('is frozen', () => {
         expect(Object.isFrozen(HAPPY_HOUR_ICONS)).toBe(true);
+    });
+});
+
+describe('composeClaudeLabel — codicon happy-hour icons', () => {
+    it('renders $(sparkle) verbatim in text', () => {
+        const r = composeClaudeLabel({
+            happyHourActive: true,
+            happyHourIcon: '$(sparkle)',
+        });
+        expect(r.text).toBe('Claude $(sparkle)');
+        expect(r.tooltipLines[0]).toMatch(/\$\(sparkle\)/);
     });
 });

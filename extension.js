@@ -28,7 +28,7 @@ function getScraperModule() {
 function getLegacyBrowserState() {
     return getScraperModule().BrowserState;
 }
-const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
+const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus, forceRenderRateLimitPanel } = require('./src/statusBar');
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
@@ -695,10 +695,10 @@ async function updateTokensFromJsonl(silent = false) {
 
                 const sessionData = await sessionTracker.getCurrentSession();
                 const activityStats = getActivityStats(usageData, sessionData);
-                updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo);
+                updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo, rateLimitState);
             } else {
                 const activityStats = getActivityStats(usageData, null);
-                updateStatusBar(statusBarItem, usageData, activityStats, null, credentialsInfo);
+                updateStatusBar(statusBarItem, usageData, activityStats, null, credentialsInfo, rateLimitState);
             }
         }
     } catch (error) {
@@ -1004,6 +1004,62 @@ async function activate(context) {
             channel.appendLine(JSON.stringify(dump, null, 2));
             channel.appendLine('----------------------------------------------------');
             channel.show(true);
+        }),
+
+        // Dev-only tool: force a rate-limit category into the in-process
+        // state so the RL panel renders without needing a live rate_limit
+        // event in the JSONL. Bypasses the file watcher and detector
+        // entirely — useful when verifying the render path in isolation
+        // from detection/watcher issues. Pass "off" to clear.
+        vscode.commands.registerCommand(COMMANDS.TEST_RATE_LIMIT, async () => {
+            fileLog('TEST_RATE_LIMIT command invoked');
+            const choices = [
+                { label: 'quota', description: 'red $(error) RL — usage quota exhausted' },
+                { label: 'spending_cap', description: 'orange $(credit-card) RL — extra usage exhausted' },
+                { label: 'server_throttle', description: 'yellow $(debug-pause) RL — server-side throttle' },
+                { label: 'request_rejected', description: 'yellow $(warning) RL — single request rejected' },
+                { label: 'generic', description: 'red $(error) RL — generic rate-limit response' },
+                { label: 'unknown', description: 'yellow $(question) RL — unrecognised template fallback' },
+                { label: 'off', description: 'Hide the RL badge' },
+            ];
+            const pick = await vscode.window.showQuickPick(choices, {
+                placeHolder: 'Pick a rate-limit category to simulate (dev/test only)',
+            });
+            if (!pick) {
+                fileLog('TEST_RATE_LIMIT: user cancelled picker');
+                return;
+            }
+            fileLog(`TEST_RATE_LIMIT: user picked ${pick.label}`);
+
+            if (pick.label === 'off') {
+                rateLimitState = null;
+            } else {
+                const now = new Date();
+                rateLimitState = {
+                    active: true,
+                    category: pick.label,
+                    firstSeen: now,
+                    lastSeen: now,
+                    successAfter: null,
+                    text: `Simulated ${pick.label} event (claudemeter.testRateLimit)`,
+                    resetTime: null,
+                    unknownSample: pick.label === 'unknown'
+                        ? 'Simulated unknown-template text for dev test'
+                        : null,
+                };
+            }
+            // Force-render ignoring the rateLimit.enabled config gate.
+            // This is a dev tool; we want it to always make the panel
+            // appear (or disappear) regardless of user settings, so the
+            // user can prove the render path works end-to-end.
+            const rendered = forceRenderRateLimitPanel(rateLimitState);
+            // Also run the normal update so tooltips elsewhere refresh.
+            await updateStatusBarWithAllData();
+            vscode.window.showInformationMessage(
+                rendered
+                    ? `Rate-limit state: ${pick.label === 'off' ? 'cleared' : pick.label}`
+                    : `Rate-limit panel not found — createStatusBarItem may not have run`
+            );
         })
     );
 

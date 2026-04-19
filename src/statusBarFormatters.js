@@ -108,15 +108,22 @@ function formatIndicator(percent, usageFormat) {
 // any numeric content — the caller is expected to fall back to the bar.
 //
 // knownLimit=false (limit is inferred, not authoritative) suppresses
-// any "/max" or "max-only" rendering — we don't lie about a limit we
-// don't actually know. In that case `value` and `extended` still show
-// the current, and `limit` shows nothing.
+// any "/max" rendering — we don't want to publish a ratio we're not
+// sure about. `value` still shows the current only; `extended` and
+// `count` drop the denominator.
+//
+// `limit` mode is special: it advertises the ceiling alone, not a
+// ratio. An inferred 1M ceiling is still useful information (the user
+// wants to know their context window is extended), so `limit` mode
+// shows the max whenever the limit is present and extended past the
+// 200K baseline, regardless of knownLimit.
 function formatKCount(current, limit, knownLimit, tokensDisplay = DISPLAY_DEFAULT) {
     if (current == null) return '';
 
     const mode = normaliseTokensDisplay(tokensDisplay);
     const currentK = formatTokenCount(current);
-    const hasLimit = knownLimit && limit != null && limit > 0;
+    const hasLimit = limit != null && limit > 0;
+    const hasKnownLimit = knownLimit && hasLimit;
     const isExtended = hasLimit && limit > EXTENDED_THRESHOLD;
 
     switch (mode) {
@@ -125,11 +132,11 @@ function formatKCount(current, limit, knownLimit, tokensDisplay = DISPLAY_DEFAUL
         case DISPLAY_VALUE:
             return currentK;
         case DISPLAY_EXTENDED:
-            return hasLimit ? `${currentK}/${formatTokenCount(limit)}` : currentK;
+            return hasKnownLimit ? `${currentK}/${formatTokenCount(limit)}` : currentK;
         case DISPLAY_LIMIT:
             return isExtended ? formatTokenCount(limit) : '';
         case DISPLAY_COUNT:
-            return hasLimit ? `${currentK}/${formatTokenCount(limit)}` : currentK;
+            return hasKnownLimit ? `${currentK}/${formatTokenCount(limit)}` : currentK;
         default:
             return isExtended ? formatTokenCount(limit) : '';
     }

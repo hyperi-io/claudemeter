@@ -231,8 +231,8 @@ describe('formatKCount — tokensDisplay modes', () => {
         it('shows max for 2M session', () => {
             expect(formatKCount(1200000, 2000000, true, 'limit')).toBe('2m');
         });
-        it('returns empty when knownLimit=false even for 1M', () => {
-            expect(formatKCount(518000, 1000000, false, 'limit')).toBe('');
+        it('shows inferred max for 1M session (limit mode advertises ceiling only, safe even when inferred)', () => {
+            expect(formatKCount(518000, 1000000, false, 'limit')).toBe('1m');
         });
         it('returns empty for 199K (edge: just under threshold)', () => {
             expect(formatKCount(50000, 199000, true, 'limit')).toBe('');

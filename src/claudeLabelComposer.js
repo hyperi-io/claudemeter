@@ -24,7 +24,15 @@
 
 const LABEL = 'Claude';
 
+// Codicon entries use $(name) syntax — they render monochrome and
+// inherit the status-bar text colour, so they stay unobtrusive.
+// Emoji entries render in full colour (intentional, for users who
+// want a splash). The monochrome 'sparkle' is the default.
 const HAPPY_HOUR_ICONS = Object.freeze({
+    sparkle:   '$(sparkle)',
+    watch:     '$(watch)',
+    zap:       '$(zap)',
+    star:      '$(star-full)',
     beer:      '🍺',
     cocktail:  '🍹',
     wine:      '🍷',
@@ -60,11 +68,18 @@ const SERVICE_RENDER = Object.freeze({
     },
 });
 
-function formatEndsAt(date) {
+// Expanded datetime format matching tooltipComposer's "Resets Sunday 19
+// April at 2:01 pm" style. Keeps the happy-hour line visually consistent
+// with Session/Weekly reset rows in the same tooltip.
+function formatEndsAt(date, use24Hour = false) {
     if (!(date instanceof Date)) return '';
-    return date.toLocaleTimeString(undefined, {
-        hour: '2-digit',
+    return date.toLocaleString(undefined, {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        hour: 'numeric',
         minute: '2-digit',
+        hour12: !use24Hour,
     });
 }
 
@@ -75,6 +90,7 @@ function composeClaudeLabel(state = {}) {
         happyHourIcon,
         happyHourEndsAt,
         isRefreshing = false,
+        use24Hour = false,
     } = state;
 
     const icons = [];
@@ -99,7 +115,7 @@ function composeClaudeLabel(state = {}) {
     if (happyHourActive && typeof happyHourIcon === 'string' && happyHourIcon.length > 0) {
         icons.push(happyHourIcon);
         const endsLine = happyHourEndsAt instanceof Date
-            ? ` — off-peak, ends ${formatEndsAt(happyHourEndsAt)} local`
+            ? ` — off-peak, ends ${formatEndsAt(happyHourEndsAt, use24Hour)}`
             : ' — off-peak';
         tooltipLines.push(`${happyHourIcon} Happy hour${endsLine}`);
     }
