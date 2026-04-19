@@ -28,11 +28,10 @@ function getScraperModule() {
 function getLegacyBrowserState() {
     return getScraperModule().BrowserState;
 }
-const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus, forceRenderRateLimitPanel } = require('./src/statusBar');
+const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
-const { scanTail: scanRateLimitTail } = require('./src/rateLimitDetector');
 const { CONFIG_NAMESPACE, COMMANDS, PATHS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
 const {
     CREDENTIALS_PATH,
@@ -55,8 +54,6 @@ let httpFetcher;
 let scraper; // Legacy browser-based scraper
 let usageData = null;
 let credentialsInfo = null;
-let rateLimitState = null;         // from rateLimitDetector.scanTail; null = hidden
-const loggedUnknownTemplates = new Set();  // per-session dedup for unknown-template debug log
 let autoRefreshTimer;
 let localRefreshTimer;
 let serviceStatusTimer;
@@ -283,66 +280,7 @@ async function fetchUsageLegacy(isManualRetry = false) {
 async function updateStatusBarWithAllData() {
     const sessionData = sessionTracker ? await sessionTracker.getCurrentSession() : null;
     const activityStats = getActivityStats(usageData, sessionData);
-    updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo, rateLimitState);
-}
-
-// Read the tail of the given JSONL, parse entries, run the rate-limit
-// detector, and update the shared state. Called from the jsonlWatcher
-// callbacks (sub-second latency from Claude Code write → UI update).
-async function updateRateLimitState(jsonlPath) {
-    try {
-        const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-        if (!config.get('rateLimit.enabled', true)) {
-            rateLimitState = null;
-            await updateStatusBarWithAllData();
-            return;
-        }
-
-        const lookbackMs = config.get('rateLimit.lookbackMs', 300000);
-        const safetyTimeoutMs = config.get('rateLimit.safetyTimeoutMs', 1800000);
-
-        // Tail: read last ~200 lines. Simple readFileSync is fine because
-        // JSONLs are small; the watcher only fires when the file changes.
-        let raw;
-        try {
-            raw = fs.readFileSync(jsonlPath, 'utf8');
-        } catch (err) {
-            // File vanished between watcher fire and read. Treat as inactive.
-            debugLog(`updateRateLimitState: cannot read ${jsonlPath}: ${err.message}`);
-            rateLimitState = null;
-            await updateStatusBarWithAllData();
-            return;
-        }
-
-        const lines = raw.trimEnd().split('\n');
-        const tail = lines.slice(Math.max(0, lines.length - 200));
-        const entries = [];
-        for (const line of tail) {
-            if (!line) continue;
-            try {
-                entries.push(JSON.parse(line));
-            } catch (_e) {
-                // Skip malformed lines silently — one bad line shouldn't kill the scan.
-            }
-        }
-
-        const newState = scanRateLimitTail(entries, new Date(), { lookbackMs, safetyTimeoutMs });
-
-        // Log unknown-template events once per unique prefix so users can
-        // report new shapes for Team/Enterprise accounts.
-        if (newState.active && newState.category === 'unknown' && newState.unknownSample) {
-            const key = newState.unknownSample;
-            if (!loggedUnknownTemplates.has(key)) {
-                loggedUnknownTemplates.add(key);
-                fileLog(`RL unknown template: "${key}" — please report at https://github.com/hyperi-io/claudemeter/issues`);
-            }
-        }
-
-        rateLimitState = newState;
-        await updateStatusBarWithAllData();
-    } catch (err) {
-        debugLog(`updateRateLimitState error: ${err.message}`);
-    }
+    updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo);
 }
 
 function createAutoRefreshTimer(minutes) {
@@ -428,13 +366,11 @@ async function setupTokenMonitoring(context) {
         jsonlWatcher.onDidChange(async (uri) => {
             debugLog(`JSONL file changed: ${uri.fsPath}`);
             await updateTokensFromJsonl(false);
-            await updateRateLimitState(uri.fsPath);
         });
 
         jsonlWatcher.onDidCreate(async (uri) => {
             debugLog(`New JSONL file created: ${uri.fsPath}`);
             await updateTokensFromJsonl(false);
-            await updateRateLimitState(uri.fsPath);
         });
 
         context.subscriptions.push(jsonlWatcher);
@@ -695,10 +631,10 @@ async function updateTokensFromJsonl(silent = false) {
 
                 const sessionData = await sessionTracker.getCurrentSession();
                 const activityStats = getActivityStats(usageData, sessionData);
-                updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo, rateLimitState);
+                updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo);
             } else {
                 const activityStats = getActivityStats(usageData, null);
-                updateStatusBar(statusBarItem, usageData, activityStats, null, credentialsInfo, rateLimitState);
+                updateStatusBar(statusBarItem, usageData, activityStats, null, credentialsInfo);
             }
         }
     } catch (error) {
@@ -1004,62 +940,6 @@ async function activate(context) {
             channel.appendLine(JSON.stringify(dump, null, 2));
             channel.appendLine('----------------------------------------------------');
             channel.show(true);
-        }),
-
-        // Dev-only tool: force a rate-limit category into the in-process
-        // state so the RL panel renders without needing a live rate_limit
-        // event in the JSONL. Bypasses the file watcher and detector
-        // entirely — useful when verifying the render path in isolation
-        // from detection/watcher issues. Pass "off" to clear.
-        vscode.commands.registerCommand(COMMANDS.TEST_RATE_LIMIT, async () => {
-            fileLog('TEST_RATE_LIMIT command invoked');
-            const choices = [
-                { label: 'quota', description: 'red $(error) RL — usage quota exhausted' },
-                { label: 'spending_cap', description: 'orange $(credit-card) RL — extra usage exhausted' },
-                { label: 'server_throttle', description: 'yellow $(debug-pause) RL — server-side throttle' },
-                { label: 'request_rejected', description: 'yellow $(warning) RL — single request rejected' },
-                { label: 'generic', description: 'red $(error) RL — generic rate-limit response' },
-                { label: 'unknown', description: 'yellow $(question) RL — unrecognised template fallback' },
-                { label: 'off', description: 'Hide the RL badge' },
-            ];
-            const pick = await vscode.window.showQuickPick(choices, {
-                placeHolder: 'Pick a rate-limit category to simulate (dev/test only)',
-            });
-            if (!pick) {
-                fileLog('TEST_RATE_LIMIT: user cancelled picker');
-                return;
-            }
-            fileLog(`TEST_RATE_LIMIT: user picked ${pick.label}`);
-
-            if (pick.label === 'off') {
-                rateLimitState = null;
-            } else {
-                const now = new Date();
-                rateLimitState = {
-                    active: true,
-                    category: pick.label,
-                    firstSeen: now,
-                    lastSeen: now,
-                    successAfter: null,
-                    text: `Simulated ${pick.label} event (claudemeter.testRateLimit)`,
-                    resetTime: null,
-                    unknownSample: pick.label === 'unknown'
-                        ? 'Simulated unknown-template text for dev test'
-                        : null,
-                };
-            }
-            // Force-render ignoring the rateLimit.enabled config gate.
-            // This is a dev tool; we want it to always make the panel
-            // appear (or disappear) regardless of user settings, so the
-            // user can prove the render path works end-to-end.
-            const rendered = forceRenderRateLimitPanel(rateLimitState);
-            // Also run the normal update so tooltips elsewhere refresh.
-            await updateStatusBarWithAllData();
-            vscode.window.showInformationMessage(
-                rendered
-                    ? `Rate-limit state: ${pick.label === 'off' ? 'cleared' : pick.label}`
-                    : `Rate-limit panel not found — createStatusBarItem may not have run`
-            );
         })
     );
 

@@ -7,7 +7,7 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
 const vscode = require('vscode');
-const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, getCurrencySymbol, getUse24HourTime, fileLog } = require('./utils');
+const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, getCurrencySymbol, getUse24HourTime } = require('./utils');
 const {
     getStatusDisplay, formatStatusTime, STATUS_PAGE_URL,
     refreshStatus: refreshServiceStatusInternal,
@@ -246,7 +246,6 @@ let isSpinnerActive = false;
 let statusBarItems = {
     label: null,
     spinner: null,       // transient — shown only while a fetch is in flight
-    rateLimit: null,     // transient — shown only when rateLimitState.active
     session: null,
     weekly: null,
     sonnet: null,
@@ -295,14 +294,13 @@ function hideAllMetricItems() {
     statusBarItems.compact.hide();
 }
 
-// Apply the main Claude usage tooltip to every primary panel. Transient
-// panels (spinner, rateLimit) own their own tooltips — "Checking Claude..."
-// on the spinner and the category-specific rate-limit details on rateLimit
-// — so they are intentionally excluded here.
+// Apply the main Claude usage tooltip to every primary panel. The
+// spinner panel owns its own "Checking Claude..." tooltip so it is
+// excluded here.
 function setAllTooltips(tooltip) {
     Object.entries(statusBarItems).forEach(([key, item]) => {
         if (!item) return;
-        if (key === 'spinner' || key === 'rateLimit') return;
+        if (key === 'spinner') return;
         item.tooltip = tooltip;
     });
 }
@@ -556,18 +554,6 @@ function createStatusBarItem(context) {
     // Initially hidden — shown only during startSpinner().
     context.subscriptions.push(statusBarItems.spinner);
 
-    // Transient rate-limit panel — appears only when rateLimitState.active.
-    // Positioned between the label and session so it visually associates
-    // with the label group.
-    statusBarItems.rateLimit = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.8
-    );
-    statusBarItems.rateLimit.command = COMMANDS.FETCH_NOW;
-    // Initially hidden — shown only when rate-limit state becomes active.
-    context.subscriptions.push(statusBarItems.rateLimit);
-    fileLog(`createStatusBarItem: rateLimit panel created at priority ${basePriority + 0.8}`);
-
     statusBarItems.session = vscode.window.createStatusBarItem(
         alignment,
         basePriority + 0.7
@@ -620,104 +606,7 @@ function createStatusBarItem(context) {
     return statusBarItems.label;
 }
 
-// Category → badge text + ThemeColor for the transient RL panel.
-const RATE_LIMIT_DISPLAY = {
-    quota:            { text: '$(error) RL',         color: 'errorForeground' },
-    spending_cap:     { text: '$(credit-card) RL',   color: 'charts.orange'   },
-    server_throttle:  { text: '$(debug-pause) RL',   color: 'editorWarning.foreground' },
-    request_rejected: { text: '$(warning) RL',       color: 'editorWarning.foreground' },
-    generic:          { text: '$(error) RL',         color: 'errorForeground' },
-    unknown:          { text: '$(question) RL',      color: 'editorWarning.foreground' },
-};
-
-function renderRateLimitPanel(rateLimitState) {
-    const item = statusBarItems.rateLimit;
-    if (!item) {
-        fileLog('RL render: SKIP — statusBarItems.rateLimit is null (createStatusBarItem did not run?)');
-        return;
-    }
-
-    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    const enabled = config.get('rateLimit.enabled', true);
-
-    if (!enabled) {
-        fileLog('RL render: HIDE — rateLimit.enabled=false in config');
-        item.hide();
-        return;
-    }
-    if (!rateLimitState) {
-        fileLog('RL render: HIDE — rateLimitState is null');
-        item.hide();
-        return;
-    }
-    if (!rateLimitState.active) {
-        fileLog(`RL render: HIDE — rateLimitState.active=false (successAfter=${rateLimitState.successAfter ? rateLimitState.successAfter.toISOString() : 'none'})`);
-        item.hide();
-        return;
-    }
-
-    const display = RATE_LIMIT_DISPLAY[rateLimitState.category] || RATE_LIMIT_DISPLAY.unknown;
-    item.text = display.text;
-    item.color = display.color ? new vscode.ThemeColor(display.color) : undefined;
-    item.tooltip = buildRateLimitTooltip(rateLimitState);
-    item.show();
-    fileLog(`RL render: SHOW category=${rateLimitState.category} text="${display.text}"`);
-}
-
-function buildRateLimitTooltip(state) {
-    const lines = [];
-    lines.push('**Rate limited** — Claude Code reported a rate-limit event');
-    lines.push('');
-
-    switch (state.category) {
-        case 'quota':
-            lines.push('Your usage quota is exhausted.');
-            break;
-        case 'spending_cap':
-            lines.push('Your spending-cap (extra usage) is exhausted.');
-            break;
-        case 'server_throttle':
-            lines.push('Anthropic is throttling server-side (transient, usually ~1-2 min).');
-            lines.push('This is separate from your quota — no action needed, just retry.');
-            break;
-        case 'request_rejected':
-            lines.push('A single request was rejected. Usually retryable.');
-            break;
-        case 'generic':
-            lines.push('Generic rate-limit response from Claude Code.');
-            break;
-        case 'unknown':
-            lines.push('Unrecognised rate-limit format. Please [open an issue](https://github.com/hyperi-io/claudemeter/issues/new) with the debug log.');
-            if (state.unknownSample) {
-                lines.push('');
-                lines.push(`> ${state.unknownSample}`);
-            }
-            break;
-    }
-
-    if (state.resetTime) {
-        const tz = state.resetTime.tz ? ` (${state.resetTime.tz})` : '';
-        const mm = String(state.resetTime.minute).padStart(2, '0');
-        lines.push('');
-        lines.push(`Resets ${state.resetTime.hour}:${mm}${tz}`);
-    }
-
-    if (state.firstSeen && state.lastSeen && state.firstSeen.getTime() !== state.lastSeen.getTime()) {
-        lines.push('');
-        lines.push(`Burst: ${state.firstSeen.toLocaleTimeString()} → ${state.lastSeen.toLocaleTimeString()}`);
-    }
-
-    const md = new vscode.MarkdownString(lines.join('  \n'));
-    md.isTrusted = true;
-    md.supportThemeIcons = true;
-    return md;
-}
-
-function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null, rateLimitState = null) {
-    // Rate-limit panel is independent of everything else — show/hide
-    // purely based on state.active regardless of session/usage data.
-    renderRateLimitPanel(rateLimitState);
-
+function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
     const showSonnet = config.get('statusBar.showSonnet', false);
@@ -972,31 +861,6 @@ function stopSpinner(webError = null, tokenError = null) {
     }
 }
 
-// Dev-only: force-render the RL panel ignoring the enabled config
-// gate. Used by the TEST_RATE_LIMIT command to isolate render-path
-// verification from user-config and watcher/detector concerns.
-function forceRenderRateLimitPanel(rateLimitState) {
-    const item = statusBarItems.rateLimit;
-    if (!item) {
-        fileLog('RL force-render: FAIL — statusBarItems.rateLimit is null');
-        return false;
-    }
-
-    if (!rateLimitState || !rateLimitState.active) {
-        item.hide();
-        fileLog('RL force-render: HIDE (state null or inactive)');
-        return true;
-    }
-
-    const display = RATE_LIMIT_DISPLAY[rateLimitState.category] || RATE_LIMIT_DISPLAY.unknown;
-    item.text = display.text;
-    item.color = display.color ? new vscode.ThemeColor(display.color) : undefined;
-    item.tooltip = buildRateLimitTooltip(rateLimitState);
-    item.show();
-    fileLog(`RL force-render: SHOW category=${rateLimitState.category} text="${display.text}" priority=${item.priority ?? '?'}`);
-    return true;
-}
-
 module.exports = {
     createStatusBarItem,
     updateStatusBar,
@@ -1004,6 +868,5 @@ module.exports = {
     stopSpinner,
     refreshServiceStatus,
     getServiceStatus,
-    forceRenderRateLimitPanel,
     DISPLAY_MODES
 };

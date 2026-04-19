@@ -17,7 +17,6 @@
 //     credentialsInfo,             // from credentialsReader
 //     activityStats,               // from activityMonitor
 //     platformTooltipLines,        // from claudeLabelComposer (service + happy hour)
-//     rateLimitState,              // from rateLimitDetector (phase: wiring)
 //     extensionVersion,            // from vscode.extensions.getExtension(...)
 //     config: {                    // pre-resolved config values
 //       tokenLimitOverride,

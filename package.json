@@ -123,11 +123,6 @@
         "command": "claudemeter.dumpState",
         "title": "Dump State (for bug reports)",
         "category": "Claudemeter"
-      },
-      {
-        "command": "claudemeter.testRateLimit",
-        "title": "Simulate Rate Limit (dev/test)",
-        "category": "Claudemeter"
       }
     ],
     "configuration": {
@@ -361,40 +356,6 @@
             }
           },
           "markdownDescription": "Anthropic's announced peak-throttling window. Happy hour shows OUTSIDE this window.\n\nDefaults to `{ days: [1,2,3,4,5], start: \"05:00\", end: \"11:00\", tz: \"America/Los_Angeles\" }` per Anthropic's 2026-03-26 announcement. Override here if the policy changes.\n\nMalformed fields fall back to the defaults individually (e.g. a bad `tz` still keeps your custom `start`/`end`)."
-        },
-        "claudemeter.rateLimit.enabled": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show a transient status-bar panel when Claude Code writes a `rate_limit` error to the current session JSONL.\n\nDetection is reactive via the existing file watcher (sub-second latency). The panel shows the category of the rate-limit event (quota / spending cap / server throttle / per-request rejection / generic) and disappears when a normal assistant response lands after the last event, or after `claudemeter.rateLimit.safetyTimeoutMs`."
-        },
-        "claudemeter.rateLimit.lookbackMs": {
-          "type": "number",
-          "default": 300000,
-          "minimum": 60000,
-          "maximum": 3600000,
-          "markdownDescription": "How far back (ms) to look for a rate-limit event in the JSONL. Older events are ignored. Default 5 minutes."
-        },
-        "claudemeter.rateLimit.safetyTimeoutMs": {
-          "type": "number",
-          "default": 1800000,
-          "minimum": 60000,
-          "markdownDescription": "Maximum time (ms) to keep showing the rate-limit badge with no successful assistant message. Prevents a stale badge from sticking forever if the session is abandoned. Default 30 minutes."
-        },
-        "claudemeter.rateLimit.customTemplates": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "object",
-            "properties": {
-              "prefix":   { "type": "string" },
-              "category": {
-                "type": "string",
-                "enum": ["quota", "spending_cap", "server_throttle", "request_rejected", "generic"]
-              }
-            },
-            "required": ["prefix", "category"]
-          },
-          "markdownDescription": "Extend the rate-limit template classifier with your own keyword-prefix rules. Useful for Team/Enterprise wording we haven't catalogued. Entries are evaluated before the built-in templates. Example:\n\n```json\n[{ \"prefix\": \"Your enterprise seat\", \"category\": \"quota\" }]\n```"
         },
         "claudemeter.tokenLimit": {
           "type": "number",
