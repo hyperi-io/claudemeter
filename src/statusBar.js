@@ -18,6 +18,7 @@ const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
 const {
     formatTokensDisplay,
     formatTokensDisplayCompact,
+    formatAsBar,
     DISPLAY_DEFAULT,
 } = require('./statusBarFormatters');
 
@@ -74,34 +75,16 @@ function getTokensDisplay() {
 }
 
 /**
- * Bar style definitions
- */
-const BAR_STYLES = {
-    barLight: { filled: '▓', empty: '░' },
-    barSolid: { filled: '█', empty: '░' },
-    barSquare: { filled: '■', empty: '□' },
-    barCircle: { filled: '●', empty: '○' }
-};
-
-/**
- * Format percentage as progress bar
- * @param {number} percent - Percentage (0-100)
- * @param {string} style - Bar style key
- * @param {number} width - Bar width in characters
- * @returns {string} Progress bar like "▓▓▓░░"
- */
-function formatAsBar(percent, style, width = 5) {
-    const clamped = Math.max(0, Math.min(100, percent));
-    const filled = Math.round(clamped / 100 * width);
-    const chars = BAR_STYLES[style] || BAR_STYLES.barLight;
-    return chars.filled.repeat(filled) + chars.empty.repeat(width - filled);
-}
-
-/**
- * Format percentage based on usageFormat setting
+ * Format percentage based on usageFormat setting.
+ *
+ * Non-compact: "45%" or "▓▓░░░"
+ * Compact mode with percent format: "-45%" (dash prefix so
+ * "S-45% Wk-10%" reads cleanly; omitted for bar formats because
+ * the bar visually separates the values already).
+ *
  * @param {number} percent - Percentage (0-100)
  * @param {boolean} forCompact - Whether this is for compact mode
- * @returns {string} Formatted value (e.g., "45%", "▓▓░░░")
+ * @returns {string} Formatted value
  */
 function formatPercent(percent, forCompact = false) {
     const format = getUsageFormat();
