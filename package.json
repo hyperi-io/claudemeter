@@ -277,6 +277,78 @@
           "default": false,
           "description": "Enable debug logging to output channel (for troubleshooting)"
         },
+        "claudemeter.happyHour.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a 'happy hour' icon on the Claude status-bar panel during Anthropic's off-peak window (when their peak-throttling policy is not active).\n\nPeak window defaults to Mon-Fri 05:00-11:00 America/Los_Angeles, per Anthropic's 2026-03-26 announcement. Configurable via `claudemeter.happyHour.peakWindow`.\n\nAnthropic throttling is driven by LA-local peak load — this icon appears outside that window regardless of your own timezone."
+        },
+        "claudemeter.happyHour.icon": {
+          "type": "string",
+          "enum": [
+            "beer",
+            "cocktail",
+            "wine",
+            "champagne",
+            "martini",
+            "coffee",
+            "moon",
+            "sparkles",
+            "palm",
+            "party",
+            "custom"
+          ],
+          "default": "beer",
+          "enumDescriptions": [
+            "🍺 Beer (default)",
+            "🍹 Cocktail",
+            "🍷 Wine",
+            "🥂 Champagne",
+            "🍸 Martini",
+            "☕ Coffee (teetotal)",
+            "🌙 Moon (late-night coder)",
+            "✨ Sparkles",
+            "🌴 Palm tree",
+            "🎉 Party",
+            "Custom — set claudemeter.happyHour.customIcon"
+          ],
+          "markdownDescription": "Icon shown during happy hour. Set to `custom` and provide `claudemeter.happyHour.customIcon` to use any emoji."
+        },
+        "claudemeter.happyHour.customIcon": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Custom emoji for happy hour (used only when `claudemeter.happyHour.icon` is `custom`)."
+        },
+        "claudemeter.happyHour.peakWindow": {
+          "type": "object",
+          "default": {
+            "days": [1, 2, 3, 4, 5],
+            "start": "05:00",
+            "end": "11:00",
+            "tz": "America/Los_Angeles"
+          },
+          "properties": {
+            "days": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 0, "maximum": 6 },
+              "description": "Days of week where peak applies. 0=Sunday, 1=Monday, ..., 6=Saturday."
+            },
+            "start": {
+              "type": "string",
+              "pattern": "^\\d{2}:\\d{2}$",
+              "description": "Peak window start time in HH:MM 24-hour format, in `tz`."
+            },
+            "end": {
+              "type": "string",
+              "pattern": "^\\d{2}:\\d{2}$",
+              "description": "Peak window end time in HH:MM 24-hour format, in `tz`."
+            },
+            "tz": {
+              "type": "string",
+              "description": "IANA timezone identifier (e.g. America/Los_Angeles)."
+            }
+          },
+          "markdownDescription": "Anthropic's announced peak-throttling window. Happy hour shows OUTSIDE this window.\n\nDefaults to `{ days: [1,2,3,4,5], start: \"05:00\", end: \"11:00\", tz: \"America/Los_Angeles\" }` per Anthropic's 2026-03-26 announcement. Override here if the policy changes.\n\nMalformed fields fall back to the defaults individually (e.g. a bad `tz` still keeps your custom `start`/`end`)."
+        },
         "claudemeter.tokenLimit": {
           "type": "number",
           "default": 0,

@@ -20,6 +20,8 @@ const {
     DISPLAY_DEFAULT,
 } = require('./statusBarFormatters');
 const { composeTooltip } = require('./tooltipComposer');
+const { composeClaudeLabel, HAPPY_HOUR_ICONS } = require('./claudeLabelComposer');
+const { isHappyHour, nextTransition, validatePeakWindow } = require('./happyHour');
 
 const LABEL_TEXT = 'Claude';
 
@@ -74,6 +76,51 @@ function getTokensDisplay() {
 }
 
 /**
+ * Resolve the happy-hour icon glyph from the enum setting. Returns null
+ * when disabled, invalid, or when 'custom' is chosen with no customIcon.
+ */
+function resolveHappyHourIcon(config) {
+    const choice = config.get('happyHour.icon', 'beer');
+    if (choice === 'custom') {
+        const custom = config.get('happyHour.customIcon', '');
+        return (typeof custom === 'string' && custom.length > 0) ? custom : null;
+    }
+    return HAPPY_HOUR_ICONS[choice] || HAPPY_HOUR_ICONS.beer;
+}
+
+/**
+ * Compute the current happy-hour state from config + clock.
+ *
+ * Returns:
+ *   {
+ *     active:   boolean,      // true when off-peak AND enabled AND icon resolved
+ *     icon:     string|null,  // resolved glyph or null when none
+ *     endsAt:   Date|null,    // next transition; feeds tooltip "ends HH:MM local"
+ *   }
+ */
+function resolveHappyHourState() {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    if (!config.get('happyHour.enabled', true)) {
+        return { active: false, icon: null, endsAt: null };
+    }
+    const peakWindow = validatePeakWindow(config.get('happyHour.peakWindow'));
+    const now = new Date();
+    const active = isHappyHour(now, peakWindow);
+    if (!active) {
+        return { active: false, icon: null, endsAt: null };
+    }
+    const icon = resolveHappyHourIcon(config);
+    if (!icon) {
+        return { active: false, icon: null, endsAt: null };
+    }
+    return {
+        active: true,
+        icon,
+        endsAt: nextTransition(now, peakWindow),
+    };
+}
+
+/**
  * Format percentage based on usageFormat setting.
  *
  * Non-compact: "45%" or "▓▓░░░"
@@ -94,60 +141,64 @@ function formatPercent(percent, forCompact = false) {
 }
 
 /**
- * Get the label text with service status icon prefix (only when degraded/outage)
- * @returns {string} Label text like "Claude" or "$(warning) Claude" when issues
+ * Compose the full Claude-label state for the current tick:
+ * text, color, and platform tooltip lines (service status + happy
+ * hour). Single call, consistent state, used by both the status-bar
+ * label render and the tooltip composer's platform block.
  */
+function composeCurrentLabel({ isRefreshing = false } = {}) {
+    const serviceStatus = isServiceStatusEnabled() ? getServiceStatusFromCache() : null;
+    const hh = resolveHappyHourState();
+
+    const result = composeClaudeLabel({
+        serviceStatus,
+        happyHourActive: hh.active,
+        happyHourIcon: hh.icon,
+        happyHourEndsAt: hh.endsAt,
+        isRefreshing,
+    });
+
+    // Extended tooltip lines: append service-status footer ("Last checked:
+    // ...", "[View status page](...)") for parity with the previous
+    // behaviour. The core icon + one-line description comes from
+    // composeClaudeLabel; this adds the "metadata" rows.
+    if (serviceStatus) {
+        const display = getStatusDisplay(serviceStatus.indicator);
+        if (serviceStatus.updatedAt) {
+            result.tooltipLines.push(`Last checked: ${formatStatusTime(serviceStatus.updatedAt)}`);
+        }
+        if (display.color !== undefined || serviceStatus.indicator !== 'none') {
+            result.tooltipLines.push(`[View status page](${STATUS_PAGE_URL})`);
+        }
+    }
+
+    return {
+        text: `${result.text}  `,  // trailing spaces for visual breathing room
+        color: result.color ? new vscode.ThemeColor(result.color) : undefined,
+        tooltipLines: result.tooltipLines,
+    };
+}
+
+// Back-compat thin wrappers. Many call sites in this file already read
+// one piece of the label state at a time; rather than rewrite every
+// site, these helpers route through composeCurrentLabel so there's a
+// single source of truth.
 function getLabelTextWithStatus() {
-    const current = getServiceStatusFromCache();
-    if (isServiceStatusEnabled() && current && current.indicator !== 'none') {
-        // Only show icon when there's an issue (not operational)
-        const display = getStatusDisplay(current.indicator);
-        return `${display.icon} ${LABEL_TEXT}`;
-    }
-    return `${LABEL_TEXT}`;
+    // Returns just the text without the trailing double-space (callers
+    // add their own spacing when they need a spinner frame).
+    const { text } = composeCurrentLabel();
+    return text.replace(/\s+$/, '');
 }
 
-/**
- * Get ThemeColor for service status (if degraded/outage)
- * @returns {vscode.ThemeColor|undefined}
- */
 function getServiceStatusColor() {
-    const current = getServiceStatusFromCache();
-    if (isServiceStatusEnabled() && current) {
-        const display = getStatusDisplay(current.indicator);
-        if (display.color) {
-            return new vscode.ThemeColor(display.color);
-        }
-    }
-    return undefined;
+    return composeCurrentLabel().color;
 }
 
-/**
- * Build service status section for tooltip
- * @returns {string[]} Array of tooltip lines
- */
 function getServiceStatusTooltipLines() {
-    const lines = [];
-    if (!isServiceStatusEnabled()) return lines;
-
-    const current = getServiceStatusFromCache();
-    if (current) {
-        const display = getStatusDisplay(current.indicator);
-        lines.push('');
-        lines.push(`**Service Status:** ${display.label}`);
-        if (current.description && current.description !== display.label) {
-            lines.push(`${current.description}`);
-        }
-        if (current.updatedAt) {
-            lines.push(`Last checked: ${formatStatusTime(current.updatedAt)}`);
-        }
-        lines.push(`[View status page](${STATUS_PAGE_URL})`);
-    } else {
-        // No successful fetch yet — may be startup (null) or an error.
-        // We still don't expose the error here; a separate design could
-        // add a "(unable to fetch)" line, but for now silence is fine.
-    }
-    return lines;
+    const { tooltipLines } = composeCurrentLabel();
+    // Prepend a blank line if we have any content, for visual
+    // separation from the section above (matches prior behaviour).
+    return tooltipLines.length > 0 ? ['', ...tooltipLines] : [];
 }
 
 /**
