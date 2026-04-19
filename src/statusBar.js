@@ -7,20 +7,19 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
 const vscode = require('vscode');
-const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, calculateResetClockTimeExpanded, getCurrencySymbol, getUse24HourTime, formatCompact } = require('./utils');
+const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, getCurrencySymbol, getUse24HourTime } = require('./utils');
 const {
     getStatusDisplay, formatStatusTime, STATUS_PAGE_URL,
     refreshStatus: refreshServiceStatusInternal,
     getCurrentStatus: getServiceStatusFromCache,
 } = require('./serviceStatus');
-const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
-const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
 const {
     formatTokensDisplay,
     formatTokensDisplayCompact,
     formatAsBar,
     DISPLAY_DEFAULT,
 } = require('./statusBarFormatters');
+const { composeTooltip } = require('./tooltipComposer');
 
 const LABEL_TEXT = 'Claude';
 
@@ -594,74 +593,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         }
     }
 
-    const tooltipLines = [];
-
-    // Account identity header
-    // Strip "'s Organization" / "'s Organisation" suffix from personal account names
-    const rawAccountName = usageData?.accountInfo?.name;
-    const accountName = rawAccountName
-        ? rawAccountName.replace(/'s Organi[sz]ation$/, '')
-        : null;
-    const accountEmail = usageData?.accountInfo?.email;
-    if (accountName && accountEmail) {
-        const safeName = accountName.replace(/([*_`~[\]\\])/g, '\\$1');
-        tooltipLines.push(`**${safeName}** (${accountEmail})`);
-    } else if (accountName) {
-        const safeName = accountName.replace(/([*_`~[\]\\])/g, '\\$1');
-        tooltipLines.push(`**${safeName}**`);
-    } else if (accountEmail) {
-        tooltipLines.push(accountEmail);
-    }
-    if (credentialsInfo) {
-        const plan = formatSubscriptionType(credentialsInfo.subscriptionType);
-        const tier = formatRateLimitTier(credentialsInfo.rateLimitTier);
-        const orgType = usageData?.accountInfo?.orgType;
-        const orgName = usageData?.accountInfo?.orgName;
-        // Build plan label with org type: "Max (Personal)" or "Max (Acme Corp)"
-        let planLabel = plan;
-        if (plan && orgType) {
-            planLabel = `${plan} (${orgType})`;
-        } else if (plan && orgName && !/'s Organi[sz]ation$/.test(orgName)) {
-            planLabel = `${plan} (${orgName})`;
-        } else if (plan) {
-            planLabel = `${plan} (Personal)`;
-        }
-        if (planLabel && tier && tier !== plan) {
-            tooltipLines.push(`${planLabel} · ${tier}`);
-        } else if (planLabel) {
-            tooltipLines.push(planLabel);
-        }
-    }
-    if (sessionData && sessionData.tokenUsage) {
-        const limit = sessionData.tokenUsage.limit;
-        const isExtended = limit > STANDARD_LIMIT;
-        // When the limit came from a non-authoritative source (rule
-        // table match, observed-floor snap, standard fallback), we
-        // say so in the tooltip — that way users who see a surprising
-        // number know we're inferring rather than reading ground truth.
-        const confidence = sessionData.tokenUsage.limitConfidence || null;
-        let suffix = '';
-        if (isExtended && confidence === 'authoritative') {
-            suffix = ' (extended)';
-        } else if (confidence === 'inferred') {
-            suffix = ' (inferred)';
-        } else if (confidence === 'configured') {
-            suffix = ' (configured)';
-        } else if (isExtended) {
-            suffix = ' (extended)';
-        }
-        tooltipLines.push(`Context: ${formatCompact(limit)}${suffix}`);
-    } else if (credentialsInfo) {
-        const ccModel = vscode.workspace.getConfiguration('claudeCode').get('selectedModel', '');
-        const aliasLimit = parseModelAlias(ccModel);
-        const fallbackLimit = aliasLimit || STANDARD_LIMIT;
-        const isExtended = fallbackLimit > STANDARD_LIMIT;
-        tooltipLines.push(`Context: ${formatCompact(fallbackLimit)}${isExtended ? ' (extended)' : ''}`);
-    }
-    if (accountName || credentialsInfo) {
-        tooltipLines.push('');
-    }
-
+    // Compute derived values used by both the tooltip composer and
+    // the renderers below.
     let sessionPercent = null;
     let sessionResetTime = null;
     let sessionStatus = { icon: '', color: undefined, level: 'normal' };
@@ -674,10 +607,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         tokenPercent = Math.round((sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100);
         tokenStatus = getIconAndColor(tokenPercent, tokenThresholds.warning, tokenThresholds.error);
         // The knownLimit flag tells formatTokensDisplay whether to show
-        // a denominator in count/both modes. Limits from authoritative
-        // or configured sources (user override, explicit [1m] alias,
-        // rule table, cc eligibility) are considered known; inferred
-        // and standard fallbacks are not.
+        // a denominator. Only authoritative/configured sources are known;
+        // inferred and standard fallbacks are not.
         const confidence = sessionData.tokenUsage.limitConfidence || null;
         const knownLimit = confidence === 'authoritative' || confidence === 'configured';
         tokensInfo = {
@@ -691,25 +622,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     if (usageData) {
         sessionPercent = usageData.usagePercent;
         sessionResetTime = calculateResetClockTime(usageData.resetTime);
-        const sessionResetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTime);
         sessionStatus = getIconAndColor(sessionPercent, sessionThresholds.warning, sessionThresholds.error);
-
-        tooltipLines.push(`**Session ${sessionPercent}%**`);
-        if (tokenPercent !== null) {
-            tooltipLines.push(`Tokens: ${formatCompact(sessionData.tokenUsage.current)} / ${formatCompact(sessionData.tokenUsage.limit)} (${tokenPercent}%)`);
-        }
-        tooltipLines.push(`Resets ${sessionResetTimeExpanded}`);
-        const tokenLimitOverride = config.get('tokenLimit', 0);
-        if (tokenLimitOverride > 0) {
-            tooltipLines.push(`⚙ Context window override: ${formatCompact(tokenLimitOverride)}`);
-        }
-    } else if (tokenPercent !== null) {
-        tooltipLines.push('**Session**');
-        tooltipLines.push(`Tokens: ${formatCompact(sessionData.tokenUsage.current)} / ${formatCompact(sessionData.tokenUsage.limit)} (${tokenPercent}%)`);
-        const tokenLimitOverride = config.get('tokenLimit', 0);
-        if (tokenLimitOverride > 0) {
-            tooltipLines.push(`⚙ Context window override: ${formatCompact(tokenLimitOverride)}`);
-        }
     }
 
     let weeklyPercent = null;
@@ -726,68 +639,28 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             ? { hour: 'numeric', minute: '2-digit' }
             : { hour: 'numeric' };
         weeklyResetTime = calculateResetClockTime(usageData.resetTimeWeek, weeklyTimeFormat);
-        const weeklyResetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTimeWeek);
         weeklyStatus = getIconAndColor(weeklyPercent, weeklyThresholds.warning, weeklyThresholds.error);
-
-        tooltipLines.push('');
-        tooltipLines.push(`**Weekly ${weeklyPercent}%**`);
-
-        if (usageData.usagePercentSonnet !== null && usageData.usagePercentSonnet !== undefined) {
-            tooltipLines.push(`Sonnet: ${usageData.usagePercentSonnet}%`);
-        }
-        if (usageData.usagePercentOpus !== null && usageData.usagePercentOpus !== undefined) {
-            tooltipLines.push(`Opus: ${usageData.usagePercentOpus}%`);
-        }
-
-        tooltipLines.push(`Resets ${weeklyResetTimeExpanded}`);
     }
 
-    if (usageData && usageData.monthlyCredits) {
-        const credits = usageData.monthlyCredits;
-        const currencySymbol = getCurrencySymbol(credits.currency);
-        const usedFormatted = `${currencySymbol}${credits.used.toLocaleString()}`;
-        const limitFormatted = `${currencySymbol}${credits.limit.toLocaleString()}`;
-
-        tooltipLines.push('');
-        tooltipLines.push('**Extra Usage**');
-        tooltipLines.push(`Used: ${usedFormatted} / ${limitFormatted} ${credits.currency} (${credits.percent}%)`);
-
-        if (usageData.prepaidCredits) {
-            const prepaid = usageData.prepaidCredits;
-            const prepaidSymbol = getCurrencySymbol(prepaid.currency);
-            const balanceFormatted = `${prepaidSymbol}${prepaid.balance.toLocaleString()}`;
-            tooltipLines.push(`Balance: ${balanceFormatted} ${prepaid.currency}`);
-        }
-    } else if (usageData && usageData.prepaidCredits) {
-        const prepaid = usageData.prepaidCredits;
-        const prepaidSymbol = getCurrencySymbol(prepaid.currency);
-        const balanceFormatted = `${prepaidSymbol}${prepaid.balance.toLocaleString()}`;
-
-        tooltipLines.push('');
-        tooltipLines.push('**Credits**');
-        tooltipLines.push(`Balance: ${balanceFormatted} ${prepaid.currency}`);
-    }
-
-    if (activityStats && activityStats.description) {
-        tooltipLines.push('');
-        tooltipLines.push(`*${activityStats.description.quirky}*`);
-    }
-
-    // Add service status to tooltip
-    const serviceStatusLines = getServiceStatusTooltipLines();
-    tooltipLines.push(...serviceStatusLines);
-
-    tooltipLines.push('');
-    if (usageData) {
-        tooltipLines.push(`Updated: ${usageData.timestamp.toLocaleTimeString(undefined, { hour12: !getUse24HourTime() })}`);
-    }
+    // Compose tooltip via the pure composer.
     const extVersion = vscode.extensions.getExtension('HyperSec.claudemeter')?.packageJSON?.version;
-    if (extVersion) {
-        tooltipLines.push(`Claudemeter v${extVersion}`);
-    }
-    tooltipLines.push('[Click to resync account](command:claudemeter.resyncAccount)');
+    const platformTooltipLines = getServiceStatusTooltipLines();
+    const markdownBody = composeTooltip({
+        usageData,
+        sessionData,
+        credentialsInfo,
+        activityStats,
+        platformTooltipLines,
+        extensionVersion: extVersion,
+        claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
+        config: {
+            tokenLimitOverride: config.get('tokenLimit', 0),
+            use24HourTime: getUse24HourTime(),
+            weeklyPrecisionThreshold: config.get('statusBar.weeklyPrecisionThreshold', 75),
+        },
+    });
 
-    const markdown = new vscode.MarkdownString(tooltipLines.join('  \n'));
+    const markdown = new vscode.MarkdownString(markdownBody);
     markdown.isTrusted = true;  // Enable clickable links
     if (!isSpinnerActive) {
         setAllTooltips(markdown);
