@@ -235,17 +235,21 @@
         "claudemeter.statusBar.tokensDisplay": {
           "type": "string",
           "enum": [
-            "both",
             "bar",
+            "value",
+            "extended",
+            "limit",
             "count"
           ],
-          "default": "both",
+          "default": "limit",
           "enumDescriptions": [
-            "Progress bar AND token count (e.g. Tk ●●○○○ 275k/1m)",
             "Progress bar / percent only (e.g. Tk ●●○○○)",
-            "Token count only (e.g. Tk 275k/1m)"
+            "Progress bar + current consumption (e.g. Tk ●●○○○ 518k)",
+            "Progress bar + current/max (e.g. Tk ●●○○○ 518k/1m)",
+            "Progress bar + max only when extended beyond 200K (e.g. Tk ●●○○○ 1m on a 1M session; just the bar on a 200K session) — default",
+            "Token count only, no bar (e.g. Tk 518k/1m)"
           ],
-          "markdownDescription": "How to display the **Tk** (token usage) item in the status bar:\n\n- **both** _(default)_: progress bar alongside token count\n- **bar**: progress bar or percentage only (matches pre-2.3.0 behaviour)\n- **count**: token count only, in thousands\n\nToken count shows a denominator (e.g. `275k/1000k`) when the context window limit is known; when the limit is inferred, the denominator is omitted to avoid misrepresenting an uncertain value."
+          "markdownDescription": "How to display the **Tk** (token usage) item in the status bar:\n\n- **bar**: progress bar / percent only — `Tk ●●○○○`\n- **value**: bar + current consumption — `Tk ●●○○○ 518k`\n- **extended**: bar + current/max — `Tk ●●○○○ 518k/1m` (this was the pre-2.3.3 `both` default)\n- **limit** _(default)_: bar + max, shown only when greater than the 200K standard context window — `Tk ●●○○○ 1m` on a 1M session; just the bar on a 200K session\n- **count**: token count only, no bar — `Tk 518k/1m`\n\nWhen the context window limit is inferred rather than authoritative, the max is suppressed to avoid misrepresenting an uncertain value.\n\n_Backward compatibility:_ the legacy `both` value is auto-migrated to `extended` on startup so any existing configuration keeps its previous look._"
         },
         "claudemeter.thresholds.warning": {
           "type": "number",

@@ -697,6 +697,19 @@ async function migrateDeprecatedSettings() {
         await config.update('statusBar.usageFormat', 'barLight', vscode.ConfigurationTarget.Workspace);
         await config.update('statusBar.useProgressBars', undefined, vscode.ConfigurationTarget.Workspace);
     }
+
+    // Migrate tokensDisplay='both' (the old pre-2.3.3 default) to 'extended'.
+    // 'both' was renamed when the enum gained 'value' / 'limit' variants so
+    // that enum values describe what content shows, not a layout mode.
+    // 'extended' produces the same rendering as the old 'both'.
+    const tokensDisplay = config.inspect('statusBar.tokensDisplay');
+    if (tokensDisplay?.globalValue === 'both') {
+        await config.update('statusBar.tokensDisplay', 'extended', vscode.ConfigurationTarget.Global);
+        console.log('Claudemeter: Migrated tokensDisplay=both -> extended');
+    }
+    if (tokensDisplay?.workspaceValue === 'both') {
+        await config.update('statusBar.tokensDisplay', 'extended', vscode.ConfigurationTarget.Workspace);
+    }
 }
 
 async function activate(context) {

@@ -13,10 +13,37 @@
 // module stub or any config lookups. Everything in here takes
 // its inputs as parameters.
 
-// Display mode for claudemeter.statusBar.tokensDisplay
-const DISPLAY_BAR   = 'bar';    // progress bar (or percent per usageFormat) only
-const DISPLAY_COUNT = 'count';  // k-count only (e.g. 275k / 1000k)
-const DISPLAY_BOTH  = 'both';   // bar + k-count side by side (default)
+// Display mode for claudemeter.statusBar.tokensDisplay.
+//
+// The enum expanded in 2.3.x to give finer control over the numeric
+// half of the Tk indicator. Old users who had `both` (the previous
+// default) are auto-migrated to `extended` in extension.js, so they
+// see no visible change.
+//
+//   bar      — "Tk ●○○○○"              just the progress bar / percent
+//   value    — "Tk ●○○○○ 518k"         bar + current consumption
+//   extended — "Tk ●○○○○ 518k/1m"      bar + current/max (was: "both")
+//   limit    — "Tk ●○○○○ 1m"           bar + max only, but ONLY when the
+//                                       max is extended beyond the 200K
+//                                       baseline. 200K sessions show
+//                                       just the bar. NEW DEFAULT.
+//   count    — "Tk 518k/1m"             count only, no bar
+//
+// The threshold for `limit`'s "is it extended" check mirrors
+// modelContextWindows.STANDARD_LIMIT (200000) but is kept local so
+// this module stays pure.
+const DISPLAY_BAR      = 'bar';
+const DISPLAY_VALUE    = 'value';
+const DISPLAY_EXTENDED = 'extended';
+const DISPLAY_LIMIT    = 'limit';
+const DISPLAY_COUNT    = 'count';
+const DISPLAY_DEFAULT  = DISPLAY_LIMIT;
+
+// Legacy value kept for internal migration + back-compat on any
+// external callers still using 'both'. Treated as `extended`.
+const DISPLAY_BOTH     = 'both';
+
+const EXTENDED_THRESHOLD = 200000;
 
 // Character sets for each bar style. barLight is the fallback for
 // unknown styles (barSolid/barSquare/barCircle are the other three
@@ -76,36 +103,64 @@ function formatIndicator(percent, usageFormat) {
     return formatAsBar(percent, usageFormat);
 }
 
-// Render the k-count half. Shows a denominator (e.g. "275k/1000k")
-// only when knownLimit is true — the inferred / unknown-limit case
-// omits the denominator to avoid lying about a limit we don't know.
-function formatKCount(current, limit, knownLimit) {
-    if (current == null) return NO_DATA;
+// Render the numeric half of the Tk indicator for a given tokensDisplay
+// mode. Returns the empty string when the current mode shouldn't show
+// any numeric content — the caller is expected to fall back to the bar.
+//
+// knownLimit=false (limit is inferred, not authoritative) suppresses
+// any "/max" or "max-only" rendering — we don't lie about a limit we
+// don't actually know. In that case `value` and `extended` still show
+// the current, and `limit` shows nothing.
+function formatKCount(current, limit, knownLimit, tokensDisplay = DISPLAY_DEFAULT) {
+    if (current == null) return '';
+
+    const mode = normaliseTokensDisplay(tokensDisplay);
     const currentK = formatTokenCount(current);
-    if (knownLimit && limit != null && limit > 0) {
-        return `${currentK}/${formatTokenCount(limit)}`;
+    const hasLimit = knownLimit && limit != null && limit > 0;
+    const isExtended = hasLimit && limit > EXTENDED_THRESHOLD;
+
+    switch (mode) {
+        case DISPLAY_BAR:
+            return '';
+        case DISPLAY_VALUE:
+            return currentK;
+        case DISPLAY_EXTENDED:
+            return hasLimit ? `${currentK}/${formatTokenCount(limit)}` : currentK;
+        case DISPLAY_LIMIT:
+            return isExtended ? formatTokenCount(limit) : '';
+        case DISPLAY_COUNT:
+            return hasLimit ? `${currentK}/${formatTokenCount(limit)}` : currentK;
+        default:
+            return isExtended ? formatTokenCount(limit) : '';
     }
-    return currentK;
+}
+
+function normaliseTokensDisplay(tokensDisplay) {
+    if (tokensDisplay === DISPLAY_BOTH) return DISPLAY_EXTENDED;  // legacy alias
+    if (tokensDisplay === DISPLAY_BAR
+        || tokensDisplay === DISPLAY_VALUE
+        || tokensDisplay === DISPLAY_EXTENDED
+        || tokensDisplay === DISPLAY_LIMIT
+        || tokensDisplay === DISPLAY_COUNT) {
+        return tokensDisplay;
+    }
+    return DISPLAY_DEFAULT;
 }
 
 // Build the Tk indicator body for the default/minimal panel modes.
-// Returns a string like "●○○○○ 275k/1000k" (both), "●○○○○" (bar),
-// or "275k/1000k" (count). Unknown display values default to 'both'.
 //
 // Parameters:
-//   display      - 'bar' | 'count' | 'both' (default 'both')
+//   display      - one of bar|value|extended|limit|count. Legacy 'both'
+//                  is migrated to 'extended'. Default: 'limit'.
 //   percent      - 0..100 or null for no-data
 //   current      - raw token count or null
 //   limit        - resolved limit in tokens, or null
 //   knownLimit   - true when the resolved limit came from an
-//                  authoritative/configured source (not 'inferred'
-//                  or 'unknown'); controls whether the k-count
-//                  shows a denominator
-//   usageFormat  - 'percent' or one of the bar* styles (controls
-//                  the indicator half in bar/both mode)
+//                  authoritative/configured source
+//   usageFormat  - 'percent' or one of the bar* styles
 function formatTokensDisplay(opts) {
     const {
-        display = DISPLAY_BOTH,
+        display = DISPLAY_DEFAULT,
         percent,
         current,
         limit,
@@ -113,25 +168,23 @@ function formatTokensDisplay(opts) {
         usageFormat = 'barCircle',
     } = opts || {};
 
-    // No-data short-circuit: we can still render a bar if percent
-    // is known, but bar+null current makes no sense. When both are
-    // null, return the NO_DATA placeholder.
     if (percent == null && current == null) {
         return NO_DATA;
     }
 
-    const mode = normaliseDisplay(display);
-
-    if (mode === DISPLAY_BAR) {
-        return formatIndicator(percent, usageFormat);
-    }
+    const mode = normaliseTokensDisplay(display);
+    const count = formatKCount(current, limit, knownLimit, mode);
 
     if (mode === DISPLAY_COUNT) {
-        return formatKCount(current, limit, knownLimit);
+        // count-only mode — no bar. If count came back empty (unknown
+        // limit on a limit-mode that needs it), fall back to bar so
+        // the user sees *something*.
+        return count || formatIndicator(percent, usageFormat);
     }
 
-    // DISPLAY_BOTH
-    return `${formatIndicator(percent, usageFormat)} ${formatKCount(current, limit, knownLimit)}`;
+    // Everything else shows the bar. The numeric count follows if non-empty.
+    const bar = formatIndicator(percent, usageFormat);
+    return count ? `${bar} ${count}` : bar;
 }
 
 // Build the Tk indicator body for the compact panel mode. Compact
@@ -141,7 +194,7 @@ function formatTokensDisplay(opts) {
 // compact format; it sits between the `Tk` label and the value.
 function formatTokensDisplayCompact(opts) {
     const {
-        display = DISPLAY_BOTH,
+        display = DISPLAY_DEFAULT,
         percent,
         current,
         limit,
@@ -152,39 +205,32 @@ function formatTokensDisplayCompact(opts) {
         return 'Tk--';
     }
 
-    const mode = normaliseDisplay(display);
-
+    const mode = normaliseTokensDisplay(display);
     const percentStr = percent != null ? `${percent}%` : NO_DATA;
-    const countStr = formatKCount(current, limit, knownLimit);
-
-    if (mode === DISPLAY_BAR) {
-        return `Tk-${percentStr}`;
-    }
+    const countStr = formatKCount(current, limit, knownLimit, mode);
 
     if (mode === DISPLAY_COUNT) {
-        return `Tk-${countStr}`;
+        return `Tk-${countStr || percentStr}`;
     }
 
-    // DISPLAY_BOTH
-    return `Tk-${percentStr} ${countStr}`;
-}
-
-function normaliseDisplay(display) {
-    if (display === DISPLAY_BAR || display === DISPLAY_COUNT || display === DISPLAY_BOTH) {
-        return display;
-    }
-    return DISPLAY_BOTH;
+    return countStr ? `Tk-${percentStr} ${countStr}` : `Tk-${percentStr}`;
 }
 
 module.exports = {
     DISPLAY_BAR,
+    DISPLAY_VALUE,
+    DISPLAY_EXTENDED,
+    DISPLAY_LIMIT,
     DISPLAY_COUNT,
-    DISPLAY_BOTH,
+    DISPLAY_BOTH,       // legacy alias; exported for back-compat with any external callers
+    DISPLAY_DEFAULT,
+    EXTENDED_THRESHOLD,
     BAR_STYLES,
     formatTokenCount,
     formatAsBar,
     formatIndicator,
     formatKCount,
+    normaliseTokensDisplay,
     formatTokensDisplay,
     formatTokensDisplayCompact,
 };

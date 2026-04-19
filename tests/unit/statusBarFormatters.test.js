@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 const {
     formatTokenCount,
     formatAsBar,
+    formatKCount,
     formatTokensDisplay,
     formatTokensDisplayCompact,
     BAR_STYLES,
@@ -183,6 +184,87 @@ describe('formatTokensDisplay — bar mode', () => {
     });
 });
 
+describe('formatKCount — tokensDisplay modes', () => {
+    // The tokensDisplay setting controls the numeric part of the Tk
+    // indicator. 200K is STANDARD_LIMIT — the baseline everyone shares.
+    // `limit` mode only shows the max when it's *extended* past 200K,
+    // because showing "200k" always would be noise.
+
+    describe('bar mode (no numeric data)', () => {
+        it('returns empty string for bar mode', () => {
+            expect(formatKCount(100000, 200000, true, 'bar')).toBe('');
+            expect(formatKCount(518000, 1000000, true, 'bar')).toBe('');
+        });
+    });
+
+    describe('value mode (current only)', () => {
+        it('shows current for 200K session', () => {
+            expect(formatKCount(100000, 200000, true, 'value')).toBe('100k');
+        });
+        it('shows current for 1M session', () => {
+            expect(formatKCount(518000, 1000000, true, 'value')).toBe('518k');
+        });
+        it('ignores limit entirely', () => {
+            expect(formatKCount(100000, 200000, false, 'value')).toBe('100k');
+        });
+    });
+
+    describe('extended mode (current/max)', () => {
+        it('shows current/max for 200K session', () => {
+            expect(formatKCount(100000, 200000, true, 'extended')).toBe('100k/200k');
+        });
+        it('shows current/max for 1M session', () => {
+            expect(formatKCount(518000, 1000000, true, 'extended')).toBe('518k/1m');
+        });
+        it('hides max when knownLimit=false', () => {
+            expect(formatKCount(518000, 1000000, false, 'extended')).toBe('518k');
+        });
+    });
+
+    describe('limit mode (max only, extended only) — NEW DEFAULT', () => {
+        it('returns empty for 200K session (not extended)', () => {
+            expect(formatKCount(100000, 200000, true, 'limit')).toBe('');
+        });
+        it('shows max for 1M session', () => {
+            expect(formatKCount(518000, 1000000, true, 'limit')).toBe('1m');
+        });
+        it('shows max for 2M session', () => {
+            expect(formatKCount(1200000, 2000000, true, 'limit')).toBe('2m');
+        });
+        it('returns empty when knownLimit=false even for 1M', () => {
+            expect(formatKCount(518000, 1000000, false, 'limit')).toBe('');
+        });
+        it('returns empty for 199K (edge: just under threshold)', () => {
+            expect(formatKCount(50000, 199000, true, 'limit')).toBe('');
+        });
+    });
+
+    describe('count mode (current/max, no bar)', () => {
+        it('shows current/max for 1M session', () => {
+            expect(formatKCount(518000, 1000000, true, 'count')).toBe('518k/1m');
+        });
+        it('shows current only when knownLimit=false', () => {
+            expect(formatKCount(518000, 1000000, false, 'count')).toBe('518k');
+        });
+    });
+
+    describe('legacy both alias migrates to extended', () => {
+        it('both mode treated as extended', () => {
+            expect(formatKCount(518000, 1000000, true, 'both')).toBe('518k/1m');
+        });
+    });
+
+    describe('default behaviour (limit mode)', () => {
+        it('defaults to limit mode when tokensDisplay is undefined', () => {
+            expect(formatKCount(100000, 200000, true)).toBe('');       // 200K not extended
+            expect(formatKCount(518000, 1000000, true)).toBe('1m');    // 1M is extended
+        });
+        it('falls back to limit mode on unknown value', () => {
+            expect(formatKCount(518000, 1000000, true, 'weird')).toBe('1m');
+        });
+    });
+});
+
 describe('formatTokensDisplay — count mode', () => {
     // 'count' mode shows k-count with denominator when limit is known.
     it('count mode with known limit shows current/limit', () => {
@@ -290,7 +372,9 @@ describe('formatTokensDisplay — both mode (default)', () => {
 });
 
 describe('formatTokensDisplay — fallback and edge cases', () => {
-    it('defaults to both when display is undefined', () => {
+    it('defaults to limit mode when display is undefined (1M session)', () => {
+        // New default: limit mode shows max only when extended.
+        // 1M > 200K threshold, so max renders as "1m".
         const result = formatTokensDisplay({
             percent: 27,
             current: 275000,
@@ -298,10 +382,21 @@ describe('formatTokensDisplay — fallback and edge cases', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○ 275k/1m');
+        expect(result).toBe('●○○○○ 1m');
     });
 
-    it('treats unknown display value as both', () => {
+    it('default on 200K session shows just the bar (limit mode suppresses max at baseline)', () => {
+        const result = formatTokensDisplay({
+            percent: 27,
+            current: 55000,
+            limit: 200000,
+            knownLimit: true,
+            usageFormat: 'barCircle',
+        });
+        expect(result).toBe('●○○○○');
+    });
+
+    it('treats unknown display value as limit (default) — shows max on 1M', () => {
         const result = formatTokensDisplay({
             display: 'weird',
             percent: 27,
@@ -310,7 +405,7 @@ describe('formatTokensDisplay — fallback and edge cases', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○ 275k/1m');
+        expect(result).toBe('●○○○○ 1m');
     });
 });
 
@@ -376,14 +471,24 @@ describe('formatTokensDisplayCompact — compact mode variants', () => {
         expect(result).toBe('Tk-0% 275k');
     });
 
-    it('defaults to both mode when display is undefined', () => {
+    it('defaults to limit mode when display is undefined (1M session shows max)', () => {
         const result = formatTokensDisplayCompact({
             percent: 36,
             current: 275000,
             limit: 1000000,
             knownLimit: true,
         });
-        expect(result).toBe('Tk-36% 275k/1m');
+        expect(result).toBe('Tk-36% 1m');
+    });
+
+    it('default on 200K session shows just percent (limit mode suppresses)', () => {
+        const result = formatTokensDisplayCompact({
+            percent: 36,
+            current: 55000,
+            limit: 200000,
+            knownLimit: true,
+        });
+        expect(result).toBe('Tk-36%');
     });
 
     it('compact with no data returns Tk-- as before', () => {

@@ -200,14 +200,17 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 ### `claudemeter.statusBar.tokensDisplay`
 
 - **Type**: String
-- **Default**: `both` (new in 2.3.0 — previously behaved as `bar`)
-- **Options**: `both`, `bar`, `count`
-- **Description**: Controls the **Tk** (token usage) indicator specifically:
-  - **both**: progress bar and token count side by side (e.g. `Tk ●●○○○ 275k/1m`)
-  - **bar**: progress bar or percentage only (e.g. `Tk ●●○○○`) — matches pre-2.3.0 behaviour
-  - **count**: token count only, in compact k/m units (e.g. `Tk 275k/1m`)
-- The token count shows a denominator (e.g. `275k/1m`) only when the context window limit is known from an authoritative or configured source. When the limit is inferred, the denominator is omitted so the display doesn't misrepresent an uncertain value.
-- The existing `claudemeter.statusBar.usageFormat` setting still controls the bar/percent half in `bar` and `both` modes.
+- **Default**: `limit` (new in 2.3.3 — previously `both`, auto-migrated to `extended`)
+- **Options**: `bar`, `value`, `extended`, `limit`, `count`
+- **Description**: Controls the **Tk** (token usage) indicator:
+  - **bar**: progress bar / percentage only — `Tk ●●○○○`
+  - **value**: bar + current consumption — `Tk ●●○○○ 518k`
+  - **extended**: bar + current/max — `Tk ●●○○○ 518k/1m` (same rendering as the pre-2.3.3 `both` default)
+  - **limit** _(default)_: bar + max, shown only when greater than the 200K standard context window — `Tk ●●○○○ 1m` on a 1M session; just the bar on a 200K session
+  - **count**: token count only, no bar — `Tk 518k/1m`
+- The max is suppressed when the context window limit is inferred rather than authoritative, so the display doesn't misrepresent an uncertain value.
+- The existing `claudemeter.statusBar.usageFormat` setting still controls the bar/percent half.
+- **Migration**: existing configs with `tokensDisplay: both` are auto-rewritten to `extended` on startup; no visible change for those users.
 
 ### `claudemeter.statusBar.alignment`
 

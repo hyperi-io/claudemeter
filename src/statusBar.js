@@ -14,7 +14,7 @@ const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
 const {
     formatTokensDisplay,
     formatTokensDisplayCompact,
-    DISPLAY_BOTH,
+    DISPLAY_DEFAULT,
 } = require('./statusBarFormatters');
 
 const LABEL_TEXT = 'Claude';
@@ -70,7 +70,7 @@ function getUsageFormat() {
  */
 function getTokensDisplay() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    return config.get('statusBar.tokensDisplay', DISPLAY_BOTH);
+    return config.get('statusBar.tokensDisplay', DISPLAY_DEFAULT);
 }
 
 /**
