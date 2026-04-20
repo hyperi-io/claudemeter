@@ -24,6 +24,27 @@ const DEFAULT_PEAK_WINDOW = Object.freeze({
     tz: 'America/Los_Angeles',
 });
 
+// Codicon entries use $(name) syntax — they render monochrome and
+// inherit the status-bar text colour, so they stay unobtrusive.
+// Emoji entries render in full colour (intentional, for users who
+// want a splash). The monochrome 'sparkle' is the default.
+const HAPPY_HOUR_ICONS = Object.freeze({
+    sparkle:   '$(sparkle)',
+    watch:     '$(watch)',
+    zap:       '$(zap)',
+    star:      '$(star-full)',
+    beer:      '🍺',
+    cocktail:  '🍹',
+    wine:      '🍷',
+    champagne: '🥂',
+    martini:   '🍸',
+    coffee:    '☕',
+    moon:      '🌙',
+    sparkles:  '✨',
+    palm:      '🌴',
+    party:     '🎉',
+});
+
 const TIME_RE = /^(\d{2}):(\d{2})$/;
 
 function isValidTz(tz) {
@@ -120,6 +141,7 @@ function nextTransition(now, peakWindow) {
 
 module.exports = {
     DEFAULT_PEAK_WINDOW,
+    HAPPY_HOUR_ICONS,
     isHappyHour,
     nextTransition,
     validatePeakWindow,

@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 const {
     DEFAULT_PEAK_WINDOW,
+    HAPPY_HOUR_ICONS,
     isHappyHour,
     nextTransition,
     validatePeakWindow,
@@ -158,5 +159,31 @@ describe('validatePeakWindow', () => {
     it('falls back when all days are invalid', () => {
         const broken = { days: [9, -1], start: '05:00', end: '11:00', tz: 'America/Los_Angeles' };
         expect(validatePeakWindow(broken).days).toEqual([1, 2, 3, 4, 5]);
+    });
+});
+
+describe('HAPPY_HOUR_ICONS', () => {
+    it('exposes monochrome codicon options', () => {
+        expect(HAPPY_HOUR_ICONS.sparkle).toBe('$(sparkle)');
+        expect(HAPPY_HOUR_ICONS.watch).toBe('$(watch)');
+        expect(HAPPY_HOUR_ICONS.zap).toBe('$(zap)');
+        expect(HAPPY_HOUR_ICONS.star).toBe('$(star-full)');
+    });
+
+    it('exposes full-colour emoji options', () => {
+        expect(HAPPY_HOUR_ICONS.beer).toBe('🍺');
+        expect(HAPPY_HOUR_ICONS.cocktail).toBe('🍹');
+        expect(HAPPY_HOUR_ICONS.wine).toBe('🍷');
+        expect(HAPPY_HOUR_ICONS.champagne).toBe('🥂');
+        expect(HAPPY_HOUR_ICONS.martini).toBe('🍸');
+        expect(HAPPY_HOUR_ICONS.coffee).toBe('☕');
+        expect(HAPPY_HOUR_ICONS.moon).toBe('🌙');
+        expect(HAPPY_HOUR_ICONS.sparkles).toBe('✨');
+        expect(HAPPY_HOUR_ICONS.palm).toBe('🌴');
+        expect(HAPPY_HOUR_ICONS.party).toBe('🎉');
+    });
+
+    it('is frozen', () => {
+        expect(Object.isFrozen(HAPPY_HOUR_ICONS)).toBe(true);
     });
 });

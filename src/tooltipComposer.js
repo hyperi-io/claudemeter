@@ -16,7 +16,8 @@
 //     sessionData,                 // from sessionTracker
 //     credentialsInfo,             // from credentialsReader
 //     activityStats,               // from activityMonitor
-//     platformTooltipLines,        // from claudeLabelComposer (service + happy hour)
+//     platformTooltipLines,        // from claudeLabelComposer (service status)
+//     happyHourState,              // { active, icon, endsAt } from happyHour resolver
 //     extensionVersion,            // from vscode.extensions.getExtension(...)
 //     config: {                    // pre-resolved config values
 //       tokenLimitOverride,
@@ -51,6 +52,7 @@ function composeTooltip(state) {
     add(renderSessionBlock);
     add(renderWeeklyBlock);
     add(renderCreditsBlock);
+    add(renderHappyHourRow);
     add(renderActivityQuip);
     add(renderPlatformBlock);
     add(renderFooter);
@@ -233,6 +235,27 @@ function renderCreditsBlock(state) {
     }
 
     return [];
+}
+
+function renderHappyHourRow(state) {
+    const { happyHourState, config } = state;
+    if (!happyHourState?.active) return [];
+    const icon = happyHourState.icon || '';
+    const endsLine = happyHourState.endsAt instanceof Date
+        ? ` — off-peak, ends ${formatHappyHourEndsAt(happyHourState.endsAt, !!config?.use24HourTime)}`
+        : ' — off-peak';
+    return ['', `${icon} Happy hour${endsLine}`];
+}
+
+function formatHappyHourEndsAt(date, use24Hour) {
+    return date.toLocaleString(undefined, {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: !use24Hour,
+    });
 }
 
 function renderActivityQuip(state) {

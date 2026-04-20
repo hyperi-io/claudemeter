@@ -20,8 +20,8 @@ const {
     DISPLAY_DEFAULT,
 } = require('./statusBarFormatters');
 const { composeTooltip } = require('./tooltipComposer');
-const { composeClaudeLabel, HAPPY_HOUR_ICONS } = require('./claudeLabelComposer');
-const { isHappyHour, nextTransition, validatePeakWindow } = require('./happyHour');
+const { composeClaudeLabel } = require('./claudeLabelComposer');
+const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = require('./happyHour');
 
 const LABEL_TEXT = 'Claude';
 
@@ -141,22 +141,16 @@ function formatPercent(percent, forCompact = false) {
 }
 
 /**
- * Compose the full Claude-label state for the current tick:
- * text, color, and platform tooltip lines (service status + happy
- * hour). Single call, consistent state, used by both the status-bar
- * label render and the tooltip composer's platform block.
+ * Compose the Claude-label state for the current tick: text, color,
+ * and service-status tooltip lines. Happy hour has its own dedicated
+ * panel (renderHappyHourPanel) and is not threaded through here.
  */
 function composeCurrentLabel({ isRefreshing = false } = {}) {
     const serviceStatus = isServiceStatusEnabled() ? getServiceStatusFromCache() : null;
-    const hh = resolveHappyHourState();
 
     const result = composeClaudeLabel({
         serviceStatus,
-        happyHourActive: hh.active,
-        happyHourIcon: hh.icon,
-        happyHourEndsAt: hh.endsAt,
         isRefreshing,
-        use24Hour: getUse24HourTime(),
     });
 
     // Extended tooltip lines: append service-status footer ("Last checked:
@@ -246,6 +240,7 @@ let isSpinnerActive = false;
 let statusBarItems = {
     label: null,
     spinner: null,       // transient — shown only while a fetch is in flight
+    happyHour: null,     // transient — shown only during off-peak
     session: null,
     weekly: null,
     sonnet: null,
@@ -294,15 +289,70 @@ function hideAllMetricItems() {
     statusBarItems.compact.hide();
 }
 
-// Apply the main Claude usage tooltip to every primary panel. The
-// spinner panel owns its own "Checking Claude..." tooltip so it is
-// excluded here.
+// Apply the main Claude usage tooltip to every primary panel.
+// Transient panels that own their own tooltip are excluded: spinner
+// ("Checking Claude...") and happyHour (off-peak countdown).
 function setAllTooltips(tooltip) {
     Object.entries(statusBarItems).forEach(([key, item]) => {
         if (!item) return;
-        if (key === 'spinner') return;
+        if (key === 'spinner' || key === 'happyHour') return;
         item.tooltip = tooltip;
     });
+}
+
+// Convert a future Date into a duration-string like "2h 30m" / "5d 21h"
+// that calculateResetClockTime understands. Used only for the happy-hour
+// panel — other panels already receive duration strings from the API.
+function dateToDurationString(futureDate) {
+    if (!(futureDate instanceof Date)) return '0m';
+    const diffMs = futureDate.getTime() - Date.now();
+    const totalMinutes = Math.max(0, Math.floor(diffMs / 60000));
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}
+
+// Long-form ends-at datetime for tooltips. Matches tooltipComposer's
+// "Resets Sunday 19 April at 2:01 pm" style so the happy-hour row
+// sits alongside session/weekly rows without format drift.
+function formatEndsAt(date, use24Hour) {
+    if (!(date instanceof Date)) return '';
+    return date.toLocaleString(undefined, {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: !use24Hour,
+    });
+}
+
+function renderHappyHourPanel() {
+    const item = statusBarItems.happyHour;
+    if (!item) return;
+
+    const hh = resolveHappyHourState();
+    if (!hh.active) {
+        item.hide();
+        return;
+    }
+
+    const countdown = hh.endsAt
+        ? calculateResetClockTime(dateToDurationString(hh.endsAt))
+        : '';
+    item.text = countdown ? `${hh.icon} ${countdown}` : hh.icon;
+
+    const endsText = hh.endsAt
+        ? ` — off-peak, ends ${formatEndsAt(hh.endsAt, getUse24HourTime())}`
+        : ' — off-peak';
+    const md = new vscode.MarkdownString(`**Happy hour**${endsText}`);
+    md.isTrusted = true;
+    md.supportThemeIcons = true;
+    item.tooltip = md;
+    item.show();
 }
 
 function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo = null) {
@@ -554,6 +604,15 @@ function createStatusBarItem(context) {
     // Initially hidden — shown only during startSpinner().
     context.subscriptions.push(statusBarItems.spinner);
 
+    // Transient happy-hour panel — visible only during Anthropic's
+    // off-peak window. Positioned between spinner and session.
+    statusBarItems.happyHour = vscode.window.createStatusBarItem(
+        alignment,
+        basePriority + 0.8
+    );
+    statusBarItems.happyHour.command = COMMANDS.FETCH_NOW;
+    context.subscriptions.push(statusBarItems.happyHour);
+
     statusBarItems.session = vscode.window.createStatusBarItem(
         alignment,
         basePriority + 0.7
@@ -607,6 +666,10 @@ function createStatusBarItem(context) {
 }
 
 function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null) {
+    // Happy-hour panel is independent of fetch state — render on
+    // every tick so the countdown stays fresh.
+    renderHappyHourPanel();
+
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
     const showSonnet = config.get('statusBar.showSonnet', false);
@@ -720,6 +783,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         credentialsInfo,
         activityStats,
         platformTooltipLines,
+        happyHourState: resolveHappyHourState(),
         extensionVersion: extVersion,
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
         config: {
