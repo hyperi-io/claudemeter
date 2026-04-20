@@ -1,3 +1,18 @@
+## [2.3.4](https://github.com/hyperi-io/claudemeter/compare/v2.3.3...v2.3.4) (2026-04-20)
+
+
+### Bug Fixes
+
+* address semgrep SAST findings + add hyperi-ci config ([9d8a7b5](https://github.com/hyperi-io/claudemeter/commit/9d8a7b58881e8dc132f9808233069a98bf983e1e))
+* detect and render Claude Code rate-limit events in status bar ([6d795f4](https://github.com/hyperi-io/claudemeter/commit/6d795f4b556167561a75feeb2ae5c645ad32b6a6))
+* expand tokensDisplay enum with value/limit modes, new default 'limit' ([ac261f7](https://github.com/hyperi-io/claudemeter/commit/ac261f7857ba4263f913358e91db6055f5d23e8f))
+* rate-limit badge dev-test tooling + UX cleanups ([9efb12b](https://github.com/hyperi-io/claudemeter/commit/9efb12b49f6889c2805d4124710c0880b0ca08e1))
+* render happy-hour icon on Claude label panel ([6b57580](https://github.com/hyperi-io/claudemeter/commit/6b575802bd2f8d42d3538f33dd3767b4419f89a7))
+* **wip:** claudeLabelComposer module — platform-state icon composition ([f743017](https://github.com/hyperi-io/claudemeter/commit/f74301794b928416f48e7797327f8cba0a76fcbe))
+* **wip:** happyHour module for peak-window detection ([c7fdd63](https://github.com/hyperi-io/claudemeter/commit/c7fdd635c57a26e1133aebea781ebef735d4a859))
+* **wip:** rateLimitDetector module — classify + scanTail ([e8fcfa6](https://github.com/hyperi-io/claudemeter/commit/e8fcfa6bc244a56f9bfaba0233b4bf8fb51472c4))
+* **wip:** tooltipComposer pure module (extraction scaffold) ([9d17513](https://github.com/hyperi-io/claudemeter/commit/9d17513b1934774cff6468c915a57dd1c3824d43))
+
 ## [2.3.3](https://github.com/hyperi-io/claudemeter/compare/v2.3.2...v2.3.3) (2026-04-16)
 
 
