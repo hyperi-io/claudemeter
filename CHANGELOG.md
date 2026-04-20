@@ -1,3 +1,11 @@
+## [2.3.5](https://github.com/hyperi-io/claudemeter/compare/v2.3.4...v2.3.5) (2026-04-20)
+
+
+### Bug Fixes
+
+* correct peak-window end to 23:00 LA (was 11:00) ([2bbfdb6](https://github.com/hyperi-io/claudemeter/commit/2bbfdb619bbd221db46ed8436e5aea786f1eb569))
+* move happy hour to dedicated status-bar panel ([afd0576](https://github.com/hyperi-io/claudemeter/commit/afd05765d8e7b2645983031d46c66a3bbe38c4ff))
+
 ## [2.3.4](https://github.com/hyperi-io/claudemeter/compare/v2.3.3...v2.3.4) (2026-04-20)
 
 
