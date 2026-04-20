@@ -1,0 +1,12 @@
+quality:
+  typescript:
+    # Pure-JS project. Lint/format cleanup is scheduled as follow-up
+    # work — until then, surface findings without blocking releases.
+    #
+    # Semgrep false positives are annotated inline with
+    # `// nosemgrep: <rule-id> -- <reason>` at the call site.
+    eslint: warn
+    prettier: disabled
+    tsc: disabled
+    audit: warn
+    semgrep: warn

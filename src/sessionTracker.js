@@ -121,10 +121,11 @@ async function atomicWriteJson(targetPath, obj) {
     // Unique temp name: pid + timestamp + random. Collision risk from two
     // instances with same pid (different machines sharing NFS) is handled
     // by the random suffix.
-    const tmpPath = path.join(
-        dir,
-        `.${base}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
-    );
+    // dir/base come from targetPath via path.dirname/path.basename which
+    // canonicalise away any traversal components; the suffix is a
+    // constant-shape random string. No user-controlled path segments.
+    const suffix = `.${base}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+    const tmpPath = path.join(dir, suffix); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     const payload = JSON.stringify(obj, null, 2);
     let handle;
     try {

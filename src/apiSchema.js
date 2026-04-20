@@ -60,6 +60,11 @@ const API_ENDPOINTS = {
     },
 };
 
+// Keys that traverse into the prototype chain. Even though schema
+// paths in this project are hardcoded and not user-derived, guarding
+// here makes this helper safe to reuse.
+const PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 // Traverse object by dot-notation path (e.g. "five_hour.utilization")
 function getNestedValue(obj, path, defaultValue = null) {
     if (!obj || !path) return defaultValue;
@@ -71,7 +76,10 @@ function getNestedValue(obj, path, defaultValue = null) {
         if (current === null || current === undefined) {
             return defaultValue;
         }
-        current = current[part];
+        if (PROTO_KEYS.has(part)) {
+            return defaultValue;
+        }
+        current = current[part]; // nosemgrep: javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop -- guarded above; write is to local `current`, not mutating obj.
     }
 
     return current ?? defaultValue;

@@ -124,7 +124,7 @@ class ClaudeDataLoader {
             const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
             for (const entry of entries) {
-                const fullPath = path.join(dirPath, entry.name);
+                const fullPath = path.join(dirPath, entry.name); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- entry.name from fs.readdir is a bare filename (OS forbids separators); dirPath is an internal Claude data dir.
 
                 if (entry.isDirectory()) {
                     const subFiles = await this.findJsonlFiles(fullPath);
@@ -134,7 +134,7 @@ class ClaudeDataLoader {
                 }
             }
         } catch (error) {
-            console.error(`Error reading directory ${dirPath}:`, error.message);
+            console.error('Error reading directory:', dirPath, error.message);
         }
 
         return jsonlFiles;
@@ -155,11 +155,11 @@ class ClaudeDataLoader {
                         records.push(record);
                     }
                 } catch (parseError) {
-                    console.warn(`Failed to parse line in ${filePath}:`, parseError.message);
+                    console.warn('Failed to parse line in:', filePath, parseError.message);
                 }
             }
         } catch (error) {
-            console.error(`Error reading JSONL file ${filePath}:`, error.message);
+            console.error('Error reading JSONL file:', filePath, error.message);
         }
 
         return records;
