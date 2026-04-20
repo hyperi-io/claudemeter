@@ -9,10 +9,12 @@
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 //
-// Anthropic's peak window was announced 2026-03-26: Monday-Friday
-// 05:00-11:00 America/Los_Angeles. During peak hours, Claude Code
-// session limits deplete faster than the 5-hour window suggests.
-// See GH issues #41788, #41930.
+// Anthropic's peak window (per 2026-03-26 announcement, GH issues
+// #41788, #41930): Monday-Friday 05:00-23:00 America/Los_Angeles —
+// i.e. all LA daytime + evening. Happy hour (off-peak) is weekday
+// overnight (23:00-05:00 LA) plus the whole weekend. During peak
+// hours, Claude Code session limits deplete faster than the 5-hour
+// window suggests.
 //
 // Users can override the window via claudemeter.happyHour.peakWindow
 // if Anthropic changes the policy before we ship an update.
@@ -20,7 +22,7 @@
 const DEFAULT_PEAK_WINDOW = Object.freeze({
     days: [1, 2, 3, 4, 5],
     start: '05:00',
-    end: '11:00',
+    end: '23:00',
     tz: 'America/Los_Angeles',
 });
 

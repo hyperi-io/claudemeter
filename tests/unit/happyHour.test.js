@@ -15,11 +15,11 @@ const {
 const utc = (iso) => new Date(iso);
 
 describe('DEFAULT_PEAK_WINDOW', () => {
-    it('is Mon-Fri 05:00-11:00 America/Los_Angeles', () => {
+    it('is Mon-Fri 05:00-23:00 America/Los_Angeles', () => {
         expect(DEFAULT_PEAK_WINDOW).toEqual({
             days: [1, 2, 3, 4, 5],
             start: '05:00',
-            end: '11:00',
+            end: '23:00',
             tz: 'America/Los_Angeles',
         });
     });
@@ -31,8 +31,18 @@ describe('DEFAULT_PEAK_WINDOW', () => {
 
 describe('isHappyHour — default window, PDT', () => {
     // 2026-04-15 Wed PDT; LA is UTC-7
-    it('returns false during peak (Wed 08:00 LA = 15:00 UTC)', () => {
+    it('returns false during LA morning peak (Wed 08:00 LA = 15:00 UTC)', () => {
         expect(isHappyHour(utc('2026-04-15T15:00:00Z'), DEFAULT_PEAK_WINDOW)).toBe(false);
+    });
+
+    it('returns false during LA afternoon peak (Wed 16:00 LA = 23:00 UTC)', () => {
+        // Regression: with the old 11:00 end, 4 PM LA was wrongly shown as
+        // happy hour. Peak now runs 05:00-23:00, so afternoon is peak.
+        expect(isHappyHour(utc('2026-04-15T23:00:00Z'), DEFAULT_PEAK_WINDOW)).toBe(false);
+    });
+
+    it('returns false during LA evening peak (Wed 22:00 LA = 05:00 UTC next day)', () => {
+        expect(isHappyHour(utc('2026-04-16T05:00:00Z'), DEFAULT_PEAK_WINDOW)).toBe(false);
     });
 
     it('returns true just before peak start (Wed 04:59 LA = 11:59 UTC)', () => {
@@ -43,12 +53,12 @@ describe('isHappyHour — default window, PDT', () => {
         expect(isHappyHour(utc('2026-04-15T12:00:00Z'), DEFAULT_PEAK_WINDOW)).toBe(false);
     });
 
-    it('returns true at exact peak end (Wed 11:00 LA = 18:00 UTC)', () => {
-        expect(isHappyHour(utc('2026-04-15T18:00:00Z'), DEFAULT_PEAK_WINDOW)).toBe(true);
+    it('returns true at exact peak end (Wed 23:00 LA = 06:00 UTC next day)', () => {
+        expect(isHappyHour(utc('2026-04-16T06:00:00Z'), DEFAULT_PEAK_WINDOW)).toBe(true);
     });
 
-    it('returns true evening (Wed 20:00 LA = 03:00 UTC next day)', () => {
-        expect(isHappyHour(utc('2026-04-16T03:00:00Z'), DEFAULT_PEAK_WINDOW)).toBe(true);
+    it('returns true overnight (Wed 23:30 LA = 06:30 UTC next day)', () => {
+        expect(isHappyHour(utc('2026-04-16T06:30:00Z'), DEFAULT_PEAK_WINDOW)).toBe(true);
     });
 });
 
@@ -102,10 +112,10 @@ describe('isHappyHour — non-LA tz (Sydney)', () => {
 
 describe('nextTransition', () => {
     it('during peak: returns the upcoming peak-end time', () => {
-        // Wed 08:00 LA PDT = 15:00 UTC, peak ends Wed 11:00 LA = 18:00 UTC
+        // Wed 08:00 LA PDT = 15:00 UTC, peak ends Wed 23:00 LA = 06:00 UTC Thu
         const now = utc('2026-04-15T15:00:00Z');
         const next = nextTransition(now, DEFAULT_PEAK_WINDOW);
-        expect(next.toISOString()).toBe('2026-04-15T18:00:00.000Z');
+        expect(next.toISOString()).toBe('2026-04-16T06:00:00.000Z');
     });
 
     it('during off-peak weekday morning: upcoming peak-start', () => {

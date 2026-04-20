@@ -280,7 +280,7 @@
         "claudemeter.happyHour.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Show a 'happy hour' icon on the Claude status-bar panel during Anthropic's off-peak window (when their peak-throttling policy is not active).\n\nPeak window defaults to Mon-Fri 05:00-11:00 America/Los_Angeles, per Anthropic's 2026-03-26 announcement. Configurable via `claudemeter.happyHour.peakWindow`.\n\nAnthropic throttling is driven by LA-local peak load — this icon appears outside that window regardless of your own timezone."
+          "markdownDescription": "Show a 'happy hour' icon on the Claude status-bar panel during Anthropic's off-peak window (when their peak-throttling policy is not active).\n\nPeak window defaults to Mon-Fri 05:00-23:00 America/Los_Angeles, per Anthropic's 2026-03-26 announcement. Configurable via `claudemeter.happyHour.peakWindow`.\n\nAnthropic throttling is driven by LA-local peak load — this icon appears outside that window regardless of your own timezone."
         },
         "claudemeter.happyHour.icon": {
           "type": "string",
@@ -337,7 +337,7 @@
               5
             ],
             "start": "05:00",
-            "end": "11:00",
+            "end": "23:00",
             "tz": "America/Los_Angeles"
           },
           "properties": {
@@ -365,7 +365,7 @@
               "description": "IANA timezone identifier (e.g. America/Los_Angeles)."
             }
           },
-          "markdownDescription": "Anthropic's announced peak-throttling window. Happy hour shows OUTSIDE this window.\n\nDefaults to `{ days: [1,2,3,4,5], start: \"05:00\", end: \"11:00\", tz: \"America/Los_Angeles\" }` per Anthropic's 2026-03-26 announcement. Override here if the policy changes.\n\nMalformed fields fall back to the defaults individually (e.g. a bad `tz` still keeps your custom `start`/`end`)."
+          "markdownDescription": "Anthropic's announced peak-throttling window. Happy hour shows OUTSIDE this window.\n\nDefaults to `{ days: [1,2,3,4,5], start: \"05:00\", end: \"23:00\", tz: \"America/Los_Angeles\" }` per Anthropic's 2026-03-26 announcement. Override here if the policy changes.\n\nMalformed fields fall back to the defaults individually (e.g. a bad `tz` still keeps your custom `start`/`end`)."
         },
         "claudemeter.tokenLimit": {
           "type": "number",
