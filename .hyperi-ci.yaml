@@ -1,3 +1,8 @@
+test:
+  # Coverage requires @vitest/coverage-v8 which isn't currently a
+  # devDep. Skip for now; revisit as follow-up cleanup.
+  coverage: false
+
 quality:
   typescript:
     # Pure-JS project. Lint/format cleanup is scheduled as follow-up
