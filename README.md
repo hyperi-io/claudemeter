@@ -16,6 +16,7 @@
 - Weekly limits
 - Limit consumption and reset times
 - Claude service status (working, partial outage, major outage)
+- Happy hour indicator — lights up during Anthropic's off-peak window
 - Claude session and login all local to device
 - Open source: <https://github.com/hyperi-io/claudemeter>
 
@@ -67,6 +68,22 @@ The tooltip shows the source:
 - `Context: 200K` — standard fallback, no signal
 
 The rule table is future-proof via numeric `minVersion` comparison — when Anthropic ships Opus 4.7 or 5.0 with the same defaults, the existing rules keep matching without a code change. To override auto-detection, set `claudemeter.tokenLimit` to a specific value.
+
+## Happy Hour
+
+Anthropic throttles Claude Code's 5-hour session window harder during their **peak hours** (Mon–Fri 05:00–23:00 America/Los_Angeles, per the 2026-03-26 announcement — see [claude-code#41788](https://github.com/anthropics/claude-code/issues/41788) / [#41930](https://github.com/anthropics/claude-code/issues/41930)). Outside that window — weekday overnight and all weekend — the session token allowance burns at its expected rate.
+
+Claudemeter lights up a dedicated status-bar panel when you're in that off-peak window, with a countdown to when peak kicks back in:
+
+```
+Claude ✨ 4h 17m  Se ●●○○○ ⌚ 1h 28m  Wk ●●○○○ ⌚ 4d 17h  Tk ●○○○○ 1m
+```
+
+Default icon is VS Code's monochrome `$(sparkle)` codicon — it inherits the status-bar text colour so it doesn't stand out. Shown as `✨` above because GitHub-rendered markdown can't display VS Code codicons directly; the real panel renders as a small monochrome four-point star, not an emoji. You can swap it for a full-colour emoji (`🍺`, `🍹`, `☕`, etc.) via [`claudemeter.happyHour.icon`](#claudemeterhappyhouricon).
+
+The panel disappears entirely during peak — no empty slot. The countdown respects [`claudemeter.statusBar.timeFormat`](#claudemeterstatusbartimeformat) (default `countdown` → `4h 17m`, or `12hour` / `24hour` for a clock time).
+
+Window is LA-local so the icon lines up with Anthropic's infrastructure peak, regardless of your own timezone. Override via [`claudemeter.happyHour.peakWindow`](#claudemeterhappyhourpeakwindow) if policy changes before a claudemeter release ships. Choose a different icon (or disable the panel entirely) via [`claudemeter.happyHour.icon`](#claudemeterhappyhouricon) / [`claudemeter.happyHour.enabled`](#claudemeterhappyhourenabled).
 
 ## How It Works
 
@@ -174,6 +191,31 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 - **Type**: Boolean
 - **Default**: `true`
 - **Description**: Show Claude service status indicator. Displays a warning/error icon if Claude services are degraded or experiencing an outage.
+
+### `claudemeter.happyHour.enabled`
+
+- **Type**: Boolean
+- **Default**: `true`
+- **Description**: Show the happy-hour status-bar panel during Anthropic's off-peak window. Set `false` to hide the panel entirely.
+
+### `claudemeter.happyHour.icon`
+
+- **Type**: String
+- **Default**: `sparkle`
+- **Options**: `sparkle`, `watch`, `zap`, `star`, `beer`, `cocktail`, `wine`, `champagne`, `martini`, `coffee`, `moon`, `sparkles`, `palm`, `party`, `custom`
+- **Description**: Glyph to render in the happy-hour panel. The first four are monochrome VS Code codicons (inherit the status-bar text colour, stay unobtrusive). The rest are full-colour emoji. Choose `custom` and set `claudemeter.happyHour.customIcon` to use any glyph.
+
+### `claudemeter.happyHour.customIcon`
+
+- **Type**: String
+- **Default**: `""`
+- **Description**: Custom glyph for the happy-hour panel. Only used when `claudemeter.happyHour.icon` is `custom`. Accepts any emoji or `$(codicon-name)` syntax.
+
+### `claudemeter.happyHour.peakWindow`
+
+- **Type**: Object
+- **Default**: `{ "days": [1,2,3,4,5], "start": "05:00", "end": "23:00", "tz": "America/Los_Angeles" }`
+- **Description**: Anthropic's peak-throttling window. Happy hour appears **outside** this window. `days` are `0` (Sunday) through `6` (Saturday); `start` / `end` are `HH:MM` 24-hour format in the given IANA `tz`. Override if Anthropic changes the policy before a claudemeter release ships. Malformed fields fall back to defaults individually (e.g. a bad `tz` still keeps your custom `start` / `end`).
 
 ### `claudemeter.statusBar.timeFormat`
 
