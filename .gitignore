@@ -51,6 +51,12 @@ RELEASE_NOTES_*.md
 # ===========================================
 # HyperI AI Development Tooling (LOCAL ONLY)
 # ===========================================
+# Submodule contents — defence in depth so the private hyperi-ai
+# working tree can never be committed into this public repo. The
+# submodule pointer (gitlink) in .gitmodules is fine; only the
+# tree of files under hyperi-ai/ must stay out.
+hyperi-ai/
+
 # AI assistant files (Claude, Cursor, Codex, Gemini)
 CLAUDE.md
 STATE.md

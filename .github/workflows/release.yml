@@ -22,11 +22,23 @@ jobs:
           for file in STATE.md TODO.md CLAUDE.md; do
             [ -f "$file" ] && echo "::error::$file detected - local AI file leaked" && FAILED=true
           done
-          # ai/ submodule reference is OK, but actual contents would indicate a problem
-          # (submodule contents aren't checked out in CI unless explicitly requested)
-          if [ -d ai/ ] && [ "$(ls -A ai/ 2>/dev/null)" ]; then
-            echo "::error::ai/ directory has contents - submodule was checked out"
-            FAILED=true
+          # Submodule guard: every entry in .gitmodules must remain a
+          # gitlink (`commit` type in the tree), and its working-tree
+          # directory must be empty in CI. The publish artifact is the
+          # public extension — private submodule contents must never
+          # ride along.
+          if [ -f .gitmodules ]; then
+            for sub in $(git config -f .gitmodules --get-regexp 'submodule\..*\.path' | awk '{print $2}'); do
+              type=$(git ls-tree HEAD "$sub" 2>/dev/null | awk '{print $2}')
+              if [ "$type" != "commit" ]; then
+                echo "::error::Submodule $sub is no longer a gitlink - its contents may have been committed to this public repo"
+                FAILED=true
+              fi
+              if [ -d "$sub" ] && [ "$(ls -A "$sub" 2>/dev/null)" ]; then
+                echo "::error::$sub/ has contents - submodule should not be checked out in the release pipeline"
+                FAILED=true
+              fi
+            done
           fi
           [ "$FAILED" = true ] && exit 1
           echo "✓ Security check passed"
