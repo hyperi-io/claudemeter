@@ -179,8 +179,11 @@ class ClaudeHttpFetcher {
         // (fresh install), the cache stays empty and no switch fires.
         try {
             this._identityCache.noteCurrentIdentity(readCredentials());
-        } catch {
-            // Ignore — identity stays unknown.
+        } catch (err) {
+            // Identity stays unknown until first successful credential read.
+            // Surface the underlying reason so a credentials-file issue at
+            // cold start doesn't disappear silently.
+            fileLog(`Identity cache prime skipped: ${err.message}`);
         }
     }
 
@@ -299,7 +302,8 @@ class ClaudeHttpFetcher {
             if (!response.ok) return null;
             const data = await response.json();
             return data?.account?.email_address || null;
-        } catch {
+        } catch (err) {
+            fileLog(`Account-email lookup failed: ${err.message}`);
             return null;
         }
     }
@@ -484,7 +488,8 @@ class ClaudeHttpFetcher {
     notifyIdentityMaybeChanged() {
         try {
             return this._identityCache.noteCurrentIdentity(readCredentials());
-        } catch {
+        } catch (err) {
+            fileLog(`Identity-change check failed (credentials unreadable): ${err.message}`);
             return { changed: false, previous: null, current: null };
         }
     }
@@ -501,7 +506,11 @@ class ClaudeHttpFetcher {
             // Stale lock, remove it
             fs.unlinkSync(LOGIN_LOCK_FILE);
             return false;
-        } catch {
+        } catch (err) {
+            // Malformed lock file or unexpected fs error — treat as
+            // "no login in progress" so we don't deadlock the user, but
+            // log it so a corrupted lock or disk issue is visible.
+            fileLog(`Login-lock read failed (treating as no lock): ${err.message}`);
             return false;
         }
     }
@@ -522,8 +531,11 @@ class ClaudeHttpFetcher {
             if (fs.existsSync(LOGIN_LOCK_FILE)) {
                 fs.unlinkSync(LOGIN_LOCK_FILE);
             }
-        } catch {
-            // Ignore
+        } catch (err) {
+            // A failed unlink is usually benign (another process or a
+            // crash already removed the file) but log so we'd see a
+            // pattern of fs failures instead of just shrugging.
+            fileLog(`Login-lock release failed: ${err.message}`);
         }
     }
 
@@ -748,14 +760,22 @@ class ClaudeHttpFetcher {
                     );
                     try {
                         await Promise.race([closePromise, timeoutPromise]);
-                    } catch {
+                    } catch (err) {
+                        fileLog(`Browser close timed out, falling back to SIGKILL: ${err.message}`);
                         if (browserProcess) {
-                            try { browserProcess.kill('SIGKILL'); } catch { /* ignore */ }
+                            try {
+                                browserProcess.kill('SIGKILL');
+                            } catch (killErr) {
+                                // Process is likely already dead — that's the
+                                // common case. Log so we'd notice if SIGKILL
+                                // is consistently failing for a real reason.
+                                fileLog(`SIGKILL on login browser process failed (likely already exited): ${killErr.message}`);
+                            }
                         }
                         await sleep(1000);
                     }
-                } catch {
-                    // Ignore close errors
+                } catch (err) {
+                    fileLog(`Login browser close path failed unexpectedly: ${err.message}`);
                 }
             }
             // Remove the per-login tempdir so no tab history, cache, or cookies
@@ -907,8 +927,11 @@ function findChrome() {
                 console.log(`Found browser at: ${browserPath}`);
                 return browserPath;
             }
-        } catch {
-            // Continue to next path
+        } catch (err) {
+            // Permission-denied or non-existent parent dir while probing
+            // — fine to skip, but log so a permission-config issue
+            // doesn't masquerade as "no browser installed".
+            fileLog(`Browser-path probe failed for ${browserPath}: ${err.message}`);
         }
     }
 
