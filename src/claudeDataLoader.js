@@ -23,15 +23,21 @@ class ClaudeDataLoader {
         }
     }
 
-    // Claude replaces path separators with dashes in directory names
-    // Works for both Unix (/) and Windows (\) paths
+    // Claude replaces path separators with dashes in directory names.
+    // Works for both Unix (/) and Windows (\) paths.
+    //
+    // Windows note: Claude Code converts the drive-letter colon to a dash
+    // rather than dropping it, so `c:\Projects\foo` becomes
+    // `c--Projects-foo` — one dash from the colon, one from the first
+    // backslash. Earlier versions dropped the colon and produced
+    // `c-Projects-foo`, which caused the project-dir lookup to silently
+    // miss whenever a workspace was open and forced the status bar to
+    // render `Tk -` (no active session) for the entire VS Code window.
     convertPathToClaudeDir(workspacePath) {
-        // Replace both forward and back slashes with dashes
-        // Also handle Windows drive letters (C: -> C)
         return workspacePath
             .replace(/\\/g, '-')  // Windows backslashes
             .replace(/\//g, '-')  // Unix forward slashes
-            .replace(/:/g, '');   // Remove colons from Windows drive letters
+            .replace(/:/g, '-');  // Windows drive-letter colon
     }
 
     setWorkspacePath(workspacePath) {
