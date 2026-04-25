@@ -79,6 +79,10 @@ function getTokenDiagnosticChannel() {
 function debugLog(message) {
     if (isDebugEnabled()) {
         getTokenDiagnosticChannel().appendLine(message);
+        // Mirror to the rolling debug.log file so JSONL/token-monitoring
+        // diagnostics (init, watcher events, session updates) are visible
+        // post-hoc — the Output channel is in-memory only.
+        fileLog(message);
     }
 }
 
