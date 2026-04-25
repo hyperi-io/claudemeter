@@ -77,6 +77,23 @@ module.exports = [
         },
     },
     {
-        ignores: ['node_modules/**', '.tmp/**', '*.vsix'],
+        // vitest.config.js is ESM by convention — same parser tweak.
+        files: ['vitest.config.js'],
+        languageOptions: {
+            sourceType: 'module',
+        },
+    },
+    {
+        ignores: [
+            'node_modules/**',
+            '.tmp/**',
+            '*.vsix',
+            // Build output — we ship the bundle, not source it.
+            'dist/**',
+            // Submodule contents are governed by their own repo's lint config.
+            'hyperi-ai/**',
+            // Coverage reports, if any are generated.
+            'coverage/**',
+        ],
     },
 ];

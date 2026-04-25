@@ -91,9 +91,7 @@ const BrowserState = {
     }
 };
 const {
-    USAGE_API_SCHEMA,
     API_ENDPOINTS,
-    extractFromSchema,
     matchesEndpoint,
     processApiResponse,
     getSchemaInfo,

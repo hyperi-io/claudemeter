@@ -271,7 +271,7 @@ function resolveTokenLimit(ctx = {}) {
     // never as a definitive negative, since we've seen it go stale
     // with hasAccess:false on accounts that were genuinely running
     // 1M context at the time.
-    let s1mHasAccess = null;
+    let s1mHasAccess;
     try {
         const { hasMaxContextAccess } = require('./claudeConfigReader');
         s1mHasAccess = hasMaxContextAccess();

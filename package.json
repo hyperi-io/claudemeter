@@ -75,7 +75,9 @@
     "clear-session": "node scripts/clear-session.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "contributes": {
     "commands": [
@@ -416,6 +418,6 @@
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.0",
     "eslint": "^10.1.0",
-    "vitest": "^4.1.1"
+    "vitest": "^4.1.5"
   }
 }

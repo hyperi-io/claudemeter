@@ -22,25 +22,36 @@ jobs:
           echo "Checking for AI artifact leakage..."
           FAILED=false
 
-          # Check ai/ submodule content isn't checked out in CI
-          # (.gitmodules and ai/ dir reference are fine - submodule is optional via update=none)
-          if [ -d ai/standards ]; then
-            echo "::error::ai/standards/ detected - submodule content should not be checked out in CI"
-            FAILED=true
+          # Submodule guard: every entry in .gitmodules must remain a
+          # gitlink (commit type in the tree), and its working-tree
+          # directory must stay empty in CI. Private submodule contents
+          # must never ride along with this public repo's CI artifacts.
+          if [ -f .gitmodules ]; then
+            for sub in $(git config -f .gitmodules --get-regexp 'submodule\..*\.path' | awk '{print $2}'); do
+              type=$(git ls-tree HEAD "$sub" 2>/dev/null | awk '{print $2}')
+              if [ "$type" != "commit" ]; then
+                echo "::error::Submodule $sub is no longer a gitlink - its contents may have been committed to this public repo"
+                FAILED=true
+              fi
+              if [ -d "$sub" ] && [ "$(ls -A "$sub" 2>/dev/null)" ]; then
+                echo "::error::$sub/ has contents - submodule should not be checked out in CI"
+                FAILED=true
+              fi
+            done
           fi
 
           find . -type l 2>/dev/null | while read link; do
             target=$(readlink "$link" 2>/dev/null || echo "")
-            if [[ "$target" == *"ai/"* ]]; then
-              echo "::error::$link symlinks to ai/ directory"
+            if [[ "$target" == *"hyperi-ai/"* ]] || [[ "$target" == *"/ai/"* ]]; then
+              echo "::error::$link symlinks into a submodule directory"
               FAILED=true
             fi
           done
 
-          if grep -rE "hyperi-io/(ai|hs-ai|standards)" \
+          if grep -rE "hyperi-io/(ai|hs-ai|standards|hyperi-ai)" \
              --include="*.yml" --include="*.yaml" --include="*.json" \
-             . 2>/dev/null | grep -v "^\.git"; then
-            echo "::error::Found references to private hyperi-io repos"
+             . 2>/dev/null | grep -v "^\.git" | grep -v ".gitmodules"; then
+            echo "::error::Found references to private hyperi-io repos in tracked YAML/JSON"
             FAILED=true
           fi
 
@@ -74,6 +85,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
 
       - name: Build
         run: npm run build

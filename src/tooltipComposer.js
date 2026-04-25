@@ -27,7 +27,6 @@
 //   }) → string (markdown body, sections joined with "  \n")
 
 const {
-    calculateResetClockTime,
     calculateResetClockTimeExpanded,
     getCurrencySymbol,
     formatCompact,

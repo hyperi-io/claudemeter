@@ -8,7 +8,6 @@ const {
     processApiResponse,
     getSchemaInfo,
     matchesEndpoint,
-    USAGE_API_SCHEMA,
     API_ENDPOINTS,
 } = require('../../src/apiSchema');
 
