@@ -1,3 +1,11 @@
+## [2.3.6](https://github.com/hyperi-io/claudemeter/compare/v2.3.5...v2.3.6) (2026-04-25)
+
+
+### Bug Fixes
+
+* **windows:** convert drive-letter colon to dash in Claude project dir lookup ([c4e8d53](https://github.com/hyperi-io/claudemeter/commit/c4e8d538ed601e900dfe106cba09a3373af09ef1))
+* **windows:** default usageFormat to barLight where Geometric Shapes don't render ([b6655d7](https://github.com/hyperi-io/claudemeter/commit/b6655d7d9b59b087c64cf776d299806156864e58))
+
 ## [2.3.5](https://github.com/hyperi-io/claudemeter/compare/v2.3.4...v2.3.5) (2026-04-20)
 
 
