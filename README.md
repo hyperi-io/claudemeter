@@ -230,14 +230,16 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 ### `claudemeter.statusBar.usageFormat`
 
 - **Type**: String
-- **Default**: `barCircle`
+- **Default**: `barCircle` on macOS/Linux, `barLight` on Windows (platform-aware — Windows status-bar fonts often lack the Geometric Shapes glyphs `barCircle` uses, so the default falls back to Block Elements which render reliably). Any explicit user setting overrides the platform default.
 - **Options**: `percent`, `barLight`, `barSolid`, `barSquare`, `barCircle`
 - **Description**: How to display usage values in the status bar:
   - **percent**: Percentage (e.g., 60%)
-  - **barLight**: Light blocks (e.g., ????)
-  - **barSolid**: Solid blocks (e.g., ????)
-  - **barSquare**: Squares (e.g., ?????)
-  - **barCircle**: Circles (e.g., ?????)
+  - **barLight**: Light blocks (e.g., ▓▓▓░░) — universal default for Windows
+  - **barSolid**: Solid blocks (e.g., ███░░)
+  - **barSquare**: Squares (e.g., ■■■□□)
+  - **barCircle**: Circles (e.g., ●●●○○) — default on macOS/Linux
+
+If your chosen style renders unevenly (mismatched cell widths), pick `barLight` or `barSolid` — Block Elements are the most font-portable option across all three platforms.
 
 ### `claudemeter.statusBar.tokensDisplay`
 

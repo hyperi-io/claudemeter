@@ -230,7 +230,7 @@
             "Squares (e.g., ■■■□□)",
             "Circles (e.g., ●●●○○)"
           ],
-          "markdownDescription": "How to display usage values in the status bar"
+          "markdownDescription": "How to display usage values in the status bar.\n\n**Platform-aware default**: when this setting is not explicitly configured, Windows uses `barLight` (Block Elements render reliably in the default Windows status-bar font), while macOS and Linux use `barCircle`. Override here to force a specific style on any platform — `barLight` and `barSolid` use Block Elements and are the safest fallback if your chosen style renders unevenly."
         },
         "claudemeter.statusBar.tokensDisplay": {
           "type": "string",

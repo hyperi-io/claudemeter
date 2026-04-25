@@ -59,7 +59,21 @@ function getStatusBarPriority() {
  */
 function getUsageFormat() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    return config.get('statusBar.usageFormat', 'barCircle');
+    const inspected = config.inspect('statusBar.usageFormat');
+    if (inspected) {
+        if (inspected.workspaceFolderValue !== undefined) return inspected.workspaceFolderValue;
+        if (inspected.workspaceValue !== undefined) return inspected.workspaceValue;
+        if (inspected.globalValue !== undefined) return inspected.globalValue;
+    }
+    // Platform-aware default: Windows status-bar fonts commonly lack U+25CB
+    // (○ — White Circle), which forces a fallback font with mismatched
+    // metrics and renders barCircle as uneven `●●OO` instead of `●●○○○`.
+    // Block Elements (▓░) sit in a Unicode range that every standard
+    // monospace font ships, so barLight renders cleanly on Windows. macOS
+    // (SF Mono / Menlo) and most Linux fonts (DejaVu / Liberation / Noto)
+    // all include the Geometric Shapes glyphs, so barCircle stays default
+    // there.
+    return process.platform === 'win32' ? 'barLight' : 'barCircle';
 }
 
 /**
