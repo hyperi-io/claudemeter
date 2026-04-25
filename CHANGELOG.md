@@ -1,3 +1,10 @@
+## [2.3.7](https://github.com/hyperi-io/claudemeter/compare/v2.3.6...v2.3.7) (2026-04-25)
+
+
+### Bug Fixes
+
+* **security:** wire up real submodule guard in CI gates and gitignore ([2e72bde](https://github.com/hyperi-io/claudemeter/commit/2e72bde5f42cb7cceb9267659c5679e9e9d19e72))
+
 ## [2.3.6](https://github.com/hyperi-io/claudemeter/compare/v2.3.5...v2.3.6) (2026-04-25)
 
 
