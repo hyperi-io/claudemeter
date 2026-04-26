@@ -60,6 +60,7 @@ let serviceStatusTimer;
 let sessionTracker;
 let claudeDataLoader;
 let jsonlWatcher;
+let jsonlUpdateTimer = null;
 let credentialsWatcher;
 let claudeConfigWatcher;
 let currentWorkspacePath = null;
@@ -367,14 +368,14 @@ async function setupTokenMonitoring(context) {
             new vscode.RelativePattern(projectDir, '*.jsonl')
         );
 
-        jsonlWatcher.onDidChange(async (uri) => {
+        jsonlWatcher.onDidChange((uri) => {
             debugLog(`JSONL file changed: ${uri.fsPath}`);
-            await updateTokensFromJsonl(false);
+            scheduleJsonlUpdate();
         });
 
-        jsonlWatcher.onDidCreate(async (uri) => {
+        jsonlWatcher.onDidCreate((uri) => {
             debugLog(`New JSONL file created: ${uri.fsPath}`);
-            await updateTokensFromJsonl(false);
+            scheduleJsonlUpdate();
         });
 
         context.subscriptions.push(jsonlWatcher);
@@ -590,6 +591,26 @@ function setupCredentialsMonitoring(context) {
         context.subscriptions.push(claudeConfigWatcher);
         fileLog('Watching ~/.claude.json for account changes');
     }
+}
+
+// Coalesce a burst of JSONL filesystem events into a single update.
+// Claude Code writes a line per turn (and Windows' ReadDirectoryChangesW
+// fires multiple events per single write), so an active conversation
+// can produce many fs events per second. Without this debounce each one
+// re-parses every JSONL file in the project dir, which on Windows is
+// CPU-heavy enough to trigger VS Code's "extension causes high CPU"
+// warning.
+//
+// 500ms was chosen as the longest delay that still feels live for the Tk
+// indicator while comfortably covering a single turn's burst of writes.
+const JSONL_UPDATE_DEBOUNCE_MS = 500;
+
+function scheduleJsonlUpdate() {
+    if (jsonlUpdateTimer) clearTimeout(jsonlUpdateTimer);
+    jsonlUpdateTimer = setTimeout(() => {
+        jsonlUpdateTimer = null;
+        updateTokensFromJsonl(false);
+    }, JSONL_UPDATE_DEBOUNCE_MS);
 }
 
 async function updateTokensFromJsonl(silent = false) {
@@ -1048,6 +1069,11 @@ async function deactivate() {
     if (serviceStatusTimer) {
         clearInterval(serviceStatusTimer);
         serviceStatusTimer = null;
+    }
+
+    if (jsonlUpdateTimer) {
+        clearTimeout(jsonlUpdateTimer);
+        jsonlUpdateTimer = null;
     }
 
     if (scraper) {
