@@ -2,7 +2,7 @@
   "name": "claudemeter",
   "displayName": "Claudemeter - Claude AI Usage Monitor",
   "description": "Monitor your Claude Code usage proactively in real time, with full limit information. No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'. Tracks session, weekly, and token limits across all Claude plans.",
-  "version": "2.3.7",
+  "version": "2.3.8",
   "publisher": "hypersec",
   "author": {
     "name": "HyperI",

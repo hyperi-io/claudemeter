@@ -1,3 +1,10 @@
+## [2.3.8](https://github.com/hyperi-io/claudemeter/compare/v2.3.7...v2.3.8) (2026-04-26)
+
+
+### Bug Fixes
+
+* **perf:** debounce JSONL watcher to coalesce per-message bursts ([c11a01e](https://github.com/hyperi-io/claudemeter/commit/c11a01e30e193f9d8d8169bd39ae0a5eef53b601)), closes [#32](https://github.com/hyperi-io/claudemeter/issues/32)
+
 ## [2.3.7](https://github.com/hyperi-io/claudemeter/compare/v2.3.6...v2.3.7) (2026-04-25)
 
 
