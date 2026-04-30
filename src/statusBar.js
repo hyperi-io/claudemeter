@@ -50,7 +50,7 @@ function getStatusBarAlignment() {
  */
 function getStatusBarPriority() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    return config.get('statusBar.priority', 100);
+    return config.get('statusBar.priority', 10000);
 }
 
 /**
@@ -184,8 +184,14 @@ function composeCurrentLabel({ isRefreshing = false } = {}) {
     return {
         text: `${result.text}  `,  // trailing spaces for visual breathing room
         color: result.color ? new vscode.ThemeColor(result.color) : undefined,
+        backgroundColor: result.backgroundColor ? new vscode.ThemeColor(result.backgroundColor) : undefined,
         tooltipLines: result.tooltipLines,
+        quirkyOverride: result.quirkyOverride,
     };
+}
+
+function getActivityQuipOverride() {
+    return composeCurrentLabel().quirkyOverride;
 }
 
 // Back-compat thin wrappers. Many call sites in this file already read
@@ -201,6 +207,25 @@ function getLabelTextWithStatus() {
 
 function getServiceStatusColor() {
     return composeCurrentLabel().color;
+}
+
+// VS Code only honours two backgroundColor values on a StatusBarItem:
+// 'statusBarItem.errorBackground' and 'statusBarItem.warningBackground'.
+// We surface this so partial/major outages paint the whole item red —
+// far more visible than text colour alone.
+function getServiceStatusBackground() {
+    return composeCurrentLabel().backgroundColor;
+}
+
+// Apply the outage background to every claudemeter status-bar item so
+// the whole cluster lights up red/yellow, not just the leftmost label.
+// Items that own transient state (spinner, happy-hour panel) are skipped.
+function setAllBackgrounds(background) {
+    Object.entries(statusBarItems).forEach(([key, item]) => {
+        if (!item) return;
+        if (key === 'spinner' || key === 'happyHour') return;
+        item.backgroundColor = background;
+    });
 }
 
 function getServiceStatusTooltipLines() {
@@ -228,6 +253,7 @@ async function refreshServiceStatus() {
         statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
         statusBarItems.label.color = getServiceStatusColor();
     }
+    setAllBackgrounds(getServiceStatusBackground());
     return result;
 }
 
@@ -280,13 +306,13 @@ function getIconAndColor(percent, warningThreshold = 80, errorThreshold = 90) {
     if (percent >= errorThreshold) {
         return {
             icon: '$(error)',
-            color: new vscode.ThemeColor('errorForeground'),
+            color: new vscode.ThemeColor('claudemeter.outageRed'),
             level: 'error'
         };
     } else if (percent >= warningThreshold) {
         return {
             icon: '$(warning)',
-            color: new vscode.ThemeColor('editorWarning.foreground'),
+            color: new vscode.ThemeColor('charts.yellow'),
             level: 'warning'
         };
     }
@@ -409,9 +435,9 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
     let compactColor = getServiceStatusColor();
     const levels = [sessionStatus.level, weeklyStatus.level, tokenStatus.level];
     if (levels.includes('error')) {
-        compactColor = new vscode.ThemeColor('errorForeground');
+        compactColor = new vscode.ThemeColor('claudemeter.outageRed');
     } else if (levels.includes('warning')) {
-        compactColor = new vscode.ThemeColor('editorWarning.foreground');
+        compactColor = new vscode.ThemeColor('charts.yellow');
     }
 
     let icon = '';
@@ -588,10 +614,18 @@ function renderMultiPanelMode(
 
 // Main functions
 
-// Fractional priority offsets keep our items grouped — integer-priority
-// items from other extensions (Copilot, etc.) sit at whole numbers and
-// cannot slot between basePriority+0.2 and basePriority+0.9, so our
-// cluster stays contiguous regardless of what else is on the bar.
+// Cluster contiguity strategy:
+//
+// 1. basePriority defaults to 10000 — well above VS Code core editor
+//    items (overtype/encoding/EOL/language/ln-col, all priorities ~100-101)
+//    and most other extensions (typically <2000). The whole cluster
+//    therefore lands together to the LEFT of core items, with no chance
+//    of OVR or similar slotting in between.
+// 2. Fractional offsets (0.2 to 0.9) order our own items inside the
+//    cluster: leftmost is the Claude label (10000.9), rightmost is the
+//    Tokens panel (10000.2). The 0.7 spread is wide enough that a stray
+//    extension item at integer 10000 still sits OUTSIDE our cluster,
+//    not in the middle of it.
 function createStatusBarItem(context) {
     const alignment = getStatusBarAlignment();
     const basePriority = getStatusBarPriority();
@@ -716,6 +750,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
             statusBarItems.label.color = getServiceStatusColor();
         }
+        setAllBackgrounds(getServiceStatusBackground());
         if (tokenOnlyMode) {
             // In token-only mode, show token gauge as waiting (no web fetch needed)
             setAllTooltips('Waiting for Claude Code session...');
@@ -738,6 +773,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
         statusBarItems.label.color = getServiceStatusColor();
     }
+    setAllBackgrounds(getServiceStatusBackground());
 
     // Compute derived values used by both the tooltip composer and
     // the renderers below.
@@ -797,6 +833,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         credentialsInfo,
         activityStats,
         platformTooltipLines,
+        activityQuipOverride: getActivityQuipOverride(),
         happyHourState: resolveHappyHourState(),
         extensionVersion: extVersion,
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
@@ -876,10 +913,10 @@ function stopSpinner(webError = null, tokenError = null) {
 
         if (isCompactMode && statusBarItems.compact) {
             statusBarItems.compact.text = `${statusBarItems.compact.text || LABEL_TEXT} ✗`;
-            statusBarItems.compact.color = new vscode.ThemeColor('errorForeground');
+            statusBarItems.compact.color = new vscode.ThemeColor('claudemeter.outageRed');
         } else if (statusBarItems.label) {
             statusBarItems.label.text = `${getLabelTextWithStatus()} ✗`;
-            statusBarItems.label.color = new vscode.ThemeColor('errorForeground');
+            statusBarItems.label.color = new vscode.ThemeColor('claudemeter.outageRed');
         }
     } else if (webError) {
         const isLoginCancelled = webError.message.includes('Login cancelled');
@@ -924,10 +961,10 @@ function stopSpinner(webError = null, tokenError = null) {
 
         if (isCompactMode && statusBarItems.compact) {
             statusBarItems.compact.text = `${statusBarItems.compact.text || getLabelTextWithStatus()} ⚠`;
-            statusBarItems.compact.color = new vscode.ThemeColor('editorWarning.foreground');
+            statusBarItems.compact.color = new vscode.ThemeColor('charts.yellow');
         } else if (statusBarItems.label) {
             statusBarItems.label.text = `${getLabelTextWithStatus()} ⚠`;
-            statusBarItems.label.color = new vscode.ThemeColor('editorWarning.foreground');
+            statusBarItems.label.color = new vscode.ThemeColor('charts.yellow');
         }
     } else {
         if (isCompactMode && statusBarItems.compact) {

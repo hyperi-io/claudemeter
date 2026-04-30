@@ -30,6 +30,7 @@ const COMMANDS = {
     OPEN_BROWSER: 'claudemeter.openBrowser',
     RESYNC_ACCOUNT: 'claudemeter.resyncAccount',
     DUMP_STATE: 'claudemeter.dumpState',
+    SIMULATE_STATUS: 'claudemeter.simulateStatus',
 };
 
 // Cross-platform config directory following OS conventions

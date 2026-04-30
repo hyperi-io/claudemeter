@@ -213,6 +213,16 @@ describe('composeTooltip — activity quip', () => {
         });
         expect(out).toMatch(/\*Tokens: bodacious!\*/);
     });
+
+    it('activityQuipOverride replaces the quirky message entirely', () => {
+        const out = composeTooltip({
+            config: baseConfig,
+            activityStats: { description: { quirky: 'Tokens: bodacious!' } },
+            activityQuipOverride: "He's dead, Jim.",
+        });
+        expect(out).toMatch(/\*He's dead, Jim\.\*/);
+        expect(out).not.toMatch(/Tokens: bodacious!/);
+    });
 });
 
 describe('composeTooltip — service status lines', () => {

@@ -125,6 +125,22 @@
         "command": "claudemeter.dumpState",
         "title": "Dump State (for bug reports)",
         "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.simulateStatus",
+        "title": "Simulate Service Status (dev)",
+        "category": "Claudemeter"
+      }
+    ],
+    "colors": [
+      {
+        "id": "claudemeter.outageRed",
+        "description": "Red used for outage states and over-threshold gauges. Tuned to match the platform error background tone. Override via workbench.colorCustomizations.",
+        "defaults": {
+          "dark": "#cc4540",
+          "light": "#a91414",
+          "highContrast": "#ff6b6b"
+        }
       }
     ],
     "configuration": {
@@ -210,10 +226,10 @@
         },
         "claudemeter.statusBar.priority": {
           "type": "number",
-          "default": 100,
+          "default": 10000,
           "minimum": 0,
-          "maximum": 10000,
-          "description": "Status bar priority (higher values position items closer to the centre). Requires window reload to take effect."
+          "maximum": 1000000,
+          "description": "Status bar priority. Higher values position items further from the screen edge (left, for right-aligned items). Default 10000 keeps the cluster contiguous and well clear of VS Code core items (overtype/encoding/etc., which live around priority 100). Requires window reload to take effect."
         },
         "claudemeter.statusBar.usageFormat": {
           "type": "string",

@@ -968,6 +968,29 @@ async function activate(context) {
         })
     );
 
+    // Dev-only: inject a fake platform status so each indicator level
+    // can be eyeballed in the status bar without waiting for a real
+    // outage. Selecting "Clear" returns to live API fetches.
+    context.subscriptions.push(
+        vscode.commands.registerCommand(COMMANDS.SIMULATE_STATUS, async () => {
+            const choice = await vscode.window.showQuickPick(
+                [
+                    { label: 'Clear (use real API)',           value: 'clear' },
+                    { label: 'Operational',                    value: 'none' },
+                    { label: 'Minor — Degraded',               value: 'minor' },
+                    { label: 'Major — Partial Outage',         value: 'major' },
+                    { label: 'Critical — Major Outage (dead)', value: 'critical' },
+                ],
+                { placeHolder: 'Simulate Claude service status (dev)' }
+            );
+            if (!choice) return;
+            const { setSimulatedStatus } = require('./src/serviceStatus');
+            setSimulatedStatus(choice.value);
+            await refreshServiceStatus();
+            updateStatusBarWithAllData();
+        })
+    );
+
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
 
     if (config.get('fetchOnStartup', true) && !config.get('tokenOnlyMode', false)) {

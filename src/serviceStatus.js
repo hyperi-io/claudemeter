@@ -14,11 +14,10 @@ const STATUS_PAGE_URL = 'https://status.claude.com';
 // Status indicators from Atlassian Statuspage
 // none = operational, minor = degraded, major = partial outage, critical = major outage
 //
-// Icons chosen to be visually distinct per level (previously partial
-// and major both used $(error), which hid the severity escalation):
-//   - minor:    $(pulse)          irregular heartbeat — service alive but wobbly
-//   - major:    $(flame)          things on fire — partial outage
-//   - critical: $(cloud-offline)  cloud services down — total outage
+// Icons chosen to be visually distinct per level:
+//   - minor:    $(pulse)   irregular heartbeat — service alive but wobbly
+//   - major:    $(warning) caution triangle — partial outage, some impact
+//   - critical: $(error)   solid red X — Claude is dead, total outage
 const STATUS_INDICATORS = {
     none: {
         icon: '$(check)',
@@ -29,19 +28,19 @@ const STATUS_INDICATORS = {
     minor: {
         icon: '$(pulse)',
         label: 'Degraded',
-        color: 'editorWarning.foreground',
+        color: 'charts.yellow',
         level: 'degraded'
     },
     major: {
-        icon: '$(flame)',
+        icon: '$(warning)',
         label: 'Partial Outage',
-        color: 'errorForeground',
+        color: 'claudemeter.outageRed',
         level: 'outage'
     },
     critical: {
-        icon: '$(cloud-offline)',
+        icon: '$(error)',
         label: 'Major Outage',
-        color: 'errorForeground',
+        color: 'claudemeter.outageRed',
         level: 'critical'
     },
     unknown: {
@@ -171,6 +170,11 @@ function clearStatusCache() {
  * @returns {Promise<{indicator: string, description: string, updatedAt: string}|null>}
  */
 async function refreshStatus() {
+    // Dev simulation override — when active, the real API is not called
+    // and the injected status is preserved across refresh ticks.
+    if (simulatedIndicator) {
+        return currentStatus;
+    }
     try {
         currentStatus = await fetchServiceStatus();
         currentError = null;
@@ -180,6 +184,37 @@ async function refreshStatus() {
         currentStatus = null;
         return null;
     }
+}
+
+// Dev override — set by the "Simulate Service Status" command. While
+// non-null, refreshStatus() short-circuits and keeps the injected
+// status in place. Set to null to resume real fetches.
+let simulatedIndicator = null;
+
+function setSimulatedStatus(indicator) {
+    if (!indicator || indicator === 'clear' || indicator === 'none') {
+        simulatedIndicator = null;
+        // Returning to live mode — null out so the next refresh repopulates
+        // from the real API rather than leaving a stale simulated status.
+        currentStatus = null;
+        currentError = null;
+        return;
+    }
+    if (!STATUS_INDICATORS[indicator]) {
+        return;
+    }
+    simulatedIndicator = indicator;
+    currentStatus = {
+        indicator,
+        description: `Simulated ${STATUS_INDICATORS[indicator].label}`,
+        updatedAt: new Date().toISOString(),
+        pageUrl: STATUS_PAGE_URL
+    };
+    currentError = null;
+}
+
+function getSimulatedStatus() {
+    return simulatedIndicator;
 }
 
 /**
@@ -216,6 +251,8 @@ module.exports = {
     getCurrentStatus,
     getCurrentError,
     resetState,
+    setSimulatedStatus,
+    getSimulatedStatus,
     STATUS_PAGE_URL,
     STATUS_INDICATORS
 };

@@ -13,6 +13,7 @@ describe('composeClaudeLabel — baseline', () => {
         const r = composeClaudeLabel({});
         expect(r.text).toBe('Claude');
         expect(r.color).toBeUndefined();
+        expect(r.backgroundColor).toBeUndefined();
         expect(r.tooltipLines).toEqual([]);
     });
 
@@ -25,31 +26,47 @@ describe('composeClaudeLabel — baseline', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'none' } });
         expect(r.text).toBe('Claude');
         expect(r.color).toBeUndefined();
+        expect(r.backgroundColor).toBeUndefined();
     });
 });
 
 describe('composeClaudeLabel — service status icons', () => {
-    it('degraded (minor) shows $(pulse) with warning colour', () => {
+    it('degraded (minor) shows $(pulse) yellow, no background', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'minor' } });
         expect(r.text).toContain('$(pulse)');
-        expect(r.color).toBe('editorWarning.foreground');
+        expect(r.color).toBe('charts.yellow');
+        expect(r.backgroundColor).toBeUndefined();
     });
 
-    it('partial outage (major) shows $(flame) with error colour', () => {
+    it('partial outage (major) shows $(warning) red, no background', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'major' } });
-        expect(r.text).toContain('$(flame)');
-        expect(r.color).toBe('errorForeground');
+        expect(r.text).toContain('$(warning)');
+        expect(r.color).toBe('claudemeter.outageRed');
+        expect(r.backgroundColor).toBeUndefined();
     });
 
-    it('major outage (critical) shows $(cloud-offline)', () => {
+    it('major outage (critical) shows $(error) red with red background and the dead-Jim quirkyOverride', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'critical' } });
-        expect(r.text).toContain('$(cloud-offline)');
-        expect(r.color).toBe('errorForeground');
+        expect(r.text).toContain('$(error)');
+        expect(r.color).toBe('claudemeter.outageRed');
+        expect(r.backgroundColor).toBe('statusBarItem.errorBackground');
+        // Quote is exposed as quirkyOverride (replaces the activity quip),
+        // not as an extra tooltip line.
+        expect(r.quirkyOverride).toBe("He's dead, Jim.");
+        expect(r.tooltipLines.some(l => l.includes('Jim'))).toBe(false);
     });
 
-    it('unknown shows $(question) with no colour', () => {
+    it('non-critical states have no quirkyOverride', () => {
+        for (const ind of ['minor', 'major', 'none', 'unknown']) {
+            const r = composeClaudeLabel({ serviceStatus: { indicator: ind } });
+            expect(r.quirkyOverride).toBeUndefined();
+        }
+    });
+
+    it('unknown shows $(question) with no colour or background', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'unknown' } });
         expect(r.text).toContain('$(question)');
+        expect(r.backgroundColor).toBeUndefined();
     });
 
     it('appends description when different from label', () => {

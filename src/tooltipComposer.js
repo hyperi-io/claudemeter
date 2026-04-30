@@ -258,7 +258,14 @@ function formatHappyHourEndsAt(date, use24Hour) {
 }
 
 function renderActivityQuip(state) {
-    const { activityStats } = state;
+    const { activityStats, activityQuipOverride } = state;
+    // When the platform is in a special state (e.g. critical outage),
+    // the caller can supply a thematic line that REPLACES the cute
+    // activity quip — so "He's dead, Jim." displaces the usual
+    // chuckle rather than appearing alongside it.
+    if (activityQuipOverride) {
+        return ['', `*${activityQuipOverride}*`];
+    }
     if (!activityStats || !activityStats.description) return [];
     return ['', `*${activityStats.description.quirky}*`];
 }
