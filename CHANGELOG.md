@@ -1,3 +1,10 @@
+## [2.3.9](https://github.com/hyperi-io/claudemeter/compare/v2.3.8...v2.3.9) (2026-04-30)
+
+
+### Bug Fixes
+
+* rework outage rendering and panel grouping ([6891955](https://github.com/hyperi-io/claudemeter/commit/6891955153f025f0d05709f93f4812e591ae3312))
+
 ## [2.3.8](https://github.com/hyperi-io/claudemeter/compare/v2.3.7...v2.3.8) (2026-04-26)
 
 
