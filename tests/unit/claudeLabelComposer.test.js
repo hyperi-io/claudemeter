@@ -31,16 +31,16 @@ describe('composeClaudeLabel — baseline', () => {
 });
 
 describe('composeClaudeLabel — service status icons', () => {
-    it('degraded (minor) shows $(pulse) yellow, no background', () => {
+    it('degraded (minor) shows $(warning) yellow, no background', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'minor' } });
-        expect(r.text).toContain('$(pulse)');
+        expect(r.text).toContain('$(warning)');
         expect(r.color).toBe('charts.yellow');
         expect(r.backgroundColor).toBeUndefined();
     });
 
-    it('partial outage (major) shows $(warning) red, no background', () => {
+    it('partial outage (major) shows $(error) red, no background', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'major' } });
-        expect(r.text).toContain('$(warning)');
+        expect(r.text).toContain('$(error)');
         expect(r.color).toBe('claudemeter.outageRed');
         expect(r.backgroundColor).toBeUndefined();
     });
@@ -83,7 +83,7 @@ describe('composeClaudeLabel — combined states', () => {
             serviceStatus: { indicator: 'minor' },
             isRefreshing: true,
         });
-        expect(r.text).toBe('Claude $(pulse) $(loading)');
+        expect(r.text).toBe('Claude $(warning) $(loading)');
     });
 
     it('refreshing alone just appends the spinner', () => {

@@ -319,6 +319,18 @@ function getIconAndColor(percent, warningThreshold = 80, errorThreshold = 90) {
     return { icon: '', color: undefined, level: 'normal' };
 }
 
+// Pick the prefix glyph for a usage gauge. The error-cross is
+// reserved for the Claude platform-status panel where it really does
+// mean "something failed". Usage gauges (Se/Wk) use the warning
+// triangle even at the error threshold — high usage isn't a failure,
+// just a heads-up. Tokens (Tk) never show an icon; the colour alone
+// signals the state.
+function gaugeIconForLevel(level, gauge) {
+    if (gauge === 'tokens') return '';
+    if (level === 'error' || level === 'warning') return '$(warning)';
+    return '';
+}
+
 function hideAllMetricItems() {
     statusBarItems.session.hide();
     statusBarItems.weekly.hide();
@@ -440,10 +452,12 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
         compactColor = new vscode.ThemeColor('charts.yellow');
     }
 
+    // Compact aggregate icon mirrors the per-gauge rule: only Se/Wk
+    // drive the prefix, and they always use the warning triangle —
+    // never the error cross. Tokens are signalled by colour only.
     let icon = '';
-    if (levels.includes('error')) {
-        icon = '$(error) ';
-    } else if (levels.includes('warning')) {
+    const sessionWeeklyLevels = [sessionStatus.level, weeklyStatus.level];
+    if (sessionWeeklyLevels.includes('error') || sessionWeeklyLevels.includes('warning')) {
         icon = '$(warning) ';
     }
 
@@ -484,10 +498,11 @@ function renderMultiPanelMode(
     let sessionVisible = false;
     if (sessionPercent !== null) {
         const sessionDisplay = formatPercent(sessionPercent);
+        const sessionIcon = gaugeIconForLevel(sessionStatus.level, 'session');
         if (isMinimal) {
-            newSessionText = `${sessionStatus.icon ? sessionStatus.icon + ' ' : ''}Se ${sessionDisplay}`;
+            newSessionText = `${sessionIcon ? sessionIcon + ' ' : ''}Se ${sessionDisplay}`;
         } else {
-            newSessionText = `${sessionStatus.icon ? sessionStatus.icon + ' ' : ''}Se ${sessionDisplay} $(history) ${sessionResetTime}`;
+            newSessionText = `${sessionIcon ? sessionIcon + ' ' : ''}Se ${sessionDisplay} $(history) ${sessionResetTime}`;
         }
         sessionVisible = true;
     }
@@ -507,10 +522,11 @@ function renderMultiPanelMode(
     let weeklyVisible = false;
     if (weeklyPercent !== null) {
         const weeklyDisplay = formatPercent(weeklyPercent);
+        const weeklyIcon = gaugeIconForLevel(weeklyStatus.level, 'weekly');
         if (isMinimal) {
-            newWeeklyText = `${weeklyStatus.icon ? weeklyStatus.icon + ' ' : ''}Wk ${weeklyDisplay}`;
+            newWeeklyText = `${weeklyIcon ? weeklyIcon + ' ' : ''}Wk ${weeklyDisplay}`;
         } else {
-            newWeeklyText = `${weeklyStatus.icon ? weeklyStatus.icon + ' ' : ''}Wk ${weeklyDisplay} $(history) ${weeklyResetTime}`;
+            newWeeklyText = `${weeklyIcon ? weeklyIcon + ' ' : ''}Wk ${weeklyDisplay} $(history) ${weeklyResetTime}`;
         }
         weeklyVisible = true;
     }
@@ -537,7 +553,9 @@ function renderMultiPanelMode(
             knownLimit: tokensInfo?.knownLimit ?? false,
             usageFormat: getUsageFormat(),
         });
-        newTokensText = `${tokenStatus.icon ? tokenStatus.icon + ' ' : ''}Tk ${tokenDisplay}`;
+        // Tk deliberately has no icon at any level — the colour alone
+        // signals warning/error. See gaugeIconForLevel for rationale.
+        newTokensText = `Tk ${tokenDisplay}`;
         tokensVisible = true;
     } else {
         newTokensText = 'Tk -';
@@ -727,17 +745,25 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     const globalWarning = config.get('thresholds.warning', 80);
     const globalError = config.get('thresholds.error', 90);
 
-    const getThresholds = (gauge, defaultWarning = globalWarning) => {
+    // Per-gauge thresholds: the schema declares each key with default 0,
+    // and 0 here means "inherit the global". Anything > 0 wins over the
+    // gauge-specific fallback, which itself wins over the global.
+    const getThresholds = (gauge, defaultWarning = globalWarning, defaultError = globalError) => {
         const warning = config.get(`thresholds.${gauge}.warning`);
         const error = config.get(`thresholds.${gauge}.error`);
         return {
             warning: (warning !== undefined && warning !== null && warning > 0) ? warning : defaultWarning,
-            error: (error !== undefined && error !== null && error > 0) ? error : globalError
+            error: (error !== undefined && error !== null && error > 0) ? error : defaultError
         };
     };
 
     const sessionThresholds = getThresholds('session');
-    const tokenThresholds = getThresholds('tokens', 65);
+    // Token gauge defaults track Claude Code's auto-compact trigger
+    // (internal default ~83% of context window, gated by
+    // CLAUDE_AUTOCOMPACT_PCT_OVERRIDE). Yellow at ~compact-20 (65%),
+    // red at ~compact-10 (75%) — rounded to tens for tidiness — so
+    // the user sees ~10pp of red runway before auto-compact kicks in.
+    const tokenThresholds = getThresholds('tokens', 65, 75);
     const weeklyThresholds = getThresholds('weekly');
     const sonnetThresholds = getThresholds('sonnet');
     const opusThresholds = getThresholds('opus');

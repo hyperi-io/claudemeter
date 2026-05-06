@@ -14,10 +14,11 @@ const STATUS_PAGE_URL = 'https://status.claude.com';
 // Status indicators from Atlassian Statuspage
 // none = operational, minor = degraded, major = partial outage, critical = major outage
 //
-// Icons chosen to be visually distinct per level:
-//   - minor:    $(pulse)   irregular heartbeat — service alive but wobbly
-//   - major:    $(warning) caution triangle — partial outage, some impact
-//   - critical: $(error)   solid red X — Claude is dead, total outage
+// Icons chosen to be visually distinct per level. Kept in sync with
+// claudeLabelComposer.SERVICE_RENDER which is the actual render path.
+//   - minor:    $(warning) caution triangle — service degraded
+//   - major:    $(error)   red X — partial outage, real impact
+//   - critical: $(error) + red background — Claude is dead, total outage
 const STATUS_INDICATORS = {
     none: {
         icon: '$(check)',
@@ -26,13 +27,13 @@ const STATUS_INDICATORS = {
         level: 'operational'
     },
     minor: {
-        icon: '$(pulse)',
+        icon: '$(warning)',
         label: 'Degraded',
         color: 'charts.yellow',
         level: 'degraded'
     },
     major: {
-        icon: '$(warning)',
+        icon: '$(error)',
         label: 'Partial Outage',
         color: 'claudemeter.outageRed',
         level: 'outage'

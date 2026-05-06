@@ -274,21 +274,98 @@
           "default": 80,
           "minimum": 1,
           "maximum": 100,
-          "description": "Usage percentage to show warning (yellow) indicator"
+          "markdownDescription": "Global usage percentage to show the warning (yellow) indicator. Per-gauge overrides take precedence — see `claudemeter.thresholds.{session,weekly,tokens,sonnet,opus,credits}.warning`."
         },
         "claudemeter.thresholds.error": {
           "type": "number",
           "default": 90,
           "minimum": 1,
           "maximum": 100,
-          "description": "Usage percentage to show error (red) indicator"
+          "markdownDescription": "Global usage percentage to show the error (red) indicator. Per-gauge overrides take precedence — see `claudemeter.thresholds.{session,weekly,tokens,sonnet,opus,credits}.error`."
+        },
+        "claudemeter.thresholds.session.warning": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Session-gauge warning (yellow) threshold. `0` inherits `claudemeter.thresholds.warning` (default 80)."
+        },
+        "claudemeter.thresholds.session.error": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Session-gauge error (red) threshold. `0` inherits `claudemeter.thresholds.error` (default 90)."
+        },
+        "claudemeter.thresholds.weekly.warning": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Weekly-gauge warning (yellow) threshold. `0` inherits `claudemeter.thresholds.warning` (default 80)."
+        },
+        "claudemeter.thresholds.weekly.error": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Weekly-gauge error (red) threshold. `0` inherits `claudemeter.thresholds.error` (default 90)."
         },
         "claudemeter.thresholds.tokens.warning": {
           "type": "number",
           "default": 65,
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 100,
-          "description": "Token usage warning threshold"
+          "markdownDescription": "Token-gauge warning (yellow) threshold. Default `65` tracks Claude Code's auto-compact trigger (~83% of the context window, gated by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`) minus ~20 — so the gauge turns yellow ~20 percentage points before auto-compact. `0` inherits `claudemeter.thresholds.warning`."
+        },
+        "claudemeter.thresholds.tokens.error": {
+          "type": "number",
+          "default": 75,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Token-gauge error (red) threshold. Default `75` tracks Claude Code's auto-compact trigger (~83% of the context window) minus ~10 — giving roughly 10 percentage points of red runway before auto-compact. `0` inherits `claudemeter.thresholds.error`."
+        },
+        "claudemeter.thresholds.sonnet.warning": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Sonnet-gauge warning (yellow) threshold. `0` inherits `claudemeter.thresholds.warning` (default 80)."
+        },
+        "claudemeter.thresholds.sonnet.error": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Sonnet-gauge error (red) threshold. `0` inherits `claudemeter.thresholds.error` (default 90)."
+        },
+        "claudemeter.thresholds.opus.warning": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Opus-gauge warning (yellow) threshold. `0` inherits `claudemeter.thresholds.warning` (default 80)."
+        },
+        "claudemeter.thresholds.opus.error": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Opus-gauge error (red) threshold. `0` inherits `claudemeter.thresholds.error` (default 90)."
+        },
+        "claudemeter.thresholds.credits.warning": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Credits-gauge warning (yellow) threshold. `0` inherits `claudemeter.thresholds.warning` (default 80)."
+        },
+        "claudemeter.thresholds.credits.error": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Credits-gauge error (red) threshold. `0` inherits `claudemeter.thresholds.error` (default 90)."
         },
         "claudemeter.debug": {
           "type": "boolean",

@@ -11,10 +11,10 @@
 //
 // Output shape:
 //   {
-//     text:            "Claude $(pulse) $(loading)",
+//     text:            "Claude $(warning) $(loading)",
 //     color:           'charts.yellow' | 'claudemeter.outageRed' | undefined,
 //     backgroundColor: 'statusBarItem.errorBackground' | undefined,
-//     tooltipLines:    ["$(pulse) Service degraded — API delays"]
+//     tooltipLines:    ["$(warning) Service degraded — API delays"]
 //   }
 //
 // Colour palette is shared across the extension:
@@ -29,13 +29,14 @@
 // icon, then by background — text colour stays red from major
 // upward so both outage states read as urgent:
 //
-//   minor    (degraded)        $(pulse)   yellow, no background
-//   major    (partial outage)  $(warning) red,    no background
+//   minor    (degraded)        $(warning) yellow, no background
+//   major    (partial outage)  $(error)   red,    no background
 //   critical (major outage)    $(error)   red,    RED BACKGROUND
 //                              + "He's dead, Jim." in the tooltip.
 //
-// The icon progression is intentional: warning-triangle → error-circle
-// reads instantly as "something wrong → everything wrong".
+// The icon progression is intentional: warning-triangle → error-cross
+// reads instantly as "something wrong → everything wrong"; critical
+// reuses the cross but adds a red background so it's unmistakable.
 //
 // Happy hour has its own dedicated status-bar panel (see
 // renderHappyHourPanel in statusBar.js) and is not part of this
@@ -45,13 +46,13 @@ const LABEL = 'Claude';
 
 const SERVICE_RENDER = Object.freeze({
     minor: {
-        icon:       '$(pulse)',
+        icon:       '$(warning)',
         color:      'charts.yellow',
         background: undefined,
         label:      'Service degraded',
     },
     major: {
-        icon:       '$(warning)',
+        icon:       '$(error)',
         color:      'claudemeter.outageRed',
         background: undefined,
         label:      'Partial outage',
