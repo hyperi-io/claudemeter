@@ -141,6 +141,33 @@
           "light": "#a91414",
           "highContrast": "#ff6b6b"
         }
+      },
+      {
+        "id": "claudemeter.rotLight",
+        "description": "Light blue used for the Tk 'context drift' tier (~300K tokens used on 1M+ profiles). Subdued Solarized cyan. Override via workbench.colorCustomizations or claudemeter.colors.rotLight.",
+        "defaults": {
+          "dark": "#6ca0c4",
+          "light": "#4279a1",
+          "highContrast": "#88c0d0"
+        }
+      },
+      {
+        "id": "claudemeter.rotDeep",
+        "description": "Dark blue used for the Tk 'context rot' tier (~500K tokens used on 1M+ profiles). Subdued Solarized blue. Override via workbench.colorCustomizations or claudemeter.colors.rotDeep.",
+        "defaults": {
+          "dark": "#4279a1",
+          "light": "#205c80",
+          "highContrast": "#5e81ac"
+        }
+      },
+      {
+        "id": "claudemeter.happyHourGreen",
+        "description": "Subdued green used for the happy-hour status-bar panel. Gruvbox green. Override via workbench.colorCustomizations or claudemeter.colors.happyHour.",
+        "defaults": {
+          "dark": "#689d6a",
+          "light": "#427b44",
+          "highContrast": "#a8d8ab"
+        }
       }
     ],
     "configuration": {
@@ -366,6 +393,52 @@
           "minimum": 0,
           "maximum": 100,
           "markdownDescription": "Credits-gauge error (red) threshold. `0` inherits `claudemeter.thresholds.error` (default 90)."
+        },
+        "claudemeter.statusBar.colorMode": {
+          "type": "string",
+          "enum": ["color", "basic"],
+          "default": "color",
+          "markdownDescription": "Status-bar decoration mode.\n\n- **color** (default): full palette — gauge tiers (rotLight, rotDeep, warning, error), Se/Wk warning icons, happy-hour green, and the colour-coded `●` prefix in the tooltip.\n- **basic**: every gauge renders in default foreground; no icons; no tier tints; no tooltip prefix dots; no rot recommendation sub-lines. Tooltip section structure (Session / Current context / Weekly) is preserved either way."
+        },
+        "claudemeter.thresholds.tokens.profileOverride": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Force a specific Tk profile by name (e.g. `max-20x`, `pro`, `enterprise`). Empty (default) auto-detects from your Claude account signals. Built-in profile names: `pro`, `max-5x`, `max-20x`, `max-unknown`, `team-standard`, `enterprise`, `unknown`."
+        },
+        "claudemeter.thresholds.tokens.profiles": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Per-profile threshold overrides. **Deep-merge semantics**: leaf-field values are merged over the built-in profile; unset fields inherit from the built-in.\n\nExample:\n```json\n{\n  \"max-20x\": {\n    \"thresholds\": {\n      \"warningRunwayTokens\": 30000\n    }\n  }\n}\n```\nAbove keeps every other `max-20x` field at its built-in default and only overrides the warning-runway value."
+        },
+        "claudemeter.colors.rotLight": {
+          "type": "string",
+          "pattern": "^(|#[0-9a-fA-F]{6})$",
+          "default": "",
+          "markdownDescription": "Custom hex (e.g. `#6ca0c4`) overriding the rotLight tier colour. Empty (default) inherits from the `claudemeter.rotLight` theme colour. Setting this here is theme-agnostic and applies to BOTH the status bar and the tooltip."
+        },
+        "claudemeter.colors.rotDeep": {
+          "type": "string",
+          "pattern": "^(|#[0-9a-fA-F]{6})$",
+          "default": "",
+          "markdownDescription": "Custom hex overriding the rotDeep tier colour. Empty inherits from the `claudemeter.rotDeep` theme colour. Theme-agnostic."
+        },
+        "claudemeter.colors.warning": {
+          "type": "string",
+          "pattern": "^(|#[0-9a-fA-F]{6})$",
+          "default": "",
+          "markdownDescription": "Custom hex overriding the warning (yellow) tier colour. Empty inherits from `charts.yellow`."
+        },
+        "claudemeter.colors.error": {
+          "type": "string",
+          "pattern": "^(|#[0-9a-fA-F]{6})$",
+          "default": "",
+          "markdownDescription": "Custom hex overriding the error (red) tier colour. Empty inherits from `claudemeter.outageRed`."
+        },
+        "claudemeter.colors.happyHour": {
+          "type": "string",
+          "pattern": "^(|#[0-9a-fA-F]{6})$",
+          "default": "",
+          "markdownDescription": "Custom hex overriding the happy-hour panel colour. Empty inherits from `claudemeter.happyHourGreen` (Gruvbox green by default)."
         },
         "claudemeter.debug": {
           "type": "boolean",
