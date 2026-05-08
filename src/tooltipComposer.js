@@ -34,6 +34,16 @@ const {
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
 
+/**
+ * Wrap text in a <span style="color:HEX"> when hex is present, otherwise
+ * return the text unchanged. Used for per-row tier-colour wrapping in
+ * trusted markdown tooltips.
+ */
+function wrapHex(hex, text) {
+    if (!hex) return text;
+    return `<span style="color:${hex}">${text}</span>`;
+}
+
 function composeTooltip(state) {
     const lines = [];
     const add = (fn) => {
@@ -49,6 +59,7 @@ function composeTooltip(state) {
     add(renderPlanAndContext);
     add(renderSpacerAfterIdentity);
     add(renderSessionBlock);
+    add(renderCurrentContextBlock);
     add(renderWeeklyBlock);
     add(renderCreditsBlock);
     add(renderHappyHourRow);
@@ -147,36 +158,15 @@ function renderSpacerAfterIdentity(state) {
 }
 
 function renderSessionBlock(state) {
-    const { usageData, sessionData, config } = state;
+    const { usageData, config, tierColors } = state;
     const lines = [];
-
-    let tokenPercent = null;
-    if (sessionData && sessionData.tokenUsage) {
-        tokenPercent = Math.round(
-            (sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100
-        );
-    }
 
     if (usageData) {
         const sessionPercent = usageData.usagePercent;
         const resetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTime);
-        lines.push(`**Session ${sessionPercent}%**`);
-        if (tokenPercent !== null) {
-            lines.push(
-                `Tokens: ${formatCompact(sessionData.tokenUsage.current)} / `
-                + `${formatCompact(sessionData.tokenUsage.limit)} (${tokenPercent}%)`
-            );
-        }
+        const sessionHex = tierColors?.session?.hex || null;
+        lines.push(wrapHex(sessionHex, `**Session ${sessionPercent}%**`));
         lines.push(`Resets ${resetTimeExpanded}`);
-        if (config?.tokenLimitOverride > 0) {
-            lines.push(`⚙ Context window override: ${formatCompact(config.tokenLimitOverride)}`);
-        }
-    } else if (tokenPercent !== null) {
-        lines.push('**Session**');
-        lines.push(
-            `Tokens: ${formatCompact(sessionData.tokenUsage.current)} / `
-            + `${formatCompact(sessionData.tokenUsage.limit)} (${tokenPercent}%)`
-        );
         if (config?.tokenLimitOverride > 0) {
             lines.push(`⚙ Context window override: ${formatCompact(config.tokenLimitOverride)}`);
         }
@@ -185,13 +175,50 @@ function renderSessionBlock(state) {
     return lines;
 }
 
+function renderCurrentContextBlock(state) {
+    const { sessionData, tierColors, tokensInfo } = state;
+    if (!sessionData || !sessionData.tokenUsage) return [];
+
+    const tokenPercent = Math.round(
+        (sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100
+    );
+    const tokensHex = tierColors?.tokens?.hex || null;
+    const wrap = (text) => wrapHex(tokensHex, text);
+
+    const lines = [
+        '',  // blank line for visual separation
+        wrap(`**Current context ${tokenPercent}%**`),
+    ];
+
+    // Tokens row — gets the prefix dot when colour is active, plain otherwise
+    if (tokensHex) {
+        lines.push(wrap(
+            `● Tokens: ${formatCompact(sessionData.tokenUsage.current)} / `
+            + `${formatCompact(sessionData.tokenUsage.limit)}`
+        ));
+    } else {
+        lines.push(
+            `Tokens: ${formatCompact(sessionData.tokenUsage.current)} / `
+            + `${formatCompact(sessionData.tokenUsage.limit)}`
+        );
+    }
+
+    // Recommendation sub-line — only in colour mode + when tier has one
+    if (tokensHex && tokensInfo?.recommendation) {
+        lines.push(wrap(`_${tokensInfo.recommendation}_`));
+    }
+
+    return lines;
+}
+
 function renderWeeklyBlock(state) {
-    const { usageData } = state;
+    const { usageData, tierColors } = state;
     if (!usageData || usageData.usagePercentWeek === undefined) return [];
 
     const weeklyPercent = usageData.usagePercentWeek;
     const weeklyResetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTimeWeek);
-    const lines = ['', `**Weekly ${weeklyPercent}%**`];
+    const weeklyHex = tierColors?.weekly?.hex || null;
+    const lines = ['', wrapHex(weeklyHex, `**Weekly ${weeklyPercent}%**`)];
 
     if (usageData.usagePercentSonnet !== null && usageData.usagePercentSonnet !== undefined) {
         lines.push(`Sonnet: ${usageData.usagePercentSonnet}%`);
