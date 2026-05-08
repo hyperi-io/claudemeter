@@ -10,7 +10,7 @@
 //   - formatTokensDisplayCompact (same three modes inside compact panel)
 //   - Edge cases: zero, unknown limit, very small, very large, thresholds
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 const {
     formatTokenCount,
     formatAsBar,
@@ -538,5 +538,61 @@ describe('formatTokensDisplay — no data', () => {
             usageFormat: 'barCircle',
         });
         expect(result).toBe('-');
+    });
+});
+
+describe('vscode mock — inspect / update / write-tracking', () => {
+    const vscode = require('vscode');
+
+    beforeEach(() => vscode._resetConfigValues());
+
+    it('inspect returns recorded values for a key', () => {
+        vscode._setConfigInspectValues('foo.bar', { globalValue: 42, defaultValue: 0 });
+        const cfg = vscode.workspace.getConfiguration();
+        expect(cfg.inspect('foo.bar')).toEqual({ globalValue: 42, defaultValue: 0 });
+    });
+
+    it('inspect returns undefined for unrecorded key', () => {
+        const cfg = vscode.workspace.getConfiguration();
+        expect(cfg.inspect('missing.key')).toBeUndefined();
+    });
+
+    it('update records writes for assertion', async () => {
+        const cfg = vscode.workspace.getConfiguration();
+        await cfg.update('a.b', 99, vscode.ConfigurationTarget.Global);
+        expect(vscode._getWrittenValues()).toEqual([
+            { key: 'a.b', value: 99, target: vscode.ConfigurationTarget.Global },
+        ]);
+    });
+
+    it('update with undefined value deletes the key', async () => {
+        vscode._setConfigValues({ 'x.y': 'old' });
+        const cfg = vscode.workspace.getConfiguration();
+        await cfg.update('x.y', undefined, vscode.ConfigurationTarget.Global);
+        expect(cfg.get('x.y', 'fallback')).toBe('fallback');
+    });
+
+    it('update mirrors writes back into get()', async () => {
+        const cfg = vscode.workspace.getConfiguration();
+        await cfg.update('p.q', 'new', vscode.ConfigurationTarget.Global);
+        expect(cfg.get('p.q', 'fallback')).toBe('new');
+    });
+
+    it('_resetConfigValues clears everything', async () => {
+        vscode._setConfigValues({ a: 1 });
+        vscode._setConfigInspectValues('b', { globalValue: 2 });
+        const cfg = vscode.workspace.getConfiguration();
+        await cfg.update('c', 3, vscode.ConfigurationTarget.Global);
+
+        vscode._resetConfigValues();
+        expect(cfg.get('a', null)).toBe(null);
+        expect(cfg.inspect('b')).toBeUndefined();
+        expect(vscode._getWrittenValues()).toEqual([]);
+    });
+
+    it('ConfigurationTarget enum has expected values', () => {
+        expect(vscode.ConfigurationTarget.Global).toBe(1);
+        expect(vscode.ConfigurationTarget.Workspace).toBe(2);
+        expect(vscode.ConfigurationTarget.WorkspaceFolder).toBe(3);
     });
 });
