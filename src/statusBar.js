@@ -22,6 +22,11 @@ const {
 const { composeTooltip } = require('./tooltipComposer');
 const { composeClaudeLabel } = require('./claudeLabelComposer');
 const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = require('./happyHour');
+const { resolveColor, getColorMode } = require('./colorResolver');
+const { selectProfile } = require('./tk/profileSelector');
+const { getTkLevel } = require('./tk/thresholds');
+const { TIER_COLORS } = require('./tk/colorMap');
+const { TIER_RECOMMENDATIONS } = require('./tk/recommendations');
 
 const LABEL_TEXT = 'Claude';
 
@@ -326,9 +331,32 @@ function getIconAndColor(percent, warningThreshold = 80, errorThreshold = 90) {
 // just a heads-up. Tokens (Tk) never show an icon; the colour alone
 // signals the state.
 function gaugeIconForLevel(level, gauge) {
+    if (getColorMode() === 'basic') return '';
     if (gauge === 'tokens') return '';
     if (level === 'error' || level === 'warning') return '$(warning)';
     return '';
+}
+
+/**
+ * Return a status's colour, or undefined when colorMode='basic'. Used at
+ * every status-bar item assignment so basic mode universally drops tints
+ * without needing per-call-site conditionals.
+ */
+function gaugeColorOrUndefined(status) {
+    if (getColorMode() === 'basic') return undefined;
+    return status?.color;
+}
+
+/**
+ * Map a 5-tier rot level (from getTkLevel) to the {icon, color, level}
+ * shape that the rest of statusBar.js consumes.
+ *
+ * Tk never shows an icon (color alone signals tier). 'normal' returns
+ * undefined color so bar dots render in the default text colour.
+ */
+function tokenStatusFromLevel(level) {
+    const colour = resolveColor(level);
+    return { icon: '', color: colour.themeColor, level };
 }
 
 function hideAllMetricItems() {
@@ -445,11 +473,13 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
     const compactText = parts.join(' ');
 
     let compactColor = getServiceStatusColor();
-    const levels = [sessionStatus.level, weeklyStatus.level, tokenStatus.level];
-    if (levels.includes('error')) {
-        compactColor = new vscode.ThemeColor('claudemeter.outageRed');
-    } else if (levels.includes('warning')) {
-        compactColor = new vscode.ThemeColor('charts.yellow');
+    if (getColorMode() !== 'basic') {
+        const levels = [sessionStatus.level, weeklyStatus.level, tokenStatus.level];
+        if (levels.includes('error')) {
+            compactColor = new vscode.ThemeColor('claudemeter.outageRed');
+        } else if (levels.includes('warning')) {
+            compactColor = new vscode.ThemeColor('charts.yellow');
+        }
     }
 
     // Compact aggregate icon mirrors the per-gauge rule: only Se/Wk
@@ -510,7 +540,7 @@ function renderMultiPanelMode(
     if (newSessionText !== lastDisplayedValues.sessionText) {
         if (sessionVisible) {
             statusBarItems.session.text = newSessionText;
-            statusBarItems.session.color = sessionStatus.color;
+            statusBarItems.session.color = gaugeColorOrUndefined(sessionStatus);
             statusBarItems.session.show();
         } else {
             statusBarItems.session.hide();
@@ -534,7 +564,7 @@ function renderMultiPanelMode(
     if (newWeeklyText !== lastDisplayedValues.weeklyText) {
         if (weeklyVisible) {
             statusBarItems.weekly.text = newWeeklyText;
-            statusBarItems.weekly.color = weeklyStatus.color;
+            statusBarItems.weekly.color = gaugeColorOrUndefined(weeklyStatus);
             statusBarItems.weekly.show();
         } else {
             statusBarItems.weekly.hide();
@@ -565,7 +595,7 @@ function renderMultiPanelMode(
     if (newTokensText !== lastDisplayedValues.tokensText) {
         if (tokensVisible) {
             statusBarItems.tokens.text = newTokensText;
-            statusBarItems.tokens.color = tokenStatus.color;
+            statusBarItems.tokens.color = gaugeColorOrUndefined(tokenStatus);
             statusBarItems.tokens.show();
         } else {
             statusBarItems.tokens.hide();
@@ -581,7 +611,7 @@ function renderMultiPanelMode(
 
         if (newSonnetText !== lastDisplayedValues.sonnetText) {
             statusBarItems.sonnet.text = newSonnetText;
-            statusBarItems.sonnet.color = sonnetStatus.color;
+            statusBarItems.sonnet.color = gaugeColorOrUndefined(sonnetStatus);
             statusBarItems.sonnet.show();
             lastDisplayedValues.sonnetText = newSonnetText;
         }
@@ -598,7 +628,7 @@ function renderMultiPanelMode(
 
         if (newOpusText !== lastDisplayedValues.opusText) {
             statusBarItems.opus.text = newOpusText;
-            statusBarItems.opus.color = opusStatus.color;
+            statusBarItems.opus.color = gaugeColorOrUndefined(opusStatus);
             statusBarItems.opus.show();
             lastDisplayedValues.opusText = newOpusText;
         }
@@ -620,7 +650,7 @@ function renderMultiPanelMode(
 
         if (newCreditsText !== lastDisplayedValues.creditsText) {
             statusBarItems.credits.text = newCreditsText;
-            statusBarItems.credits.color = creditsStatus.color;
+            statusBarItems.credits.color = gaugeColorOrUndefined(creditsStatus);
             statusBarItems.credits.show();
             lastDisplayedValues.creditsText = newCreditsText;
         }
@@ -758,12 +788,6 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     };
 
     const sessionThresholds = getThresholds('session');
-    // Token gauge defaults track Claude Code's auto-compact trigger
-    // (internal default ~83% of context window, gated by
-    // CLAUDE_AUTOCOMPACT_PCT_OVERRIDE). Yellow at ~compact-20 (65%),
-    // red at ~compact-10 (75%) — rounded to tens for tidiness — so
-    // the user sees ~10pp of red runway before auto-compact kicks in.
-    const tokenThresholds = getThresholds('tokens', 65, 75);
     const weeklyThresholds = getThresholds('weekly');
     const sonnetThresholds = getThresholds('sonnet');
     const opusThresholds = getThresholds('opus');
@@ -811,12 +835,49 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     let tokenStatus = { icon: '', color: undefined, level: 'normal' };
     let tokensInfo = null;
 
+    // Profile-driven Tk threshold resolution (post-2026-05-08).
+    // Reads detection signals from the credentials/usage stack, applies
+    // the user's profileOverride if set, then resolves to a profile.
+    // getTkLevel maps absolute tokens used → 5-tier level. Bar fill is
+    // still computed as a percentage for the gauge dots.
+    let tokenProfile = null;
+    let tokenLevel = 'normal';
+
     if (sessionData && sessionData.tokenUsage) {
         tokenPercent = Math.round((sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100);
-        tokenStatus = getIconAndColor(tokenPercent, tokenThresholds.warning, tokenThresholds.error);
-        // The knownLimit flag tells formatTokensDisplay whether to show
-        // a denominator. Only authoritative/configured sources are known;
-        // inferred and standard fallbacks are not.
+        const limit = sessionData.tokenUsage.limit;
+
+        // Profile selection — override > detected
+        const profileOverride = config.get('thresholds.tokens.profileOverride', '');
+        const { PROFILES } = require('./tk/profiles');
+        if (profileOverride && PROFILES[profileOverride]) {
+            tokenProfile = PROFILES[profileOverride];
+        } else {
+            tokenProfile = selectProfile({
+                subscriptionType: credentialsInfo?.subscriptionType,
+                rateLimitTier: credentialsInfo?.rateLimitTier,
+                orgType: usageData?.accountInfo?.orgType,
+            });
+        }
+
+        // Apply per-profile threshold overrides from claudemeter.thresholds.tokens.profiles
+        const userProfileOverrides = config.get('thresholds.tokens.profiles', {});
+        if (userProfileOverrides && userProfileOverrides[tokenProfile.name]?.thresholds) {
+            tokenProfile = {
+                ...tokenProfile,
+                thresholds: {
+                    ...tokenProfile.thresholds,
+                    ...userProfileOverrides[tokenProfile.name].thresholds,
+                },
+            };
+        }
+
+        const colorMode = getColorMode();
+        tokenLevel = (colorMode === 'basic')
+            ? 'normal'
+            : getTkLevel(sessionData.tokenUsage.current, tokenProfile, limit);
+        tokenStatus = tokenStatusFromLevel(tokenLevel);
+
         const confidence = sessionData.tokenUsage.limitConfidence || null;
         const knownLimit = confidence === 'authoritative' || confidence === 'configured';
         tokensInfo = {
@@ -824,6 +885,9 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             current: sessionData.tokenUsage.current,
             limit: sessionData.tokenUsage.limit,
             knownLimit,
+            level: tokenLevel,
+            profile: tokenProfile.name,
+            recommendation: TIER_RECOMMENDATIONS[tokenLevel] || null,
         };
     }
 
@@ -853,6 +917,20 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     // Compose tooltip via the pure composer.
     const extVersion = vscode.extensions.getExtension('HyperSec.claudemeter')?.packageJSON?.version;
     const platformTooltipLines = getServiceStatusTooltipLines();
+
+    // Build tier-colour map for tooltip composer (consumed in Task C2).
+    // In basic mode there are no colours — pass empty object.
+    function hexFor(level) {
+        if (!level || level === 'normal') return null;
+        const r = resolveColor(level);
+        return r.hex ? { hex: r.hex, level } : null;
+    }
+    const tierColors = (getColorMode() === 'basic') ? {} : {
+        session: hexFor(sessionStatus?.level),
+        tokens:  hexFor(tokenLevel),
+        weekly:  hexFor(weeklyStatus?.level),
+    };
+
     const markdownBody = composeTooltip({
         usageData,
         sessionData,
@@ -863,6 +941,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         happyHourState: resolveHappyHourState(),
         extensionVersion: extVersion,
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
+        tierColors,
         config: {
             tokenLimitOverride: config.get('tokenLimit', 0),
             use24HourTime: getUse24HourTime(),
