@@ -22,13 +22,23 @@ const {
 const { composeTooltip } = require('./tooltipComposer');
 const { composeClaudeLabel } = require('./claudeLabelComposer');
 const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = require('./happyHour');
-const { resolveColor, getColorMode } = require('./colorResolver');
+const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolver');
+const simulator = require('./simulator');
 const { selectProfile } = require('./tk/profileSelector');
 const { getTkLevel } = require('./tk/thresholds');
 const { TIER_COLORS } = require('./tk/colorMap');
 const { TIER_RECOMMENDATIONS } = require('./tk/recommendations');
 
 const LABEL_TEXT = 'Claude';
+
+/**
+ * Return colorMode, consulting the simulator override first.
+ * @returns {'color'|'basic'}
+ */
+function getColorMode() {
+    const override = simulator.getColorMode();
+    return override !== null ? override : realGetColorMode();
+}
 
 /**
  * Check if service status display is enabled in settings
@@ -118,6 +128,22 @@ function resolveHappyHourIcon(config) {
  *   }
  */
 function resolveHappyHourState() {
+    // Simulator override first
+    const simHappy = simulator.getHappyHour();
+    if (simHappy === false) {
+        return { active: false, icon: null, endsAt: null };
+    }
+    if (simHappy === true) {
+        const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+        const icon = resolveHappyHourIcon(config);
+        if (!icon) return { active: false, icon: null, endsAt: null };
+        return {
+            active: true,
+            icon,
+            endsAt: new Date(Date.now() + 60 * 60 * 1000),  // synthetic 1h
+        };
+    }
+
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     if (!config.get('happyHour.enabled', true)) {
         return { active: false, icon: null, endsAt: null };
@@ -847,11 +873,14 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         tokenPercent = Math.round((sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100);
         const limit = sessionData.tokenUsage.limit;
 
-        // Profile selection — override > detected
-        const profileOverride = config.get('thresholds.tokens.profileOverride', '');
+        // Profile selection — simulator override > setting override > detection
         const { PROFILES } = require('./tk/profiles');
-        if (profileOverride && PROFILES[profileOverride]) {
-            tokenProfile = PROFILES[profileOverride];
+        const simProfile = simulator.getProfileOverride();
+        const settingOverride = config.get('thresholds.tokens.profileOverride', '');
+        const effectiveOverride = simProfile || settingOverride;
+
+        if (effectiveOverride && PROFILES[effectiveOverride]) {
+            tokenProfile = PROFILES[effectiveOverride];
         } else {
             tokenProfile = selectProfile({
                 subscriptionType: credentialsInfo?.subscriptionType,
@@ -872,10 +901,16 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             };
         }
 
-        const colorMode = getColorMode();
-        tokenLevel = (colorMode === 'basic')
-            ? 'normal'
-            : getTkLevel(sessionData.tokenUsage.current, tokenProfile, limit);
+        // Simulator override beats colour-mode short-circuit beats live computation
+        const simLevel = simulator.getTokenLevel();
+        const simUsed = simulator.getTokenUsed();
+        const effectiveUsed = simUsed !== null ? simUsed : sessionData.tokenUsage.current;
+
+        tokenLevel = simLevel !== null
+            ? simLevel
+            : (getColorMode() === 'basic'
+                ? 'normal'
+                : getTkLevel(effectiveUsed, tokenProfile, limit));
         tokenStatus = tokenStatusFromLevel(tokenLevel);
 
         const confidence = sessionData.tokenUsage.limitConfidence || null;
@@ -896,6 +931,11 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         sessionResetTime = calculateResetClockTime(usageData.resetTime);
         sessionStatus = getIconAndColor(sessionPercent, sessionThresholds.warning, sessionThresholds.error);
     }
+    const simSession = simulator.getSessionPercent();
+    if (simSession !== null) {
+        sessionPercent = simSession;
+        sessionStatus = getIconAndColor(sessionPercent, sessionThresholds.warning, sessionThresholds.error);
+    }
 
     let weeklyPercent = null;
     let weeklyResetTime = null;
@@ -911,6 +951,11 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             ? { hour: 'numeric', minute: '2-digit' }
             : { hour: 'numeric' };
         weeklyResetTime = calculateResetClockTime(usageData.resetTimeWeek, weeklyTimeFormat);
+        weeklyStatus = getIconAndColor(weeklyPercent, weeklyThresholds.warning, weeklyThresholds.error);
+    }
+    const simWeekly = simulator.getWeeklyPercent();
+    if (simWeekly !== null) {
+        weeklyPercent = simWeekly;
         weeklyStatus = getIconAndColor(weeklyPercent, weeklyThresholds.warning, weeklyThresholds.error);
     }
 

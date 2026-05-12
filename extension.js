@@ -1042,6 +1042,81 @@ async function activate(context) {
         })
     );
 
+    // Dev-only simulator commands — visible only when claudemeter.debug is true.
+    // Each command sets a simulator override then triggers a re-render via performFetch.
+    const simulator = require('./src/simulator');
+    context.subscriptions.push(
+        vscode.commands.registerCommand('claudemeter.simulate.tokenLevel', async () => {
+            const choice = await vscode.window.showQuickPick(
+                ['live', 'normal', 'rotLight', 'rotDeep', 'warning', 'error'],
+                { placeHolder: 'Force Tk gauge to which tier?' }
+            );
+            if (!choice) return;
+            simulator.setTokenLevel(choice === 'live' ? null : choice);
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.tokenUsed', async () => {
+            const v = await vscode.window.showInputBox({
+                prompt: 'Force absolute tokens used (number, blank to clear)',
+                validateInput: (s) => s === '' || (Number.isFinite(Number(s)) && Number(s) >= 0)
+                    ? null : 'Enter non-negative number or leave blank',
+            });
+            if (v === undefined) return;
+            simulator.setTokenUsed(v === '' ? null : Number(v));
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.sessionPercent', async () => {
+            const v = await vscode.window.showInputBox({
+                prompt: 'Force session % (0-100, blank to clear)',
+                validateInput: (s) => s === '' || (Number.isFinite(Number(s)) && Number(s) >= 0 && Number(s) <= 100)
+                    ? null : 'Enter 0-100 or leave blank',
+            });
+            if (v === undefined) return;
+            simulator.setSessionPercent(v === '' ? null : Number(v));
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.weeklyPercent', async () => {
+            const v = await vscode.window.showInputBox({
+                prompt: 'Force weekly % (0-100, blank to clear)',
+                validateInput: (s) => s === '' || (Number.isFinite(Number(s)) && Number(s) >= 0 && Number(s) <= 100)
+                    ? null : 'Enter 0-100 or leave blank',
+            });
+            if (v === undefined) return;
+            simulator.setWeeklyPercent(v === '' ? null : Number(v));
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.happyHour', async () => {
+            const choice = await vscode.window.showQuickPick(['live', 'on', 'off'], {
+                placeHolder: 'Force happy-hour state',
+            });
+            if (!choice) return;
+            simulator.setHappyHour(choice === 'live' ? null : choice === 'on');
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.colorMode', async () => {
+            const choice = await vscode.window.showQuickPick(['live', 'color', 'basic'], {
+                placeHolder: 'Force colorMode',
+            });
+            if (!choice) return;
+            simulator.setColorMode(choice === 'live' ? null : choice);
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.profileOverride', async () => {
+            const choice = await vscode.window.showQuickPick(
+                ['live', 'pro', 'max-5x', 'max-20x', 'max-unknown', 'team-standard', 'enterprise', 'unknown'],
+                { placeHolder: 'Force Tk profile' }
+            );
+            if (!choice) return;
+            simulator.setProfileOverride(choice === 'live' ? null : choice);
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.clear', async () => {
+            simulator.clearAll();
+            vscode.window.showInformationMessage('Claudemeter simulator cleared — back to live data.');
+            await performFetch(false);
+        })
+    );
+
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
 
     if (config.get('fetchOnStartup', true) && !config.get('tokenOnlyMode', false)) {

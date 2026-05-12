@@ -130,6 +130,54 @@
         "command": "claudemeter.simulateStatus",
         "title": "Simulate Service Status (dev)",
         "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.simulate.tokenLevel",
+        "title": "Claudemeter: Simulate Token Level",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.tokenUsed",
+        "title": "Claudemeter: Simulate Tokens Used",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.sessionPercent",
+        "title": "Claudemeter: Simulate Session %",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.weeklyPercent",
+        "title": "Claudemeter: Simulate Weekly %",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.happyHour",
+        "title": "Claudemeter: Simulate Happy-Hour",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.colorMode",
+        "title": "Claudemeter: Simulate Color Mode",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.profileOverride",
+        "title": "Claudemeter: Simulate Profile",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.clear",
+        "title": "Claudemeter: Simulate — Clear All",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
       }
     ],
     "colors": [
