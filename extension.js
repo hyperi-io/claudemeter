@@ -737,6 +737,52 @@ async function migrateDeprecatedSettings() {
     }
 }
 
+// One-shot migration of legacy percent-threshold settings to the new
+// profile-driven token-runway model. Runs every activation; idempotent
+// (no-ops once a user's keys are migrated and legacy keys are gone).
+// See src/tk/migrate.js for the conversion math and edge cases.
+//
+// Uses resolveTokenLimit() which is self-contained (reads credentials,
+// model IDs, etc. internally), so this is safe to call pre-first-fetch.
+// Profile selection uses credentials signals only (orgType is not yet
+// available — that requires a successful usageData fetch). The selector
+// handles missing orgType gracefully and falls through to 'unknown'.
+async function runLegacySettingsMigration() {
+    try {
+        const { migrateLegacySettings } = require('./src/tk/migrate');
+        const { selectProfile } = require('./src/tk/profileSelector');
+
+        // No credentials → no profile → nothing to migrate against
+        if (!credentialsInfo) {
+            return;
+        }
+
+        const profile = selectProfile({
+            subscriptionType: credentialsInfo.subscriptionType,
+            rateLimitTier: credentialsInfo.rateLimitTier,
+            // orgType omitted — not yet available pre-first-fetch; selector
+            // falls through gracefully and uses subscription/tier signals alone
+        });
+
+        // resolveTokenLimit() is self-contained: reads vscode settings,
+        // model aliases, s1mAccessCache and credentials internally.
+        const { limit: contextWindow } = resolveTokenLimit();
+        if (!contextWindow || typeof contextWindow !== 'number') {
+            return;
+        }
+
+        // Logger adapter — proxy to fileLog (already set up by this point)
+        const logger = {
+            appendLine: (msg) => fileLog(msg),
+        };
+
+        await migrateLegacySettings(vscode, contextWindow, profile, logger);
+    } catch (err) {
+        // Migration failures must never block extension activation
+        try { fileLog(`[claudemeter] migration error: ${err.message}`); } catch {}
+    }
+}
+
 async function activate(context) {
     // Enable debug mode in Extension Development Host (F5)
     if (context.extensionMode === vscode.ExtensionMode.Development) {
@@ -769,6 +815,11 @@ async function activate(context) {
 
     await setupTokenMonitoring(context);
     setupCredentialsMonitoring(context);
+
+    // One-shot migration of legacy %-threshold settings to the new
+    // profile-driven token-runway model. Runs after credentials are loaded;
+    // idempotent on every activation once migration is complete.
+    await runLegacySettingsMigration();
 
     // Register commands
     context.subscriptions.push(
