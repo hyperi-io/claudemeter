@@ -9,6 +9,12 @@
 >
 > Tracks session, weekly, and token limits across all Claude plans.
 
+> We love Claude Code. Claudemeter exists for the signals developers
+> actually need but Anthropic's marketing would never ship in-product —
+> real-time platform state, context-rot detection past the auto-compact
+> line, account drift alerts. We're not here to compete; we're here to
+> surface what a first-party tool can't.
+
 ![Tooltip](assets/tooltip.png)
 
 - Token context usage
@@ -45,6 +51,15 @@
 
 ## Context Window Detection
 
+> **Snapshot framing (2026-05).** The plan / model / window mappings
+> below reflect Anthropic's tier policy at the time of this enhancement.
+> Specific plan names, model versions, and default window sizes will
+> shift as Anthropic updates its offering — the *detection mechanism
+> itself* (priority chain, rule table, `(inferred)` labelling) is
+> durable and adapts to new mappings without code changes (the rule
+> table is data-driven). Treat the bullet list of evidence below as a
+> 2026-05 snapshot, not as live spec.
+
 Claudemeter automatically detects your context window size — no manual configuration needed.
 
 Anthropic's March 2026 GA rollout made **1M context the default** for Max, Team, and Enterprise plans on Opus 4.6 and Sonnet 4.6 — no `[1m]` suffix required. Pro and Free plans stay at 200K unless a user explicitly picks a `[1m]`-suffixed alias or tops up via pay-as-you-go.
@@ -68,6 +83,147 @@ The tooltip shows the source:
 - `Context: 200K` — standard fallback, no signal
 
 The rule table is future-proof via numeric `minVersion` comparison — when Anthropic ships Opus 4.7 or 5.0 with the same defaults, the existing rules keep matching without a code change. To override auto-detection, set `claudemeter.tokenLimit` to a specific value.
+
+## Why the context-rot meter exists
+
+> The Tk gauge can turn **light blue at ~300K tokens used**, **dark blue
+> at ~500K**, and **yellow / red as Claude approaches auto-compact** —
+> *before* the existing yellow warning fires on a 200K-window account.
+> These tiers exist because Claude's effective recall degrades long
+> before the auto-compact trigger fires, and because the *meaning* of
+> "X% used" changes dramatically with window size.
+
+### What sparked this — Opus 4.7 (point-in-time snapshot, 2026-05)
+
+> **Snapshot framing.** Claudemeter shipped the rot meter in direct
+> response to the Opus 4.7 multi-needle regression. The *specific
+> numbers below* will shift as model implementations improve, degrade,
+> or change — the meter itself stays useful because the *phenomenon*
+> (long-context quality degradation) is durable. Treat this section as
+> the spark and the historical reason, not as live spec.
+
+From Anthropic's own Opus 4.7 model card, MRCR v2 8-needle retrieval
+*at the time of this enhancement (May 2026)*:
+
+| Context size | 4.6   | 4.7   |
+|--------------|-------|-------|
+| 256K         | 91.9% | 59.2% |
+| 1M           | 78.3% | 32.2% |
+
+Multi-needle recall — the realistic case when you're juggling several
+rules / files / constraints in one session — collapsed to roughly
+**half** of the 4.6 value at 256K, and to a **third** of it at 1M.
+Single-needle ("find this one thing") still scored ~89% at 1M on 4.7,
+but that's not how most real work uses the model.
+
+Anthropic's own model card conceded Opus 4.6 with 64k extended-thinking
+dominates 4.7 on long-context multi-needle retrieval.
+
+### What this means in practice
+
+The failure mode users describe most consistently:
+
+> "Claude does the right thing for the immediate ask but violates a
+> rule from the original brief."
+
+That happens *before* the existing yellow / red tiers fire. Light blue
+(~300K tokens used) and dark blue (~500K) are the new advisory tiers
+that flag this window — colour first, with a tooltip recommendation
+pointing at `/compact` *on your terms*.
+
+### How yellow / red defaults differ by account tier
+
+The yellow and red Tk tiers are about one thing: **how much runway you
+have before Claude compacts and drops its brain**. Auto-compact is
+when Claude Code summarises the conversation to free up context;
+everything that doesn't survive the summary is lost from the model's
+working memory. You usually notice it as Claude suddenly forgetting a
+rule from earlier in the session.
+
+Auto-compact is **reserve-based**, not a fixed percentage. It fires
+when only a small fixed number of tokens (~33K) remain in the window.
+The visible percentage at which it fires therefore depends on the
+window size:
+
+| Window | Auto-compact at |
+|--------|-----------------|
+| 200K   | ~83%            |
+| 1M     | ~96.7%          |
+
+That's why Claudemeter uses **profile-based thresholds** keyed to your
+detected Claude tier. Yellow and red defaults are expressed as
+*runway in absolute tokens* (yellow = "~20K runway", red = "~5K
+runway"), so they mean the same thing across window sizes:
+
+| Window | Yellow fires at    | Red fires at       | Auto-compact at |
+|--------|--------------------|--------------------|-----------------|
+| 200K   | 147K used (~74%)   | 162K used (~81%)   | ~167K (~83%)    |
+| 1M     | 947K used (~95%)   | 962K used (~96%)   | ~967K (~97%)    |
+
+Red consistently means *"about 40K of runway left — Claude is about to
+drop its brain, finish your thought."* Yellow means *"60-80K of
+runway, still safe but heads-up."* On a 200K window each percentage
+point is worth roughly 5× as much absolute runway as on 1M, which is
+why the percentage thresholds differ so much between the two — but
+the *meaning* (token runway to brain-loss) is identical.
+
+The blue **rot** tiers (~300K / ~500K used) are about something
+different — quality degradation in long-context multi-step work —
+and apply only on tiers where that's a real phenomenon (Max, Team,
+the 1M-context Max-on-Opus configurations). They're not auto-compact
+warnings; they're "context is getting long enough that Claude's
+recall is going to drift" warnings.
+
+### Built-in profiles
+
+Each Claude account tier resolves to a built-in threshold profile:
+
+| Profile         | Detected by                              | Typical window   | Rot tiers |
+|-----------------|------------------------------------------|------------------|-----------|
+| `pro`           | `subscriptionType='pro'`                 | 200K             | off       |
+| `max-5x`        | `rateLimitTier='default_claude_max_5x'`  | 1M Opus auto     | on        |
+| `max-20x`       | `rateLimitTier='default_claude_max_20x'` | 1M Opus auto     | on        |
+| `max-unknown`   | `subscriptionType='max'` alone           | 1M Opus auto     | on        |
+| `team-standard` | `orgType='Team'`                         | 1M Opus auto     | on        |
+| `enterprise`    | `orgType='Enterprise'`                   | 500K             | off*      |
+| `unknown`       | fallback                                 | 200K (assumed)   | off       |
+
+(* enterprise rot tiers ship off because 500K windows make 300K/500K
+rot triggers unreachable — error fires first.)
+
+### Customisation
+
+- **Disable the rot meter entirely:** set `claudemeter.thresholds.tokens.rotEnabled = false` (per-profile, via the `profiles` override map).
+- **Force a profile:** `claudemeter.thresholds.tokens.profileOverride = "max-20x"` etc.
+- **Override individual thresholds:** edit `claudemeter.thresholds.tokens.profiles` deep-merge map. Example:
+
+  ```json
+  "claudemeter.thresholds.tokens.profiles": {
+    "max-20x": {
+      "thresholds": {
+        "warningRunwayTokens": 30000
+      }
+    }
+  }
+  ```
+
+- **Switch to monochrome (no threshold colouring):** `claudemeter.statusBar.colorMode = "basic"`.
+- **Custom hex per tier:** `claudemeter.colors.{rotLight, rotDeep, warning, error, happyHour}`.
+
+The rationale above stays in the README so users understand the
+*why* even if they choose to switch the meter off.
+
+### Sources
+
+- [Anthropic — Introducing Claude Opus 4.7](https://www.anthropic.com/news/claude-opus-4-7) (model card linked from launch page)
+- [Zvi Mowshowitz — Opus 4.7 Part 1: The Model Card](https://thezvi.substack.com/p/opus-47-part-1-the-model-card) (third-party walkthrough citing the MRCR v2 numbers above)
+- [Michelangelo paper, arXiv 2409.12640](https://arxiv.org/abs/2409.12640) (where MRCR was introduced)
+- [OpenAI MRCR dataset on Hugging Face](https://huggingface.co/datasets/openai/mrcr) (the v2 expansion)
+- [Damian Galarza — Claude Opus 4.7 Claude Code Tips: Extended Context](https://www.damiangalarza.com/posts/2026-04-30-claude-opus-4-7-claude-code-tips-extended-context/) — *"The lost-in-the-middle problem doesn't disappear at 1M tokens"*
+- [Mejba Ahmed — Stop Context Rot in 2026](https://www.mejba.me/blog/claude-code-1m-context-management) — *"Degradation starts being felt around 300,000 to 400,000 tokens — roughly 30–40% of the 1M ceiling"*
+- [anthropics/claude-code #34685](https://github.com/anthropics/claude-code/issues/34685) — practitioner self-reported degradation starting at 40%, recommending restart by 48%
+- [anthropics/claude-code #35296](https://github.com/anthropics/claude-code/issues/35296) — *"~200-256K of reliable context with progressive degradation thereafter"*
+- [anthropics/claude-code #31806](https://github.com/anthropics/claude-code/issues/31806) — auto-compact trigger implementation (`window − reserve`)
 
 ## Happy Hour
 
@@ -307,8 +463,76 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 
 - **Type**: Number
 - **Default**: `65`
-- **Range**: `1-100`
-- **Description**: Token usage warning threshold (VS Code auto-compacts context at ~65-75%)
+- **Range**: `0-100`
+- **Description**: Token-gauge warning (yellow) threshold as a percentage. Default `65` tracks Claude Code's auto-compact trigger (~83% of the context window) minus ~20, giving roughly 20 percentage points of warning runway before auto-compact. `0` inherits `claudemeter.thresholds.warning`. **Deprecated for profile-based accounts:** the profile system expresses this as `warningRunwayTokens` (absolute tokens before auto-compact) — use `claudemeter.thresholds.tokens.profiles` to override.
+
+### `claudemeter.thresholds.tokens.error`
+
+- **Type**: Number
+- **Default**: `75`
+- **Range**: `0-100`
+- **Description**: Token-gauge error (red) threshold as a percentage. Default `75` gives roughly 10 percentage points of red runway before auto-compact fires (~83%). `0` inherits `claudemeter.thresholds.error`. **Deprecated for profile-based accounts:** use `claudemeter.thresholds.tokens.profiles` to override `errorRunwayTokens` instead.
+
+### `claudemeter.statusBar.colorMode`
+
+- **Type**: String
+- **Default**: `color`
+- **Options**: `color`, `basic`
+- **Description**: Status-bar decoration mode.
+  - **color** (default): full palette — gauge tiers (rotLight, rotDeep, warning, error), Se/Wk warning icons, happy-hour green, and the colour-coded `●` prefix in the tooltip.
+  - **basic**: every gauge renders in default foreground; no icons; no tier tints; no tooltip prefix dots; no rot recommendation sub-lines. Tooltip section structure is preserved either way.
+
+### `claudemeter.thresholds.tokens.profileOverride`
+
+- **Type**: String
+- **Default**: `""` (auto-detect)
+- **Description**: Force a specific Tk threshold profile by name. Empty (default) auto-detects from your Claude account signals. Built-in profile names: `pro`, `max-5x`, `max-20x`, `max-unknown`, `team-standard`, `enterprise`, `unknown`. See [Built-in profiles](#built-in-profiles) for what each profile enables.
+
+### `claudemeter.thresholds.tokens.profiles`
+
+- **Type**: Object
+- **Default**: `{}`
+- **Description**: Per-profile threshold overrides (deep-merge semantics — leaf fields merge over the built-in profile; unset fields inherit from the built-in). Example overriding only the warning runway for `max-20x`:
+
+  ```json
+  "claudemeter.thresholds.tokens.profiles": {
+    "max-20x": {
+      "thresholds": {
+        "warningRunwayTokens": 30000
+      }
+    }
+  }
+  ```
+
+### `claudemeter.colors.rotLight`
+
+- **Type**: String (hex colour or `""`)
+- **Default**: `""` (inherits theme colour `claudemeter.rotLight`)
+- **Description**: Custom hex (e.g. `#6ca0c4`) overriding the light-blue rot tier colour. Theme-agnostic — applies to both the status bar and tooltip.
+
+### `claudemeter.colors.rotDeep`
+
+- **Type**: String (hex colour or `""`)
+- **Default**: `""` (inherits theme colour `claudemeter.rotDeep`)
+- **Description**: Custom hex overriding the dark-blue deep-rot tier colour. Theme-agnostic.
+
+### `claudemeter.colors.warning`
+
+- **Type**: String (hex colour or `""`)
+- **Default**: `""` (inherits `charts.yellow`)
+- **Description**: Custom hex overriding the warning (yellow) tier colour.
+
+### `claudemeter.colors.error`
+
+- **Type**: String (hex colour or `""`)
+- **Default**: `""` (inherits `claudemeter.outageRed`)
+- **Description**: Custom hex overriding the error (red) tier colour.
+
+### `claudemeter.colors.happyHour`
+
+- **Type**: String (hex colour or `""`)
+- **Default**: `""` (inherits `claudemeter.happyHourGreen`)
+- **Description**: Custom hex overriding the happy-hour panel colour.
 
 ## Commands
 
