@@ -17,8 +17,12 @@
 //     credentialsInfo,             // from credentialsReader
 //     activityStats,               // from activityMonitor
 //     platformTooltipLines,        // from claudeLabelComposer (service status)
+//     activityQuipOverride,        // optional override for activity status line
 //     happyHourState,              // { active, icon, endsAt } from happyHour resolver
 //     extensionVersion,            // from vscode.extensions.getExtension(...)
+//     claudeCodeSelectedModel,     // from workspace config
+//     tierColors,                  // { session, tokens, weekly } hex colours (Phase C)
+//     tokensInfo,                  // { current, limit, knownLimit, recommendation } (Phase C)
 //     config: {                    // pre-resolved config values
 //       tokenLimitOverride,
 //       use24HourTime,

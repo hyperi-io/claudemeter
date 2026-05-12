@@ -26,7 +26,6 @@ const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolve
 const simulator = require('./simulator');
 const { selectProfile } = require('./tk/profileSelector');
 const { getTkLevel } = require('./tk/thresholds');
-const { TIER_COLORS } = require('./tk/colorMap');
 const { TIER_RECOMMENDATIONS } = require('./tk/recommendations');
 
 const LABEL_TEXT = 'Claude';
@@ -505,6 +504,10 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
             compactColor = new vscode.ThemeColor('claudemeter.outageRed');
         } else if (levels.includes('warning')) {
             compactColor = new vscode.ThemeColor('charts.yellow');
+        } else if (tokenStatus.level === 'rotDeep') {
+            compactColor = new vscode.ThemeColor('claudemeter.rotDeep');
+        } else if (tokenStatus.level === 'rotLight') {
+            compactColor = new vscode.ThemeColor('claudemeter.rotLight');
         }
     }
 
@@ -987,6 +990,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         extensionVersion: extVersion,
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
         tierColors,
+        tokensInfo,
         config: {
             tokenLimitOverride: config.get('tokenLimit', 0),
             use24HourTime: getUse24HourTime(),
