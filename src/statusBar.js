@@ -204,7 +204,7 @@ function composeCurrentLabel({ isRefreshing = false } = {}) {
     if (serviceStatus) {
         const display = getStatusDisplay(serviceStatus.indicator);
         if (serviceStatus.updatedAt) {
-            result.tooltipLines.push(`Last checked: ${formatStatusTime(serviceStatus.updatedAt)}`);
+            result.tooltipLines.push(`Last checked ${formatStatusTime(serviceStatus.updatedAt)}`);
         }
         if (display.color !== undefined || serviceStatus.indicator !== 'none') {
             result.tooltipLines.push(`[View status page](${STATUS_PAGE_URL})`);
@@ -212,7 +212,7 @@ function composeCurrentLabel({ isRefreshing = false } = {}) {
     }
 
     return {
-        text: `${result.text}  `,  // trailing spaces for visual breathing room
+        text: result.text,
         color: result.color ? new vscode.ThemeColor(result.color) : undefined,
         backgroundColor: result.backgroundColor ? new vscode.ThemeColor(result.backgroundColor) : undefined,
         tooltipLines: result.tooltipLines,
@@ -280,7 +280,7 @@ async function refreshServiceStatus() {
 
     // Update label text if initialised (only show icon when there's an issue)
     if (statusBarItems.label) {
-        statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+        statusBarItems.label.text = getLabelTextWithStatus();
         statusBarItems.label.color = getServiceStatusColor();
     }
     setAllBackgrounds(getServiceStatusBackground());
@@ -520,9 +520,9 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
         icon = '$(warning) ';
     }
 
+    statusBarItems.compact.color = compactColor;
     if (compactText !== lastDisplayedValues.compactText) {
         statusBarItems.compact.text = `${icon}${compactText}`;
-        statusBarItems.compact.color = compactColor;
         statusBarItems.compact.show();
         lastDisplayedValues.compactText = compactText;
     }
@@ -566,10 +566,14 @@ function renderMultiPanelMode(
         sessionVisible = true;
     }
 
+    if (sessionVisible) {
+        // Colour reacts to tier changes even when the text is unchanged
+        // (e.g. simulator switching the level), so update it on every tick.
+        statusBarItems.session.color = gaugeColorOrUndefined(sessionStatus);
+    }
     if (newSessionText !== lastDisplayedValues.sessionText) {
         if (sessionVisible) {
             statusBarItems.session.text = newSessionText;
-            statusBarItems.session.color = gaugeColorOrUndefined(sessionStatus);
             statusBarItems.session.show();
         } else {
             statusBarItems.session.hide();
@@ -590,10 +594,12 @@ function renderMultiPanelMode(
         weeklyVisible = true;
     }
 
+    if (weeklyVisible) {
+        statusBarItems.weekly.color = gaugeColorOrUndefined(weeklyStatus);
+    }
     if (newWeeklyText !== lastDisplayedValues.weeklyText) {
         if (weeklyVisible) {
             statusBarItems.weekly.text = newWeeklyText;
-            statusBarItems.weekly.color = gaugeColorOrUndefined(weeklyStatus);
             statusBarItems.weekly.show();
         } else {
             statusBarItems.weekly.hide();
@@ -621,10 +627,16 @@ function renderMultiPanelMode(
         tokensVisible = true;
     }
 
+    if (tokensVisible) {
+        // Tk colour MUST update on every tick — the rot tiers
+        // (rotLight/rotDeep) often fire when the gauge text stays
+        // identical (e.g. 80% bar with a 1m limit), so gating colour on
+        // text-change leaves the gauge in the previous tier's colour.
+        statusBarItems.tokens.color = gaugeColorOrUndefined(tokenStatus);
+    }
     if (newTokensText !== lastDisplayedValues.tokensText) {
         if (tokensVisible) {
             statusBarItems.tokens.text = newTokensText;
-            statusBarItems.tokens.color = gaugeColorOrUndefined(tokenStatus);
             statusBarItems.tokens.show();
         } else {
             statusBarItems.tokens.hide();
@@ -632,15 +644,30 @@ function renderMultiPanelMode(
         lastDisplayedValues.tokensText = newTokensText;
     }
 
+    // Simulator overrides for the per-model gauges and credits panel.
+    // Each override only changes the percent; the rest of the rendering
+    // (currency, used count) stays drawn from real data so the visual
+    // shape matches production. Set null to fall through to real values.
+    const simSonnet = simulator.getSonnetPercent();
+    const simOpus = simulator.getOpusPercent();
+    const simCredits = simulator.getCreditsPercent();
+
+    const effectiveSonnetPercent = simSonnet !== null
+        ? simSonnet
+        : (usageData?.usagePercentSonnet ?? null);
+    const effectiveOpusPercent = simOpus !== null
+        ? simOpus
+        : (usageData?.usagePercentOpus ?? null);
+
     let newSonnetText;
-    if (showSonnet && usageData && usageData.usagePercentSonnet !== null && usageData.usagePercentSonnet !== undefined) {
-        const sonnetStatus = getIconAndColor(usageData.usagePercentSonnet, sonnetThresholds.warning, sonnetThresholds.error);
-        const sonnetDisplay = formatPercent(usageData.usagePercentSonnet);
+    if (showSonnet && effectiveSonnetPercent !== null && effectiveSonnetPercent !== undefined) {
+        const sonnetStatus = getIconAndColor(effectiveSonnetPercent, sonnetThresholds.warning, sonnetThresholds.error);
+        const sonnetDisplay = formatPercent(effectiveSonnetPercent);
         newSonnetText = `${sonnetStatus.icon ? sonnetStatus.icon + ' ' : ''}${sonnetDisplay}S`;
 
+        statusBarItems.sonnet.color = gaugeColorOrUndefined(sonnetStatus);
         if (newSonnetText !== lastDisplayedValues.sonnetText) {
             statusBarItems.sonnet.text = newSonnetText;
-            statusBarItems.sonnet.color = gaugeColorOrUndefined(sonnetStatus);
             statusBarItems.sonnet.show();
             lastDisplayedValues.sonnetText = newSonnetText;
         }
@@ -650,14 +677,14 @@ function renderMultiPanelMode(
     }
 
     let newOpusText;
-    if (showOpus && usageData && usageData.usagePercentOpus !== null && usageData.usagePercentOpus !== undefined) {
-        const opusStatus = getIconAndColor(usageData.usagePercentOpus, opusThresholds.warning, opusThresholds.error);
-        const opusDisplay = formatPercent(usageData.usagePercentOpus);
+    if (showOpus && effectiveOpusPercent !== null && effectiveOpusPercent !== undefined) {
+        const opusStatus = getIconAndColor(effectiveOpusPercent, opusThresholds.warning, opusThresholds.error);
+        const opusDisplay = formatPercent(effectiveOpusPercent);
         newOpusText = `${opusStatus.icon ? opusStatus.icon + ' ' : ''}${opusDisplay}O`;
 
+        statusBarItems.opus.color = gaugeColorOrUndefined(opusStatus);
         if (newOpusText !== lastDisplayedValues.opusText) {
             statusBarItems.opus.text = newOpusText;
-            statusBarItems.opus.color = gaugeColorOrUndefined(opusStatus);
             statusBarItems.opus.show();
             lastDisplayedValues.opusText = newOpusText;
         }
@@ -666,9 +693,17 @@ function renderMultiPanelMode(
         lastDisplayedValues.opusText = null;
     }
 
+    // Credits override only meaningful when real monthlyCredits exists —
+    // the override changes the percent for tier-colour testing but keeps
+    // currency/used/limit from real data.
+    const realCredits = usageData?.monthlyCredits;
+    const effectiveCredits = (simCredits !== null && realCredits)
+        ? { ...realCredits, percent: simCredits }
+        : realCredits;
+
     let newCreditsText;
-    if (showCredits && usageData && usageData.monthlyCredits) {
-        const credits = usageData.monthlyCredits;
+    if (showCredits && effectiveCredits) {
+        const credits = effectiveCredits;
         const creditsStatus = getIconAndColor(credits.percent, creditsThresholds.warning, creditsThresholds.error);
         const currencySymbol = getCurrencySymbol(credits.currency);
         const usedDisplay = credits.used >= 1000
@@ -677,9 +712,9 @@ function renderMultiPanelMode(
         const creditsDisplay = formatPercent(credits.percent);
         newCreditsText = `${creditsStatus.icon ? creditsStatus.icon + ' ' : ''}${currencySymbol}${usedDisplay}/${creditsDisplay}`;
 
+        statusBarItems.credits.color = gaugeColorOrUndefined(creditsStatus);
         if (newCreditsText !== lastDisplayedValues.creditsText) {
             statusBarItems.credits.text = newCreditsText;
-            statusBarItems.credits.color = gaugeColorOrUndefined(creditsStatus);
             statusBarItems.credits.show();
             lastDisplayedValues.creditsText = newCreditsText;
         }
@@ -712,7 +747,7 @@ function createStatusBarItem(context) {
         basePriority + 0.9
     );
     statusBarItems.label.command = COMMANDS.FETCH_NOW;
-    statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+    statusBarItems.label.text = getLabelTextWithStatus();
     statusBarItems.label.show();
     context.subscriptions.push(statusBarItems.label);
 
@@ -826,7 +861,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     if (!usageData && !sessionData) {
         if (statusBarItems.label) {
-            statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+            statusBarItems.label.text = getLabelTextWithStatus();
             statusBarItems.label.color = getServiceStatusColor();
         }
         setAllBackgrounds(getServiceStatusBackground());
@@ -849,7 +884,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     }
 
     if (statusBarItems.label) {
-        statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+        statusBarItems.label.text = getLabelTextWithStatus();
         statusBarItems.label.color = getServiceStatusColor();
     }
     setAllBackgrounds(getServiceStatusBackground());
@@ -966,19 +1001,6 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     const extVersion = vscode.extensions.getExtension('HyperSec.claudemeter')?.packageJSON?.version;
     const platformTooltipLines = getServiceStatusTooltipLines();
 
-    // Build tier-colour map for tooltip composer (consumed in Task C2).
-    // In basic mode there are no colours — pass empty object.
-    function hexFor(level) {
-        if (!level || level === 'normal') return null;
-        const r = resolveColor(level);
-        return r.hex ? { hex: r.hex, level } : null;
-    }
-    const tierColors = (getColorMode() === 'basic') ? {} : {
-        session: hexFor(sessionStatus?.level),
-        tokens:  hexFor(tokenLevel),
-        weekly:  hexFor(weeklyStatus?.level),
-    };
-
     const markdownBody = composeTooltip({
         usageData,
         sessionData,
@@ -989,7 +1011,6 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         happyHourState: resolveHappyHourState(),
         extensionVersion: extVersion,
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
-        tierColors,
         tokensInfo,
         config: {
             tokenLimitOverride: config.get('tokenLimit', 0),
@@ -1124,7 +1145,7 @@ function stopSpinner(webError = null, tokenError = null) {
         if (isCompactMode && statusBarItems.compact) {
             statusBarItems.compact.color = getServiceStatusColor();
         } else if (statusBarItems.label) {
-            statusBarItems.label.text = `${getLabelTextWithStatus()}  `;
+            statusBarItems.label.text = getLabelTextWithStatus();
             statusBarItems.label.color = getServiceStatusColor();
         }
     }

@@ -13,20 +13,20 @@ issues.
 ## What's in the published bundle
 
 The marketplace artifact `dist/extension.js` is built from `extension.js`
-via `node esbuild.js --production`. The build deliberately strips a
-recurring CVE-prone code path from the bundle:
+via `node esbuild.js --production`.
 
-- `esbuild.js` aliases `proxy-agent` to `build/proxy-agent-stub.js`.
-- That stub eliminates the entire `puppeteer-core → @puppeteer/browsers
-  → proxy-agent → pac-proxy-agent → get-uri → basic-ftp` transitive
-  chain from production output.
-- Net effect: any advisory targeting that chain (e.g. the recurring
-  `basic-ftp` DoS class) is **shipped-out** even when the dev tree
-  still resolves the vulnerable version.
+Claudemeter uses `playwright-core` for its browser-driving needs (the
+one-time login flow and the opt-in legacy scraper). `playwright-core`
+ships with **zero npm runtime dependencies** — its driver is bundled
+internally as a self-contained native binary. There is no
+proxy-agent / pac-proxy-agent / basic-ftp / get-uri transitive chain
+to defend against.
 
-If you're auditing the published `.vsix`, search the bundle for the
-strings `basic-ftp`, `pac-proxy-agent`, or `get-uri` — they should not
-appear.
+(For historical context: prior versions used `puppeteer-core`, whose
+`@puppeteer/browsers → proxy-agent → pac-proxy-agent → get-uri →
+basic-ftp` chain was the recurring source of advisories. We carried
+a build-time alias stub to strip that chain from the bundle. The
+migration to playwright-core removed both the chain and the stub.)
 
 ## Known accepted risks
 

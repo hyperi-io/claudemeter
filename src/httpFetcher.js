@@ -5,16 +5,16 @@
 //
 // v2 default fetch engine. Uses native fetch() with a stored sessionKey cookie
 // and browser-like headers to call Claude.ai API endpoints directly. A browser
-// (via puppeteer-core) is only launched once for the initial login to obtain
+// (via playwright-core) is only launched once for the initial login to obtain
 // the cookie. Subsequent fetches complete in 1-3 seconds with no browser.
 //
-// Why puppeteer-core is retained (not removed entirely):
+// Why playwright-core is retained (not removed entirely):
 //
 // 1. LOGIN FLOW: Claude.ai's login involves OAuth redirects, CAPTCHAs, and
 //    Cloudflare challenges that cannot be replicated with plain HTTP requests.
-//    A real browser is required to obtain the sessionKey cookie. puppeteer-core
-//    (~2MB) drives the user's existing system browser for this — no bundled
-//    Chromium needed (unlike puppeteer which ships ~200MB of Chromium).
+//    A real browser is required to obtain the sessionKey cookie. playwright-core
+//    drives the user's existing system browser via the executablePath option —
+//    no Chromium binary is downloaded or bundled.
 //
 // 2. UNDOCUMENTED API RISK: The three endpoints we fetch (/usage, /prepaid/credits,
 //    /overage_spend_limit) are internal Claude.ai APIs with no public documentation
@@ -22,9 +22,12 @@
 //    time. The legacy browser scraper (src/scraper.js) is retained as an opt-in
 //    fallback that can adapt to page-level changes even if the API contract breaks.
 //
-// 3. MINIMAL COST: puppeteer-core adds ~2MB to the extension (vs ~200MB for full
-//    puppeteer). It is lazy-loaded only when login() is called, so it has zero
-//    runtime cost during normal HTTP fetch cycles.
+// 3. ZERO TRANSITIVE DEPS: playwright-core has no npm runtime dependencies —
+//    its driver is bundled internally. Replaces puppeteer-core (which dragged
+//    in proxy-agent + basic-ftp + the periodic CVE chain that required a
+//    build-time stub). playwright-core is also the Microsoft-maintained
+//    successor by the original Puppeteer engineers; puppeteer has been in
+//    caretaker mode since 2023.
 //
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
@@ -494,7 +497,7 @@ class ClaudeHttpFetcher {
         }
     }
 
-    // --- Login Flow (puppeteer-core, lazy loaded) ---
+    // --- Login Flow (playwright-core, lazy loaded) ---
 
     _isLoginInProgress() {
         try {
@@ -559,13 +562,17 @@ class ClaudeHttpFetcher {
             fileLog('CLI token auth unavailable — account verification skipped');
         }
 
-        let browser = null;
+        let context = null;
         let page = null;
         let userDataDir = null;
+        // Playwright doesn't expose `browser.isConnected()` in persistent-
+        // context mode the way puppeteer did. We track close via a flag set
+        // by `context.on('close', ...)` and consult it in _waitForSessionKey.
+        let contextClosed = false;
 
         try {
-            // Lazy-load puppeteer-core
-            const puppeteer = require('puppeteer-core');
+            // Lazy-load playwright-core
+            const { chromium } = require('playwright-core');
 
             // Migrate: older builds kept a persistent ~/.config/claudemeter/login-session
             // dir. We now use an ephemeral tempdir per login, so delete the legacy
@@ -593,12 +600,11 @@ class ClaudeHttpFetcher {
             const port = await this._findAvailablePort();
             // Fresh tempdir per login so the browser has no tab history,
             // cache, or cookies between runs. The sessionKey cookie we need
-            // is extracted via page.cookies() before the dir is cleaned up.
+            // is extracted via context.cookies() before the dir is cleaned up.
             userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claudemeter-login-'));
 
-            browser = await puppeteer.launch({
+            context = await chromium.launchPersistentContext(userDataDir, {
                 headless: false,
-                userDataDir,
                 executablePath: chromePath,
                 timeout: 60000,
                 args: [
@@ -614,11 +620,14 @@ class ClaudeHttpFetcher {
                     '--no-default-browser-check',
                     `--remote-debugging-port=${port}`
                 ],
-                defaultViewport: { width: 1280, height: 800 },
+                viewport: { width: 1280, height: 800 },
+                userAgent: BROWSER_HEADERS['User-Agent'],
             });
+            context.on('close', () => { contextClosed = true; });
 
-            page = await browser.newPage();
-            await page.setUserAgent(BROWSER_HEADERS['User-Agent']);
+            // launchPersistentContext opens an initial page automatically;
+            // reuse it rather than spawning a second one.
+            page = context.pages()[0] || await context.newPage();
 
             // Pre-inject the saved sessionKey cookie if we have one. When the
             // cookie is still valid (common case: misclassified SESSION_EXPIRED,
@@ -629,13 +638,13 @@ class ClaudeHttpFetcher {
             const existingCookie = this._readCookie();
             if (existingCookie?.sessionKey) {
                 try {
-                    await page.setCookie({
+                    await context.addCookies([{
                         url: CLAUDE_URLS.BASE,
                         name: 'sessionKey',
                         value: existingCookie.sessionKey,
                         httpOnly: true,
                         secure: true,
-                    });
+                    }]);
                     fileLog('Pre-injected saved sessionKey — skipping login if still valid');
                 } catch (err) {
                     fileLog(`Cookie pre-injection failed: ${err.message}`);
@@ -643,7 +652,7 @@ class ClaudeHttpFetcher {
             }
 
             await page.goto(CLAUDE_URLS.LOGIN, {
-                waitUntil: 'networkidle2',
+                waitUntil: 'networkidle',
                 timeout: TIMEOUTS.PAGE_LOAD,
             });
 
@@ -663,13 +672,13 @@ class ClaudeHttpFetcher {
                     cancellable: false,
                 },
                 async () => {
-                    return await this._waitForSessionKey(page, browser);
+                    return await this._waitForSessionKey(page, context, () => contextClosed);
                 }
             );
 
             if (loginResult.success) {
                 // Extract and verify the sessionKey cookie before saving
-                const cookies = await page.cookies(CLAUDE_URLS.BASE);
+                const cookies = await context.cookies(CLAUDE_URLS.BASE);
                 const sessionCookie = cookies.find(c => c.name === 'sessionKey');
 
                 if (!sessionCookie) {
@@ -691,7 +700,7 @@ class ClaudeHttpFetcher {
                         { modal: false }
                     );
                     // Navigate back to login page for another attempt
-                    await page.goto(CLAUDE_URLS.LOGIN, { waitUntil: 'networkidle2', timeout: TIMEOUTS.PAGE_LOAD });
+                    await page.goto(CLAUDE_URLS.LOGIN, { waitUntil: 'networkidle', timeout: TIMEOUTS.PAGE_LOAD });
                     const retryResult = await vscode.window.withProgress(
                         {
                             location: vscode.ProgressLocation.Notification,
@@ -699,13 +708,13 @@ class ClaudeHttpFetcher {
                             cancellable: false,
                         },
                         async () => {
-                            return await this._waitForSessionKey(page, browser);
+                            return await this._waitForSessionKey(page, context, () => contextClosed);
                         }
                     );
                     if (!retryResult.success) {
                         throw new Error(retryResult.cancelled ? 'LOGIN_CANCELLED' : 'LOGIN_TIMEOUT');
                     }
-                    const retryCookies = await page.cookies(CLAUDE_URLS.BASE);
+                    const retryCookies = await context.cookies(CLAUDE_URLS.BASE);
                     const retrySessionCookie = retryCookies.find(c => c.name === 'sessionKey');
                     if (!retrySessionCookie) {
                         throw new Error('No sessionKey cookie after retry');
@@ -750,28 +759,24 @@ class ClaudeHttpFetcher {
                 throw new Error('LOGIN_TIMEOUT');
             }
         } finally {
-            // Close the login browser
-            if (browser) {
+            // Close the login browser. Playwright's launchPersistentContext
+            // owns the underlying browser, so context.close() shuts down both
+            // the context and the browser process. We still race against a
+            // timeout in case Chrome hangs; orphan-process cleanup beyond that
+            // is left to the OS — playwright-core doesn't expose the
+            // underlying process handle in persistent-context mode.
+            if (context) {
                 try {
-                    const browserProcess = browser.process();
-                    const closePromise = browser.close();
+                    const closePromise = context.close();
                     const timeoutPromise = new Promise((_, reject) =>
                         setTimeout(() => reject(new Error('timeout')), 5000)
                     );
                     try {
                         await Promise.race([closePromise, timeoutPromise]);
                     } catch (err) {
-                        fileLog(`Browser close timed out, falling back to SIGKILL: ${err.message}`);
-                        if (browserProcess) {
-                            try {
-                                browserProcess.kill('SIGKILL');
-                            } catch (killErr) {
-                                // Process is likely already dead — that's the
-                                // common case. Log so we'd notice if SIGKILL
-                                // is consistently failing for a real reason.
-                                fileLog(`SIGKILL on login browser process failed (likely already exited): ${killErr.message}`);
-                            }
-                        }
+                        // We can't SIGKILL — the browser PID isn't exposed.
+                        // Log so a recurring close-timeout pattern is visible.
+                        fileLog(`Context close timed out: ${err.message}`);
                         await sleep(1000);
                     }
                 } catch (err) {
@@ -792,7 +797,7 @@ class ClaudeHttpFetcher {
         }
     }
 
-    async _waitForSessionKey(page, browser, maxWaitMs = TIMEOUTS.LOGIN_WAIT, pollIntervalMs = TIMEOUTS.LOGIN_POLL) {
+    async _waitForSessionKey(page, context, isClosed, maxWaitMs = TIMEOUTS.LOGIN_WAIT, pollIntervalMs = TIMEOUTS.LOGIN_POLL) {
         const debug = isDebugEnabled();
         const startTime = Date.now();
 
@@ -800,14 +805,14 @@ class ClaudeHttpFetcher {
             await sleep(pollIntervalMs);
 
             try {
-                if (!browser || !browser.isConnected()) {
+                if (!context || isClosed()) {
                     if (debug) {
                         getDebugChannel().appendLine('Auth: Browser disconnected - login cancelled');
                     }
                     return { success: false, cancelled: true };
                 }
 
-                const cookies = await page.cookies(CLAUDE_URLS.BASE);
+                const cookies = await context.cookies(CLAUDE_URLS.BASE);
                 const hasSessionKey = cookies.some(c => c.name === 'sessionKey');
 
                 if (hasSessionKey) {

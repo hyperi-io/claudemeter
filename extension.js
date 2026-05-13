@@ -3,9 +3,11 @@
 // Purpose:   VS Code extension entry point and lifecycle management
 // Language:  JavaScript (CommonJS)
 //
-// v2 replaces Puppeteer browser automation with streamlined HTTP cookie-based
-// fetching. The legacy browser scraper is retained as an opt-in fallback via
-// the "claudemeter.useLegacyScraper" setting.
+// v2 replaces full browser automation with streamlined HTTP cookie-based
+// fetching. A real browser (via playwright-core, driving the user's installed
+// Chrome) is used only for the one-time login flow. The legacy browser
+// scraper is retained as an opt-in fallback via the
+// "claudemeter.useLegacyScraper" setting.
 //
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
@@ -16,8 +18,8 @@ const path = require('path');
 const { ClaudeHttpFetcher } = require('./src/httpFetcher');
 
 // Legacy scraper is lazy-loaded only when useLegacyScraper is enabled.
-// This avoids loading puppeteer-core (an external dependency not bundled in the VSIX)
-// at startup when it's not needed.
+// This avoids loading playwright-core's chromium driver at startup when
+// it's not needed.
 let _scraperModule = null;
 function getScraperModule() {
     if (!_scraperModule) {
@@ -1083,6 +1085,51 @@ async function activate(context) {
             });
             if (v === undefined) return;
             simulator.setWeeklyPercent(v === '' ? null : Number(v));
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.sonnetPercent', async () => {
+            const v = await vscode.window.showInputBox({
+                prompt: 'Force Sonnet % (0-100, blank to clear). Requires claudemeter.statusBar.showSonnet=true.',
+                validateInput: (s) => s === '' || (Number.isFinite(Number(s)) && Number(s) >= 0 && Number(s) <= 100)
+                    ? null : 'Enter 0-100 or leave blank',
+            });
+            if (v === undefined) return;
+            simulator.setSonnetPercent(v === '' ? null : Number(v));
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.opusPercent', async () => {
+            const v = await vscode.window.showInputBox({
+                prompt: 'Force Opus % (0-100, blank to clear). Requires claudemeter.statusBar.showOpus=true.',
+                validateInput: (s) => s === '' || (Number.isFinite(Number(s)) && Number(s) >= 0 && Number(s) <= 100)
+                    ? null : 'Enter 0-100 or leave blank',
+            });
+            if (v === undefined) return;
+            simulator.setOpusPercent(v === '' ? null : Number(v));
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.creditsPercent', async () => {
+            const v = await vscode.window.showInputBox({
+                prompt: 'Force credits % (0-100, blank to clear). Requires real monthlyCredits data and claudemeter.statusBar.showCredits=true.',
+                validateInput: (s) => s === '' || (Number.isFinite(Number(s)) && Number(s) >= 0 && Number(s) <= 100)
+                    ? null : 'Enter 0-100 or leave blank',
+            });
+            if (v === undefined) return;
+            simulator.setCreditsPercent(v === '' ? null : Number(v));
+            await performFetch(false);
+        }),
+        vscode.commands.registerCommand('claudemeter.simulate.legacyScraper', async () => {
+            const choice = await vscode.window.showQuickPick(
+                ['off (HTTP fetcher)', 'on (legacy browser scraper)'],
+                { placeHolder: 'Toggle claudemeter.useLegacyScraper for this workspace' }
+            );
+            if (!choice) return;
+            const enable = choice.startsWith('on');
+            await vscode.workspace.getConfiguration(CONFIG_NAMESPACE).update(
+                'useLegacyScraper', enable, vscode.ConfigurationTarget.Workspace
+            );
+            vscode.window.showInformationMessage(
+                `Legacy scraper ${enable ? 'enabled' : 'disabled'} for this workspace.`
+            );
             await performFetch(false);
         }),
         vscode.commands.registerCommand('claudemeter.simulate.happyHour', async () => {

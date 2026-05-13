@@ -249,7 +249,7 @@ When you log in, the extension verifies that the browser account matches the acc
 
 > **Why not use the Claude CLI's OAuth token?** The CLI's OAuth scopes (`user:inference`, `user:profile`, etc.) don't grant access to the usage/billing endpoints. Only the `sessionKey` cookie from a browser login works. If Anthropic ever expands the CLI scopes, the browser login could be eliminated entirely.
 
-> **Why keep puppeteer-core?** The usage API endpoints are undocumented and could change without notice. `puppeteer-core` (bundled into the extension, no bundled Chromium) handles the login flow and powers an opt-in legacy scraper fallback if the API breaks. See `claudemeter.useLegacyScraper` in settings.
+> **Why keep playwright-core?** The usage API endpoints are undocumented and could change without notice. `playwright-core` (bundled into the extension, no bundled Chromium) drives the user's installed Chrome via the `executablePath` option for the initial login, and powers an opt-in legacy scraper fallback if the API breaks. See `claudemeter.useLegacyScraper` in settings. playwright-core ships with zero npm runtime dependencies, so there's no transitive-CVE surface to defend against.
 
 ## Installation
 
@@ -581,8 +581,8 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - **No credentials stored**: The extension never stores or transmits your login credentials
 - **Local session cookie**: Your `sessionKey` cookie is saved locally at `~/.config/claudemeter/session-cookie.json` (or platform equivalent) and is only sent to `claude.ai`
 - **No data transmission**: Usage data stays on your machine
-- **Self-contained**: `puppeteer-core` is bundled into the extension (no external `node_modules` at runtime). It uses your existing system browser for login only — no Chromium is downloaded or bundled.
-- **Minimal attack surface**: puppeteer's proxy-agent chain (which drags in an FTP client and related code we never execute) is stubbed at build time and dropped from the bundle, shrinking the shipped VSIX and removing a recurring source of transitive CVEs.
+- **Self-contained**: `playwright-core` is bundled into the extension (no external `node_modules` at runtime). It uses your existing system browser for login only — no Chromium is downloaded or bundled.
+- **Minimal attack surface**: playwright-core ships with zero npm runtime dependencies — its driver is bundled internally as a self-contained native binary. No proxy-agent chain, no FTP client, no transitive-CVE surface.
 - **Account verification**: The extension verifies the browser login matches the CLI account before saving the session
 - **Open source**: All code is available for review
 

@@ -23,7 +23,8 @@
     "theme": "dark"
   },
   "engines": {
-    "vscode": "^1.110.0"
+    "vscode": "^1.110.0",
+    "node": ">=22.0.0"
   },
   "extensionKind": [
     "ui"
@@ -152,6 +153,30 @@
       {
         "command": "claudemeter.simulate.weeklyPercent",
         "title": "Claudemeter: Simulate Weekly %",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.sonnetPercent",
+        "title": "Claudemeter: Simulate Sonnet %",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.opusPercent",
+        "title": "Claudemeter: Simulate Opus %",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.creditsPercent",
+        "title": "Claudemeter: Simulate Credits %",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.legacyScraper",
+        "title": "Claudemeter: Simulate — Toggle Legacy Scraper",
         "enablement": "config.claudemeter.debug",
         "category": "Claudemeter (debug)"
       },
@@ -444,7 +469,10 @@
         },
         "claudemeter.statusBar.colorMode": {
           "type": "string",
-          "enum": ["color", "basic"],
+          "enum": [
+            "color",
+            "basic"
+          ],
           "default": "color",
           "markdownDescription": "Status-bar decoration mode.\n\n- **color** (default): full palette — gauge tiers (rotLight, rotDeep, warning, error), Se/Wk warning icons, happy-hour green, and the colour-coded `●` prefix in the tooltip.\n- **basic**: every gauge renders in default foreground; no icons; no tier tints; no tooltip prefix dots; no rot recommendation sub-lines. Tooltip section structure (Session / Current context / Weekly) is preserved either way."
         },
@@ -462,7 +490,7 @@
           "type": "string",
           "pattern": "^(|#[0-9a-fA-F]{6})$",
           "default": "",
-          "markdownDescription": "Custom hex (e.g. `#6ca0c4`) overriding the rotLight tier colour. Empty (default) inherits from the `claudemeter.rotLight` theme colour. Setting this here is theme-agnostic and applies to BOTH the status bar and the tooltip."
+          "markdownDescription": "Custom hex (e.g. `#6ca0c4`) overriding the rotLight tier colour. Empty (default) inherits from the `claudemeter.rotLight` theme colour. Setting this here is theme-agnostic."
         },
         "claudemeter.colors.rotDeep": {
           "type": "string",
@@ -615,15 +643,11 @@
       }
     }
   },
-  "dependencies": {
-    "puppeteer-core": "^24.40.0"
-  },
   "overrides": {
     "undici": ">=7.24.5",
     "flatted": ">=3.4.2",
     "picomatch": ">=2.3.2",
     "brace-expansion": ">=1.1.13",
-    "basic-ftp": ">=5.2.2",
     "vite": ">=8.0.5",
     "lodash": ">=4.18.0"
   },
@@ -633,5 +657,9 @@
     "esbuild": "^0.28.0",
     "eslint": "^10.1.0",
     "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "chromium-bidi": "^15.0.0",
+    "playwright-core": "^1.60.0"
   }
 }

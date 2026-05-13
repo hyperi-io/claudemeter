@@ -5,12 +5,11 @@
 //            Layers (highest precedence first):
 //              1. claudemeter.colors.<settingKey> — user-set hex (regex-validated)
 //              2. vscode.ThemeColor(themeId) — picks up workbench.colorCustomizations
-//              3. colorMap fallback hex — used when ThemeColor isn't applicable
-//                 (e.g. tooltip HTML inline <span style="color:HEX">)
+//              3. colorMap fallback hex
 //
 //            Returns {themeColor, hex} so callers can pick the right
 //            field for their context: StatusBarItem.color accepts string
-//            OR ThemeColor; MarkdownString HTML needs a literal hex.
+//            OR ThemeColor.
 //
 //            'normal' tier returns {themeColor: undefined, hex: null}.
 //            Unknown tier name returns the same no-decoration shape.

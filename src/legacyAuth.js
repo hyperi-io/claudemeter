@@ -1,10 +1,10 @@
 // Project:   Claudemeter
 // File:      legacyAuth.js
-// Purpose:   Legacy cookie-based authentication via Puppeteer (used by scraper.js)
+// Purpose:   Legacy cookie-based authentication via Playwright (used by scraper.js)
 // Language:  JavaScript (CommonJS)
 //
 // LEGACY FALLBACK: Only used when "claudemeter.useLegacyScraper" is enabled.
-// The v2 auth.js handles cookie file I/O for the streamlined HTTP fetcher.
+// The v2 httpFetcher.js handles cookie file I/O for the streamlined HTTP fetcher.
 //
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
@@ -20,9 +20,30 @@ class ClaudeAuth {
         this.browser = null;
     }
 
+    // The second argument can be either a Playwright `Browser` (set when
+    // scraper.js connected via CDP) or a `BrowserContext` (set when
+    // scraper.js launched a persistent context — the persistent-context
+    // mode hides the underlying Browser handle). Both shapes are duck-typed
+    // for liveness in waitForLogin.
     setPageAndBrowser(page, browser) {
         this.page = page;
         this.browser = browser;
+    }
+
+    // Liveness check that works on either a Playwright Browser or a
+    // BrowserContext. Browser has isConnected(); BrowserContext doesn't,
+    // so we probe with pages() and treat any throw as "closed".
+    _isAlive() {
+        if (!this.browser) return false;
+        if (typeof this.browser.isConnected === 'function') {
+            return this.browser.isConnected();
+        }
+        try {
+            this.browser.pages();
+            return true;
+        } catch (_e) {
+            return false;
+        }
     }
 
     getSessionDir() {
@@ -73,7 +94,7 @@ class ClaudeAuth {
                 });
             }
 
-            const cookies = await this.page.cookies(CLAUDE_URLS.BASE);
+            const cookies = await this.page.context().cookies(CLAUDE_URLS.BASE);
             const sessionCookie = cookies.find(c => c.name === 'sessionKey');
 
             if (!sessionCookie) {
@@ -201,14 +222,14 @@ class ClaudeAuth {
                     return { success: false, cancelled: true };
                 }
 
-                if (!this.browser.isConnected()) {
+                if (!this._isAlive()) {
                     if (debug) {
                         getDebugChannel().appendLine('Auth: Browser disconnected - login cancelled');
                     }
                     return { success: false, cancelled: true };
                 }
 
-                const cookies = await this.page.cookies(CLAUDE_URLS.BASE);
+                const cookies = await this.page.context().cookies(CLAUDE_URLS.BASE);
                 const hasSessionKey = cookies.some(c => c.name === 'sessionKey');
 
                 if (hasSessionKey) {

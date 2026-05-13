@@ -18,12 +18,12 @@
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
-// puppeteer-core is lazy-loaded to avoid crashing on import when the module
-// is not bundled (esbuild externalises it). Only loaded when legacy mode is used.
-let _puppeteer = null;
-function getPuppeteer() {
-    if (!_puppeteer) _puppeteer = require('puppeteer-core');
-    return _puppeteer;
+// playwright-core's chromium namespace is lazy-loaded so the legacy path
+// has no runtime cost when claudemeter.useLegacyScraper is unset.
+let _chromium = null;
+function getChromium() {
+    if (!_chromium) _chromium = require('playwright-core').chromium;
+    return _chromium;
 }
 const path = require('path');
 const fs = require('fs');
@@ -100,7 +100,8 @@ const {
 
 class ClaudeUsageScraper {
     constructor() {
-        this.browser = null;
+        this.browser = null;   // Playwright `Browser` (set only after CDP connect)
+        this.context = null;   // Playwright `BrowserContext` (always set when alive)
         this.page = null;
         this.isInitialized = false;
         this.browserPort = null;
@@ -204,17 +205,17 @@ class ClaudeUsageScraper {
     async tryConnectToExisting() {
         try {
             const browserURL = `http://127.0.0.1:${this.browserPort}`;
-            this.browser = await getPuppeteer().connect({
-                browserURL,
-                defaultViewport: null
-            });
+            this.browser = await getChromium().connectOverCDP(browserURL);
+            // CDP-connected browser exposes pre-existing contexts; pick the
+            // first one. Playwright auto-attaches to all of them.
+            this.context = this.browser.contexts()[0] || await this.browser.newContext();
 
-            const pages = await this.browser.pages();
+            const pages = this.context.pages();
             if (pages.length > 0) {
-                for (const page of pages) {
-                    const url = page.url();
+                for (const p of pages) {
+                    const url = p.url();
                     if (url.includes(CLAUDE_URLS.BASE)) {
-                        this.page = page;
+                        this.page = p;
                         break;
                     }
                 }
@@ -222,12 +223,20 @@ class ClaudeUsageScraper {
                     this.page = pages[0];
                 }
             } else {
-                this.page = await this.browser.newPage();
+                this.page = await this.context.newPage();
             }
 
-            await this.page.setUserAgent(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
-            );
+            // User-Agent header for already-running browsers is set at the
+            // context level. Cannot be retroactively changed on an existing
+            // CDP-attached Chrome instance, so this is best-effort — if the
+            // header doesn't stick the captured API endpoints still work.
+            try {
+                await this.context.setExtraHTTPHeaders({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+                });
+            } catch (_uaErr) {
+                // not fatal
+            }
 
             await this.setupRequestInterception();
 
@@ -248,12 +257,14 @@ class ClaudeUsageScraper {
     }
 
     async initialize(forceHeaded = false) {
-        if (this.isInitialized && this.browser) {
+        if (this.isInitialized && this.context) {
             try {
-                await this.browser.version();
+                // Liveness probe: pages() throws if the context is closed.
+                this.context.pages();
                 return;
             } catch (error) {
                 this.browser = null;
+                this.context = null;
                 this.page = null;
                 this.isInitialized = false;
             }
@@ -281,8 +292,7 @@ class ClaudeUsageScraper {
             this.browserPort = await this.findAvailablePort();
 
             const launchOptions = {
-                headless: headless ? 'new' : false,
-                userDataDir: this.sessionDir,
+                headless,
                 executablePath: chromePath,
                 timeout: 60000,
                 args: [
@@ -298,22 +308,23 @@ class ClaudeUsageScraper {
                     '--no-default-browser-check',
                     `--remote-debugging-port=${this.browserPort}`
                 ],
-                defaultViewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT }
+                viewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT },
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
             };
 
             console.log(`Launching Chrome on port ${this.browserPort}`);
-            this.browser = await getPuppeteer().launch(launchOptions);
-            this.page = await this.browser.newPage();
-
-            await this.page.setUserAgent(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
-            );
+            // launchPersistentContext both spawns the browser AND returns the
+            // first context. We treat the context as our primary handle —
+            // there is no separate Browser object in this mode.
+            this.context = await getChromium().launchPersistentContext(this.sessionDir, launchOptions);
+            this.browser = null;
+            this.page = this.context.pages()[0] || await this.context.newPage();
 
             await this.setupRequestInterception();
 
             this.isInitialized = true;
             this.isConnectedBrowser = false;
-            this.auth.setPageAndBrowser(this.page, this.browser);
+            this.auth.setPageAndBrowser(this.page, this.context);
 
             console.log('Successfully launched new browser');
         } catch (error) {
@@ -377,7 +388,7 @@ class ClaudeUsageScraper {
                 // Clear any previous failed state - session is now valid
                 BrowserState.clear();
                 await this.page.goto(CLAUDE_URLS.USAGE, {
-                    waitUntil: 'networkidle2',
+                    waitUntil: 'networkidle',
                     timeout: TIMEOUTS.PAGE_LOAD
                 });
                 return;
@@ -403,7 +414,7 @@ class ClaudeUsageScraper {
 
             try {
                 await this.page.goto(CLAUDE_URLS.USAGE, {
-                    waitUntil: 'networkidle2',
+                    waitUntil: 'networkidle',
                     timeout: TIMEOUTS.PAGE_LOAD
                 });
                 // If we get here without error, the session worked
@@ -469,7 +480,7 @@ class ClaudeUsageScraper {
                 await this.initialize(false);
 
                 await this.page.goto(CLAUDE_URLS.USAGE, {
-                    waitUntil: 'networkidle2',
+                    waitUntil: 'networkidle',
                     timeout: TIMEOUTS.PAGE_LOAD
                 });
 
@@ -500,10 +511,14 @@ class ClaudeUsageScraper {
 
     async setupRequestInterception() {
         try {
-            await this.page.setRequestInterception(true);
+            // Playwright's unified routing model: page.route() registers a
+            // handler that MUST call route.continue() (or abort/fulfil) for
+            // each request, replacing puppeteer's setRequestInterception +
+            // request-event pair.
             this.capturedEndpoints = [];
 
-            this.page.on('request', (request) => {
+            await this.page.route('**/*', (route) => {
+                const request = route.request();
                 const url = request.url();
 
                 if (url.includes('/api/')) {
@@ -545,7 +560,7 @@ class ClaudeUsageScraper {
                     console.log('Captured overage endpoint:', this.overageEndpoint);
                 }
 
-                request.continue();
+                route.continue();
             });
 
             this.page.on('response', async (response) => {
@@ -582,7 +597,7 @@ class ClaudeUsageScraper {
 
         try {
             await this.page.goto(CLAUDE_URLS.USAGE, {
-                waitUntil: 'networkidle2',
+                waitUntil: 'networkidle',
                 timeout: TIMEOUTS.PAGE_LOAD
             });
 
@@ -601,17 +616,24 @@ class ClaudeUsageScraper {
                     console.log('Using captured API endpoint for direct access');
                     if (debug) getDebugChannel().appendLine('Attempting direct API fetch...');
 
-                    const cookies = await this.page.cookies();
+                    // Cookies are owned by the BrowserContext in Playwright;
+                    // page.cookies() doesn't exist. context.cookies() returns
+                    // all cookies for the context (no filter argument
+                    // required at this call site).
+                    const cookies = await this.page.context().cookies();
                     const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
 
-                    const response = await this.page.evaluate(async (endpoint, headers, cookieStr) => {
+                    // Playwright's page.evaluate accepts ONE argument (not
+                    // a variadic list like puppeteer). Multiple values are
+                    // passed as a single object and destructured inside.
+                    const response = await this.page.evaluate(async ({ endpoint, headers, cookieStr }) => {
                         const resp = await fetch(endpoint, {
                             method: 'GET',
                             headers: { ...headers, 'Cookie': cookieStr }
                         });
                         if (!resp.ok) throw new Error(`API request failed: ${resp.status}`);
                         return await resp.json();
-                    }, this.apiEndpoint, this.apiHeaders, cookieString);
+                    }, { endpoint: this.apiEndpoint, headers: this.apiHeaders, cookieStr: cookieString });
 
                     if (debug) {
                         getDebugChannel().appendLine('Direct API fetch SUCCESS!');
@@ -623,13 +645,13 @@ class ClaudeUsageScraper {
 
                     if (this.creditsEndpoint) {
                         try {
-                            creditsData = await this.page.evaluate(async (endpoint, headers, cookieStr) => {
+                            creditsData = await this.page.evaluate(async ({ endpoint, headers, cookieStr }) => {
                                 const resp = await fetch(endpoint, {
                                     method: 'GET',
                                     headers: { ...headers, 'Cookie': cookieStr }
                                 });
                                 return resp.ok ? await resp.json() : null;
-                            }, this.creditsEndpoint, this.apiHeaders, cookieString);
+                            }, { endpoint: this.creditsEndpoint, headers: this.apiHeaders, cookieStr: cookieString });
                             if (debug && creditsData) {
                                 getDebugChannel().appendLine(`Prepaid credits response: ${JSON.stringify(creditsData)}`);
                             }
@@ -640,13 +662,13 @@ class ClaudeUsageScraper {
 
                     if (this.overageEndpoint) {
                         try {
-                            overageData = await this.page.evaluate(async (endpoint, headers, cookieStr) => {
+                            overageData = await this.page.evaluate(async ({ endpoint, headers, cookieStr }) => {
                                 const resp = await fetch(endpoint, {
                                     method: 'GET',
                                     headers: { ...headers, 'Cookie': cookieStr }
                                 });
                                 return resp.ok ? await resp.json() : null;
-                            }, this.overageEndpoint, this.apiHeaders, cookieString);
+                            }, { endpoint: this.overageEndpoint, headers: this.apiHeaders, cookieStr: cookieString });
                         } catch (e) {
                             if (debug) getDebugChannel().appendLine(`Overage fetch error: ${e.message}`);
                         }
@@ -695,40 +717,35 @@ class ClaudeUsageScraper {
 
     async close() {
         try {
-            if (this.browser) {
-                if (this.isConnectedBrowser) {
-                    await this.browser.disconnect();
-                    console.log('Disconnected from shared browser');
-                } else {
-                    // Try graceful close with timeout, then force kill if needed
-                    const browserProcess = this.browser.process();
-                    const closePromise = this.browser.close();
-                    const timeoutPromise = new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Browser close timeout')), 5000)
-                    );
-
-                    try {
-                        await Promise.race([closePromise, timeoutPromise]);
-                        console.log('Closed browser instance');
-                    } catch (e) {
-                        // Force kill if graceful close times out
-                        fileLog(`Browser close timed out, force killing`);
-                        if (browserProcess) {
-                            try {
-                                browserProcess.kill('SIGKILL');
-                            } catch (_killErr) {
-                                // Process may have already exited
-                            }
-                        }
-                        // Wait for OS to fully release userDataDir resources
-                        await sleep(1000);
-                    }
+            if (this.isConnectedBrowser && this.browser) {
+                // Closing a CDP-connected Browser detaches our process from
+                // the Chrome instance without killing it — same semantic as
+                // puppeteer's disconnect().
+                await this.browser.close();
+                console.log('Disconnected from shared browser');
+            } else if (this.context) {
+                // launchPersistentContext owns the browser; context.close()
+                // shuts both down. playwright-core doesn't expose the
+                // underlying process PID, so SIGKILL fallback is gone —
+                // race against a 5s timeout and let the OS handle any
+                // orphan Chrome processes (rare in practice).
+                const closePromise = this.context.close();
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Browser close timeout')), 5000)
+                );
+                try {
+                    await Promise.race([closePromise, timeoutPromise]);
+                    console.log('Closed browser instance');
+                } catch (e) {
+                    fileLog(`Browser close timed out: ${e.message}`);
+                    await sleep(1000);
                 }
-                this.browser = null;
-                this.page = null;
-                this.isInitialized = false;
-                this.isConnectedBrowser = false;
             }
+            this.browser = null;
+            this.context = null;
+            this.page = null;
+            this.isInitialized = false;
+            this.isConnectedBrowser = false;
         } finally {
             // Always release the lock when closing
             await this.releaseBrowserLockIfHeld();
@@ -774,17 +791,18 @@ class ClaudeUsageScraper {
         }
 
         try {
-            if (this.browser) {
+            if (this.context || this.browser) {
                 try {
-                    if (this.isConnectedBrowser) {
-                        await this.browser.disconnect();
-                    } else {
-                        await this.browser.close();
+                    if (this.isConnectedBrowser && this.browser) {
+                        await this.browser.close();  // CDP detach
+                    } else if (this.context) {
+                        await this.context.close();  // persistent context teardown
                     }
                 } catch (e) {
                     // Ignore close errors
                 }
                 this.browser = null;
+                this.context = null;
                 this.page = null;
                 this.isInitialized = false;
             }
@@ -799,7 +817,6 @@ class ClaudeUsageScraper {
 
             const launchOptions = {
                 headless: false,
-                userDataDir: this.sessionDir,
                 executablePath: chromePath,
                 args: [
                     '--no-sandbox',
@@ -814,7 +831,8 @@ class ClaudeUsageScraper {
                     '--no-default-browser-check',
                     `--remote-debugging-port=${this.browserPort}`
                 ],
-                defaultViewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT }
+                viewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT },
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
             };
 
             if (debug) {
@@ -822,21 +840,18 @@ class ClaudeUsageScraper {
                 getDebugChannel().appendLine(`Executable: ${chromePath}`);
             }
 
-            this.browser = await getPuppeteer().launch(launchOptions);
-            this.page = await this.browser.newPage();
-
-            await this.page.setUserAgent(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
-            );
+            this.context = await getChromium().launchPersistentContext(this.sessionDir, launchOptions);
+            this.browser = null;
+            this.page = this.context.pages()[0] || await this.context.newPage();
 
             await this.setupRequestInterception();
 
             this.isInitialized = true;
             this.isConnectedBrowser = false;
-            this.auth.setPageAndBrowser(this.page, this.browser);
+            this.auth.setPageAndBrowser(this.page, this.context);
 
             await this.page.goto(CLAUDE_URLS.LOGIN, {
-                waitUntil: 'networkidle2',
+                waitUntil: 'networkidle',
                 timeout: TIMEOUTS.PAGE_LOAD
             });
 

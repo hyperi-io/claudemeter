@@ -118,7 +118,7 @@ describe('composeTooltip — session block', () => {
                 timestamp: new Date(),
             },
         });
-        expect(out).toMatch(/\*\*Session 42%\*\*/);
+        expect(out).toMatch(/\*\*Session - 42%\*\*/);
         expect(out).toMatch(/Resets/);
     });
 
@@ -128,7 +128,7 @@ describe('composeTooltip — session block', () => {
             usageData: { usagePercent: 10, resetTime: '1h', timestamp: new Date() },
             sessionData: { tokenUsage: { current: 50000, limit: 1000000 } },
         });
-        expect(out).toMatch(/Tokens:/);
+        expect(out).toMatch(/Tokens /);
     });
 
     it('shows override line when tokenLimitOverride > 0', () => {
@@ -150,7 +150,7 @@ describe('composeTooltip — weekly block', () => {
                 timestamp: new Date(),
             },
         });
-        expect(out).toMatch(/\*\*Weekly 25%\*\*/);
+        expect(out).toMatch(/\*\*Weekly - 25%\*\*/);
     });
 
     it('includes Sonnet and Opus sub-lines when provided', () => {
@@ -163,8 +163,8 @@ describe('composeTooltip — weekly block', () => {
                 timestamp: new Date(),
             },
         });
-        expect(out).toMatch(/Sonnet: 30%/);
-        expect(out).toMatch(/Opus: 15%/);
+        expect(out).toMatch(/Sonnet 30%/);
+        expect(out).toMatch(/Opus 15%/);
     });
 });
 
@@ -178,7 +178,7 @@ describe('composeTooltip — credits blocks', () => {
             },
         });
         expect(out).toMatch(/\*\*Extra Usage\*\*/);
-        expect(out).toMatch(/Used:/);
+        expect(out).toMatch(/Used \$/);
     });
 
     it('renders Credits block when only prepaidCredits present', () => {
@@ -201,7 +201,7 @@ describe('composeTooltip — credits blocks', () => {
                 timestamp: new Date(),
             },
         });
-        expect(out).toMatch(/Balance:/);
+        expect(out).toMatch(/Balance \$/);
     });
 });
 
@@ -265,7 +265,7 @@ describe('composeTooltip — section error containment', () => {
             extensionVersion: '2.3.4',
         });
         // Session and footer should still render
-        expect(out).toMatch(/\*\*Session 42%\*\*/);
+        expect(out).toMatch(/\*\*Session - 42%\*\*/);
         expect(out).toMatch(/Claudemeter v2\.3\.4/);
     });
 });
@@ -291,9 +291,9 @@ describe('composeTooltip — Session / Current context / Weekly section split (p
             config: baseConfig,
         });
 
-        const sessionIdx = out.indexOf('**Session 50%**');
-        const contextIdx = out.indexOf('**Current context 40%**');
-        const weeklyIdx  = out.indexOf('**Weekly 30%**');
+        const sessionIdx = out.indexOf('**Session - 50%**');
+        const contextIdx = out.indexOf('**Current context - 40%**');
+        const weeklyIdx  = out.indexOf('**Weekly - 30%**');
 
         expect(sessionIdx).toBeGreaterThan(-1);
         expect(contextIdx).toBeGreaterThan(-1);
@@ -312,87 +312,103 @@ describe('composeTooltip — Session / Current context / Weekly section split (p
         });
         const sessionIdx = out.indexOf('**Session');
         const contextIdx = out.indexOf('**Current context');
-        const tokensIdx  = out.indexOf('Tokens:');
+        const tokensIdx  = out.indexOf('Tokens ');
         expect(tokensIdx).toBeGreaterThan(contextIdx);
         expect(tokensIdx).toBeGreaterThan(sessionIdx);
     });
 });
 
-describe('composeTooltip — tier colour wrapping', () => {
+describe('composeTooltip — plain rendering (regression guards)', () => {
+    // VS Code's MarkdownString tooltip context strips both raw
+    // style="color:#HEX" (microsoft/vscode#142457) AND
+    // `var(--vscode-...)` CSS variables — CSS vars only resolve in
+    // webviews. These tests guard against any future attempt to
+    // reintroduce per-row tier colour in the tooltip, which would
+    // visibly render as plain text and leave styling tags in the
+    // markdown body.
+
     const baseConfig = { tokenLimitOverride: 0, use24HourTime: false, weeklyPrecisionThreshold: 75 };
 
-    it('wraps Current context heading + Tokens row in token tier hex when tierColors set', () => {
+    it('emits no <span> tag and no style attribute in any row', () => {
         const out = composeTooltip({
             usageData: { usagePercent: 30, resetTime: '2h' },
             sessionData: {
                 tokenUsage: { current: 300_000, limit: 1_000_000, limitConfidence: 'authoritative' },
             },
-            tierColors: {
-                session: null,
-                tokens: { hex: '#6ca0c4', level: 'rotLight' },
-                weekly: null,
-            },
-            tokensInfo: { recommendation: 'Recall starts to drift in long-context tasks. /compact when it\'s a good time — on your terms.' },
+            tokensInfo: { recommendation: 'Recall starts to drift in long-context tasks.' },
             config: baseConfig,
         });
-        expect(out).toContain('<span style="color:#6ca0c4">**Current context 30%**');
-        expect(out).toContain('<span style="color:#6ca0c4">● Tokens:');
-        expect(out).toContain('Recall starts to drift');
-        expect(out).toContain('on your terms');
+        expect(out).not.toContain('<span');
+        expect(out).not.toContain('style=');
     });
 
-    it('wraps Session heading at warning tier in yellow', () => {
-        const out = composeTooltip({
-            usageData: { usagePercent: 85, resetTime: '2h' },
-            sessionData: {
-                tokenUsage: { current: 1, limit: 1_000_000, limitConfidence: 'authoritative' },
-            },
-            tierColors: {
-                session: { hex: '#cca700', level: 'warning' },
-                tokens: null,
-                weekly: null,
-            },
-            config: baseConfig,
-        });
-        expect(out).toContain('<span style="color:#cca700">**Session 85%**</span>');
-    });
-
-    it('wraps Weekly heading at error tier in red', () => {
+    it('emits no var(--vscode-...) CSS variable references', () => {
         const out = composeTooltip({
             usageData: {
-                usagePercent: 10,
-                resetTime: '2h',
-                usagePercentWeek: 95,
-                resetTimeWeek: '3d',
+                usagePercent: 85, resetTime: '2h',
+                usagePercentWeek: 95, resetTimeWeek: '3d',
             },
             sessionData: {
-                tokenUsage: { current: 1, limit: 1_000_000, limitConfidence: 'authoritative' },
-            },
-            tierColors: {
-                session: null,
-                tokens: null,
-                weekly: { hex: '#cc4540', level: 'error' },
+                tokenUsage: { current: 800_000, limit: 1_000_000, limitConfidence: 'authoritative' },
             },
             config: baseConfig,
         });
-        expect(out).toContain('<span style="color:#cc4540">**Weekly 95%**</span>');
+        expect(out).not.toMatch(/var\(--vscode-/);
+        expect(out).not.toContain('claudemeter-rotLight');
+        expect(out).not.toContain('claudemeter-rotDeep');
+        expect(out).not.toContain('claudemeter-outageRed');
+        expect(out).not.toContain('charts-yellow');
     });
 
-    it('basic mode: no <span style>, no ● prefix, no recommendation, but section split preserved', () => {
+    it('emits no raw #HEX colours in style position', () => {
+        const out = composeTooltip({
+            usageData: {
+                usagePercent: 85, resetTime: '2h',
+                usagePercentWeek: 95, resetTimeWeek: '3d',
+            },
+            sessionData: {
+                tokenUsage: { current: 800_000, limit: 1_000_000, limitConfidence: 'authoritative' },
+            },
+            config: baseConfig,
+        });
+        expect(out).not.toMatch(/style="color:\s*#[0-9a-fA-F]{3,6}/);
+    });
+
+    it('emits no ● bullet prefix on the Tokens row', () => {
         const out = composeTooltip({
             usageData: { usagePercent: 30, resetTime: '2h' },
             sessionData: {
                 tokenUsage: { current: 300_000, limit: 1_000_000, limitConfidence: 'authoritative' },
             },
-            // tierColors omitted (basic-mode equivalent)
             config: baseConfig,
         });
-        expect(out).not.toContain('<span style');
         expect(out).not.toContain('●');
-        expect(out).not.toContain('Recall starts to drift');
-        expect(out).not.toContain('Quality drops sharply');
-        // But section split STILL present
-        expect(out).toContain('**Current context 30%**');
-        expect(out).toContain('**Session');
+    });
+
+    it('still includes the recommendation when tokensInfo.recommendation is set', () => {
+        const out = composeTooltip({
+            usageData: { usagePercent: 30, resetTime: '2h' },
+            sessionData: {
+                tokenUsage: { current: 300_000, limit: 1_000_000, limitConfidence: 'authoritative' },
+            },
+            tokensInfo: { recommendation: 'Recall starts to drift in long-context tasks.' },
+            config: baseConfig,
+        });
+        expect(out).toContain('Recall starts to drift');
+    });
+
+    it('section split preserved with plain bold headers (no wrapping)', () => {
+        const out = composeTooltip({
+            usageData: { usagePercent: 30, resetTime: '2h', usagePercentWeek: 10, resetTimeWeek: '3d' },
+            sessionData: {
+                tokenUsage: { current: 300_000, limit: 1_000_000, limitConfidence: 'authoritative' },
+            },
+            config: baseConfig,
+        });
+        expect(out).toContain('**Session - 30%**');
+        expect(out).toContain('**Current context - 30%**');
+        expect(out).toContain('**Weekly - 10%**');
+        // Headers stand alone on their line — never embedded inside an HTML tag
+        expect(out).not.toMatch(/<[^>]*>\*\*(Session|Weekly|Current context)/);
     });
 });

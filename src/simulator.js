@@ -14,6 +14,9 @@ let simulatedTokenLevel = null;
 let simulatedTokenUsed = null;          // raw token count, lets simulator drive 'used'
 let simulatedSessionPercent = null;
 let simulatedWeeklyPercent = null;
+let simulatedSonnetPercent = null;      // 0..100, overrides usageData.usagePercentSonnet
+let simulatedOpusPercent = null;        // 0..100, overrides usageData.usagePercentOpus
+let simulatedCreditsPercent = null;     // 0..100, overrides monthlyCredits.percent
 let simulatedHappyHour = null;          // null | true | false
 let simulatedColorMode = null;          // null | 'color' | 'basic'
 let simulatedProfileOverride = null;    // null | profile name string
@@ -59,6 +62,30 @@ function setWeeklyPercent(p) {
 }
 function getWeeklyPercent() { return simulatedWeeklyPercent; }
 
+function setSonnetPercent(p) {
+    if (p === null) { simulatedSonnetPercent = null; return; }
+    const v = clamp01_100(p);
+    if (v === null) return;
+    simulatedSonnetPercent = v;
+}
+function getSonnetPercent() { return simulatedSonnetPercent; }
+
+function setOpusPercent(p) {
+    if (p === null) { simulatedOpusPercent = null; return; }
+    const v = clamp01_100(p);
+    if (v === null) return;
+    simulatedOpusPercent = v;
+}
+function getOpusPercent() { return simulatedOpusPercent; }
+
+function setCreditsPercent(p) {
+    if (p === null) { simulatedCreditsPercent = null; return; }
+    const v = clamp01_100(p);
+    if (v === null) return;
+    simulatedCreditsPercent = v;
+}
+function getCreditsPercent() { return simulatedCreditsPercent; }
+
 function setHappyHour(active) {
     if (active === null) { simulatedHappyHour = null; return; }
     simulatedHappyHour = !!active;
@@ -84,6 +111,9 @@ function clearAll() {
     simulatedTokenUsed = null;
     simulatedSessionPercent = null;
     simulatedWeeklyPercent = null;
+    simulatedSonnetPercent = null;
+    simulatedOpusPercent = null;
+    simulatedCreditsPercent = null;
     simulatedHappyHour = null;
     simulatedColorMode = null;
     simulatedProfileOverride = null;
@@ -94,6 +124,9 @@ module.exports = {
     setTokenUsed, getTokenUsed,
     setSessionPercent, getSessionPercent,
     setWeeklyPercent, getWeeklyPercent,
+    setSonnetPercent, getSonnetPercent,
+    setOpusPercent, getOpusPercent,
+    setCreditsPercent, getCreditsPercent,
     setHappyHour, getHappyHour,
     setColorMode, getColorMode,
     setProfileOverride, getProfileOverride,

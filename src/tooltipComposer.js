@@ -21,8 +21,7 @@
 //     happyHourState,              // { active, icon, endsAt } from happyHour resolver
 //     extensionVersion,            // from vscode.extensions.getExtension(...)
 //     claudeCodeSelectedModel,     // from workspace config
-//     tierColors,                  // { session, tokens, weekly } hex colours (Phase C)
-//     tokensInfo,                  // { current, limit, knownLimit, recommendation } (Phase C)
+//     tokensInfo,                  // { current, limit, knownLimit, recommendation }
 //     config: {                    // pre-resolved config values
 //       tokenLimitOverride,
 //       use24HourTime,
@@ -37,16 +36,6 @@ const {
 } = require('./utils');
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
-
-/**
- * Wrap text in a <span style="color:HEX"> when hex is present, otherwise
- * return the text unchanged. Used for per-row tier-colour wrapping in
- * trusted markdown tooltips.
- */
-function wrapHex(hex, text) {
-    if (!hex) return text;
-    return `<span style="color:${hex}">${text}</span>`;
-}
 
 function composeTooltip(state) {
     const lines = [];
@@ -162,17 +151,16 @@ function renderSpacerAfterIdentity(state) {
 }
 
 function renderSessionBlock(state) {
-    const { usageData, config, tierColors } = state;
+    const { usageData, config } = state;
     const lines = [];
 
     if (usageData) {
         const sessionPercent = usageData.usagePercent;
         const resetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTime);
-        const sessionHex = tierColors?.session?.hex || null;
-        lines.push(wrapHex(sessionHex, `**Session ${sessionPercent}%**`));
+        lines.push(`**Session - ${sessionPercent}%**`);
         lines.push(`Resets ${resetTimeExpanded}`);
         if (config?.tokenLimitOverride > 0) {
-            lines.push(`⚙ Context window override: ${formatCompact(config.tokenLimitOverride)}`);
+            lines.push(`⚙ Context window override ${formatCompact(config.tokenLimitOverride)}`);
         }
     }
 
@@ -180,55 +168,40 @@ function renderSessionBlock(state) {
 }
 
 function renderCurrentContextBlock(state) {
-    const { sessionData, tierColors, tokensInfo } = state;
+    const { sessionData, tokensInfo } = state;
     if (!sessionData || !sessionData.tokenUsage) return [];
 
     const tokenPercent = Math.round(
         (sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100
     );
-    const tokensHex = tierColors?.tokens?.hex || null;
-    const wrap = (text) => wrapHex(tokensHex, text);
 
     const lines = [
         '',  // blank line for visual separation
-        wrap(`**Current context ${tokenPercent}%**`),
+        `**Current context - ${tokenPercent}%**`,
+        `Tokens ${formatCompact(sessionData.tokenUsage.current)} / `
+        + `${formatCompact(sessionData.tokenUsage.limit)}`,
     ];
 
-    // Tokens row — gets the prefix dot when colour is active, plain otherwise
-    if (tokensHex) {
-        lines.push(wrap(
-            `● Tokens: ${formatCompact(sessionData.tokenUsage.current)} / `
-            + `${formatCompact(sessionData.tokenUsage.limit)}`
-        ));
-    } else {
-        lines.push(
-            `Tokens: ${formatCompact(sessionData.tokenUsage.current)} / `
-            + `${formatCompact(sessionData.tokenUsage.limit)}`
-        );
-    }
-
-    // Recommendation sub-line — only in colour mode + when tier has one
-    if (tokensHex && tokensInfo?.recommendation) {
-        lines.push(wrap(`_${tokensInfo.recommendation}_`));
+    if (tokensInfo?.recommendation) {
+        lines.push(`_${tokensInfo.recommendation}_`);
     }
 
     return lines;
 }
 
 function renderWeeklyBlock(state) {
-    const { usageData, tierColors } = state;
+    const { usageData } = state;
     if (!usageData || usageData.usagePercentWeek === undefined) return [];
 
     const weeklyPercent = usageData.usagePercentWeek;
     const weeklyResetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTimeWeek);
-    const weeklyHex = tierColors?.weekly?.hex || null;
-    const lines = ['', wrapHex(weeklyHex, `**Weekly ${weeklyPercent}%**`)];
+    const lines = ['', `**Weekly - ${weeklyPercent}%**`];
 
     if (usageData.usagePercentSonnet !== null && usageData.usagePercentSonnet !== undefined) {
-        lines.push(`Sonnet: ${usageData.usagePercentSonnet}%`);
+        lines.push(`Sonnet ${usageData.usagePercentSonnet}%`);
     }
     if (usageData.usagePercentOpus !== null && usageData.usagePercentOpus !== undefined) {
-        lines.push(`Opus: ${usageData.usagePercentOpus}%`);
+        lines.push(`Opus ${usageData.usagePercentOpus}%`);
     }
 
     lines.push(`Resets ${weeklyResetTimeExpanded}`);
@@ -245,13 +218,13 @@ function renderCreditsBlock(state) {
         const usedFormatted = `${currencySymbol}${credits.used.toLocaleString()}`;
         const limitFormatted = `${currencySymbol}${credits.limit.toLocaleString()}`;
         const lines = ['', '**Extra Usage**',
-            `Used: ${usedFormatted} / ${limitFormatted} ${credits.currency} (${credits.percent}%)`];
+            `Used ${usedFormatted} / ${limitFormatted} ${credits.currency} (${credits.percent}%)`];
 
         if (usageData.prepaidCredits) {
             const prepaid = usageData.prepaidCredits;
             const prepaidSymbol = getCurrencySymbol(prepaid.currency);
             lines.push(
-                `Balance: ${prepaidSymbol}${prepaid.balance.toLocaleString()} ${prepaid.currency}`
+                `Balance ${prepaidSymbol}${prepaid.balance.toLocaleString()} ${prepaid.currency}`
             );
         }
         return lines;
@@ -261,7 +234,7 @@ function renderCreditsBlock(state) {
         const prepaid = usageData.prepaidCredits;
         const prepaidSymbol = getCurrencySymbol(prepaid.currency);
         return ['', '**Credits**',
-            `Balance: ${prepaidSymbol}${prepaid.balance.toLocaleString()} ${prepaid.currency}`];
+            `Balance ${prepaidSymbol}${prepaid.balance.toLocaleString()} ${prepaid.currency}`];
     }
 
     return [];
@@ -303,8 +276,9 @@ function renderActivityQuip(state) {
 
 function renderPlatformBlock(state) {
     // platformTooltipLines comes from claudeLabelComposer.composeClaudeLabel()
-    // e.g. ["$(pulse) Service degraded — API delays",
-    //       "🍺 Happy hour — off-peak, ends 05:00 local"]
+    // e.g. ["$(warning) Service degraded — API delays",
+    //       "Last checked: 12:34",
+    //       "[View status page](...)"]
     const { platformTooltipLines } = state;
     if (!Array.isArray(platformTooltipLines) || platformTooltipLines.length === 0) {
         return [];
@@ -317,7 +291,7 @@ function renderFooter(state) {
     const lines = [''];
     if (usageData?.timestamp) {
         const ts = usageData.timestamp instanceof Date ? usageData.timestamp : new Date(usageData.timestamp);
-        lines.push(`Updated: ${ts.toLocaleTimeString(undefined, { hour12: !config?.use24HourTime })}`);
+        lines.push(`Updated ${ts.toLocaleTimeString(undefined, { hour12: !config?.use24HourTime })}`);
     }
     if (extensionVersion) {
         lines.push(`Claudemeter v${extensionVersion}`);

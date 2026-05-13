@@ -3,8 +3,7 @@
 //  Purpose:      SINGLE SOURCE OF TRUTH for Tk-tier colours. Maps each tier
 //                to its theme-color ID (used by status bar text), its
 //                claudemeter.colors.* setting key (custom hex override), and
-//                a fallback hex (used by tooltip HTML inline
-//                <span style="color:HEX"> when ThemeColor isn't applicable).
+//                a fallback hex (used when ThemeColor isn't applicable).
 //
 //                Both src/colorResolver.js and src/tooltipComposer.js read
 //                from this map. No hex constants live anywhere else.
