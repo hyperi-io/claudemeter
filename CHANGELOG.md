@@ -1,3 +1,30 @@
+# [2.4.0](https://github.com/hyperi-io/claudemeter/compare/v2.3.10...v2.4.0) (2026-05-15)
+
+
+### Bug Fixes
+
+* **deps:** npm audit fix — resolve 3 vulnerabilities (fast-uri, basic-ftp, ip-address) ([5cc5898](https://github.com/hyperi-io/claudemeter/commit/5cc589833ceceee6af7d88f3930fda184a29ed35))
+* ship playwright-core as external dependency, refactor extension.js ([d0179ca](https://github.com/hyperi-io/claudemeter/commit/d0179cafd567261b6838a2eb68b64bc457ac8427))
+* **tk:** convert profileSelector.js from ESM to CommonJS ([5a2f3f7](https://github.com/hyperi-io/claudemeter/commit/5a2f3f73545d364e3506c23bb8bdde65c703f21b))
+* **tk:** pass tokensInfo to composeTooltip + cleanup ([6420f72](https://github.com/hyperi-io/claudemeter/commit/6420f72651cf63bf634bbb76b75b0a6b5b8761a4))
+
+
+### Features
+
+* **deps:** migrate puppeteer-core → playwright-core; Node 22 baseline; F5 simulator expansion ([3b0f892](https://github.com/hyperi-io/claudemeter/commit/3b0f8920512de20cddca22020f5a7bb267aa4b02)), closes [microsoft/playwright#33031](https://github.com/microsoft/playwright/issues/33031)
+* **schema:** profile-driven Tk threshold settings + theme colours ([b57faad](https://github.com/hyperi-io/claudemeter/commit/b57faad2b3d1ae798a39f3c396a32569ba7fa5ae))
+* **simulator:** test-mode simulator state for F5 debugging ([ac49c0d](https://github.com/hyperi-io/claudemeter/commit/ac49c0db7939a51e9f7c922b1ca38df49727e839))
+* **simulator:** wire overrides into statusBar + 8 palette commands ([3b7a4b2](https://github.com/hyperi-io/claudemeter/commit/3b7a4b2907f1a3bdcf4010ae40a7850787a939a2))
+* **tk:** colorResolver — three-layer tier-colour resolution ([e7e6851](https://github.com/hyperi-io/claudemeter/commit/e7e6851cbf7a027c87527800813241da5f3b72f9))
+* **tk:** data modules — tier→colour map and tier→recommendation map ([8c12b53](https://github.com/hyperi-io/claudemeter/commit/8c12b53fc0a9d455e7de30376ec9b76f3b724d12))
+* **tk:** getTkLevel — pure 5-tier resolver anchored to absolute tokens ([8341a59](https://github.com/hyperi-io/claudemeter/commit/8341a59ad274c3d67d3ceff832075bfd89f95c1e))
+* **tk:** one-shot legacy-settings migration to profile-driven model ([0980f20](https://github.com/hyperi-io/claudemeter/commit/0980f20c4a7dfd286036994a9ee6ab1f9713dd0c))
+* **tk:** profile definitions per Claude account tier ([b908fe5](https://github.com/hyperi-io/claudemeter/commit/b908fe5cda36d758c0b231c2d864f5edfd74a581))
+* **tk:** profileSelector — explicit priority chain over detection signals ([61dc1d0](https://github.com/hyperi-io/claudemeter/commit/61dc1d052d133bb5baad930622d9ff973f01968e))
+* tooltip section split + tier-colour wrapping ([e94f998](https://github.com/hyperi-io/claudemeter/commit/e94f9988a6e258d25e0e3e9411ce26ddee6a50d6))
+* wire legacy-settings migration on extension activation ([ae6a71f](https://github.com/hyperi-io/claudemeter/commit/ae6a71fb568bcda990412c32c5c64edc1d30eb0a))
+* wire profile-driven Tk threshold system into statusBar ([26eb817](https://github.com/hyperi-io/claudemeter/commit/26eb8171b4dfa823cc62d3e2323be381e9bfe68d))
+
 ## [2.3.10](https://github.com/hyperi-io/claudemeter/compare/v2.3.9...v2.3.10) (2026-05-06)
 
 
