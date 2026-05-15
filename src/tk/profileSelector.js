@@ -26,7 +26,7 @@
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-import { PROFILES } from './profiles.js';
+const { PROFILES } = require('./profiles.js');
 
 let hasWarnedUnknown = false;
 
@@ -37,7 +37,7 @@ let hasWarnedUnknown = false;
  * @param {{ appendLine: (msg: string) => void } | null} logger - optional output channel
  * @returns {object} a profile from PROFILES (never null — always falls back to 'unknown')
  */
-export function selectProfile(signals, logger = null) {
+function selectProfile(signals, logger = null) {
     const subscriptionType = signals?.subscriptionType;
     const rateLimitTier = signals?.rateLimitTier;
     const orgType = signals?.orgType;
@@ -71,6 +71,8 @@ export function selectProfile(signals, logger = null) {
  * account-switch events so the warning re-emits if detection still
  * fails after the switch.
  */
-export function resetUnknownWarning() {
+function resetUnknownWarning() {
     hasWarnedUnknown = false;
 }
+
+module.exports = { selectProfile, resetUnknownWarning };
