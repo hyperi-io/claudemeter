@@ -1,3 +1,10 @@
+## [2.3.10](https://github.com/hyperi-io/claudemeter/compare/v2.3.9...v2.3.10) (2026-05-06)
+
+
+### Bug Fixes
+
+* rework gauge thresholds and status icons ([0680729](https://github.com/hyperi-io/claudemeter/commit/0680729793ba2b903546bebf65a74f00adb70973))
+
 ## [2.3.9](https://github.com/hyperi-io/claudemeter/compare/v2.3.8...v2.3.9) (2026-04-30)
 
 
