@@ -198,6 +198,43 @@ const VIEWPORT = {
     HEIGHT: 800
 };
 
+// Single source of truth for the User-Agent claudemeter presents to
+// Claude.ai. Used by the HTTP fetcher (in BROWSER_HEADERS) and by both
+// browser-driving paths (login flow + legacy scraper).
+//
+// Chrome uses a frozen UA format: `Chrome/$MAJOR.0.0.0` (minor/patch
+// always 0.0.0 since Chrome 95). Only the major version moves.
+// Re-check stable version every ~3 months: https://chromereleases.googleblog.com/
+// Current as of 2026-05-13: Chrome 148 (stable since May 5, 2026).
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
+
+// Chrome/Chromium launch arguments shared between the login flow
+// (httpFetcher.js) and the legacy scraper (scraper.js). The
+// remote-debugging port is injected per-launch so two parallel browser
+// instances don't fight over the same port.
+//
+// Flags chosen for: containers/CI (--no-sandbox, --disable-setuid-sandbox,
+// --disable-dev-shm-usage), automation-detection bypass
+// (--disable-blink-features=AutomationControlled), and quieter user
+// experience (--disable-session-crashed-bubble, --disable-infobars,
+// --noerrdialogs, --hide-crash-restore-bubble, --no-first-run,
+// --no-default-browser-check).
+function BROWSER_LAUNCH_ARGS(remoteDebuggingPort) {
+    return [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-session-crashed-bubble',
+        '--disable-infobars',
+        '--noerrdialogs',
+        '--hide-crash-restore-bubble',
+        '--no-first-run',
+        '--no-default-browser-check',
+        `--remote-debugging-port=${remoteDebuggingPort}`,
+    ];
+}
+
 const CLAUDE_URLS = {
     BASE: 'https://claude.ai',
     LOGIN: 'https://claude.ai/login',
@@ -466,6 +503,8 @@ module.exports = {
     DEFAULT_TOKEN_LIMIT,
     TIMEOUTS,
     VIEWPORT,
+    BROWSER_UA,
+    BROWSER_LAUNCH_ARGS,
     CLAUDE_URLS,
     getTokenLimit,
     resolveTokenLimit,

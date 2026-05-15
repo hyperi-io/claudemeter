@@ -7,13 +7,8 @@
 > VSCode Extension. Monitor your Claude Code usage proactively in real time, with full limit information.
 > *No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'*
 >
-> Tracks session, weekly, and token limits across all Claude plans.
+> Tracks session, weekly, token limits, context rot, claude platform status and happy hour across all Claude plans.
 
-> We love Claude Code. Claudemeter exists for the signals developers
-> actually need but Anthropic's marketing would never ship in-product —
-> real-time platform state, context-rot detection past the auto-compact
-> line, account drift alerts. We're not here to compete; we're here to
-> surface what a first-party tool can't.
 
 ![Tooltip](assets/tooltip.png)
 
@@ -23,6 +18,7 @@
 - Limit consumption and reset times
 - Claude service status (working, partial outage, major outage)
 - Happy hour indicator — lights up during Anthropic's off-peak window
+- Context rot indication
 - Claude session and login all local to device
 - Open source: <https://github.com/hyperi-io/claudemeter>
 
@@ -32,33 +28,11 @@
 
 ![Status Bar Default](assets/status-bar-default.png)
 
-## Minimal Status Bar
+## Status Bar All Warnings and Happy Hour
 
-![Status Bar Minimal](assets/status-bar-minimal.png)
-
-## Compact Status Bar
-
-![Status Bar Compact](assets/status-bar-compact.png)
-
-## 12 Hour
-
-![Status Bar 12h](assets/status-bar-default-12h.png)
-
-## 24 Hour
-
-![Status Bar 24h](assets/status-bar-default-24h.png)
-
+![Status Bar All Warnings](assets/status-bar-all-warnings.png)
 
 ## Context Window Detection
-
-> **Snapshot framing (2026-05).** The plan / model / window mappings
-> below reflect Anthropic's tier policy at the time of this enhancement.
-> Specific plan names, model versions, and default window sizes will
-> shift as Anthropic updates its offering — the *detection mechanism
-> itself* (priority chain, rule table, `(inferred)` labelling) is
-> durable and adapts to new mappings without code changes (the rule
-> table is data-driven). Treat the bullet list of evidence below as a
-> 2026-05 snapshot, not as live spec.
 
 Claudemeter automatically detects your context window size — no manual configuration needed.
 
@@ -213,18 +187,6 @@ rot triggers unreachable — error fires first.)
 The rationale above stays in the README so users understand the
 *why* even if they choose to switch the meter off.
 
-### Sources
-
-- [Anthropic — Introducing Claude Opus 4.7](https://www.anthropic.com/news/claude-opus-4-7) (model card linked from launch page)
-- [Zvi Mowshowitz — Opus 4.7 Part 1: The Model Card](https://thezvi.substack.com/p/opus-47-part-1-the-model-card) (third-party walkthrough citing the MRCR v2 numbers above)
-- [Michelangelo paper, arXiv 2409.12640](https://arxiv.org/abs/2409.12640) (where MRCR was introduced)
-- [OpenAI MRCR dataset on Hugging Face](https://huggingface.co/datasets/openai/mrcr) (the v2 expansion)
-- [Damian Galarza — Claude Opus 4.7 Claude Code Tips: Extended Context](https://www.damiangalarza.com/posts/2026-04-30-claude-opus-4-7-claude-code-tips-extended-context/) — *"The lost-in-the-middle problem doesn't disappear at 1M tokens"*
-- [Mejba Ahmed — Stop Context Rot in 2026](https://www.mejba.me/blog/claude-code-1m-context-management) — *"Degradation starts being felt around 300,000 to 400,000 tokens — roughly 30–40% of the 1M ceiling"*
-- [anthropics/claude-code #34685](https://github.com/anthropics/claude-code/issues/34685) — practitioner self-reported degradation starting at 40%, recommending restart by 48%
-- [anthropics/claude-code #35296](https://github.com/anthropics/claude-code/issues/35296) — *"~200-256K of reliable context with progressive degradation thereafter"*
-- [anthropics/claude-code #31806](https://github.com/anthropics/claude-code/issues/31806) — auto-compact trigger implementation (`window − reserve`)
-
 ## Happy Hour
 
 Anthropic throttles Claude Code's 5-hour session window harder during their **peak hours** (Mon–Fri 05:00–23:00 America/Los_Angeles, per the 2026-03-26 announcement — see [claude-code#41788](https://github.com/anthropics/claude-code/issues/41788) / [#41930](https://github.com/anthropics/claude-code/issues/41930)). Outside that window — weekday overnight and all weekend — the session token allowance burns at its expected rate.
@@ -249,7 +211,7 @@ When you log in, the extension verifies that the browser account matches the acc
 
 > **Why not use the Claude CLI's OAuth token?** The CLI's OAuth scopes (`user:inference`, `user:profile`, etc.) don't grant access to the usage/billing endpoints. Only the `sessionKey` cookie from a browser login works. If Anthropic ever expands the CLI scopes, the browser login could be eliminated entirely.
 
-> **Why keep playwright-core?** The usage API endpoints are undocumented and could change without notice. `playwright-core` (bundled into the extension, no bundled Chromium) drives the user's installed Chrome via the `executablePath` option for the initial login, and powers an opt-in legacy scraper fallback if the API breaks. See `claudemeter.useLegacyScraper` in settings. playwright-core ships with zero npm runtime dependencies, so there's no transitive-CVE surface to defend against.
+> **Why keep playwright-core?** The usage API endpoints are undocumented and could change without notice. `playwright-core` (shipped inside the VSIX, no bundled Chromium) drives the user's installed Chrome via the `executablePath` option for the initial login, and powers an opt-in legacy scraper fallback if the API breaks. See `claudemeter.useLegacyScraper` in settings. playwright-core has zero npm runtime dependencies, so there's no transitive-CVE surface to defend against.
 
 ## Installation
 
@@ -581,8 +543,8 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - **No credentials stored**: The extension never stores or transmits your login credentials
 - **Local session cookie**: Your `sessionKey` cookie is saved locally at `~/.config/claudemeter/session-cookie.json` (or platform equivalent) and is only sent to `claude.ai`
 - **No data transmission**: Usage data stays on your machine
-- **Self-contained**: `playwright-core` is bundled into the extension (no external `node_modules` at runtime). It uses your existing system browser for login only — no Chromium is downloaded or bundled.
-- **Minimal attack surface**: playwright-core ships with zero npm runtime dependencies — its driver is bundled internally as a self-contained native binary. No proxy-agent chain, no FTP client, no transitive-CVE surface.
+- **Self-contained**: `playwright-core` ships inside the VSIX as its own package directory (required so its runtime asset loading resolves correctly). It uses your existing system browser for login only — no Chromium is downloaded or bundled.
+- **Minimal attack surface**: playwright-core has zero npm runtime dependencies — its driver is a self-contained native binary. No proxy-agent chain, no FTP client, no transitive-CVE surface.
 - **Account verification**: The extension verifies the browser login matches the CLI account before saving the session
 - **Open source**: All code is available for review
 

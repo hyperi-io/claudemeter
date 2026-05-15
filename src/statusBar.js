@@ -9,7 +9,7 @@
 const vscode = require('vscode');
 const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, getCurrencySymbol, getUse24HourTime } = require('./utils');
 const {
-    getStatusDisplay, formatStatusTime, STATUS_PAGE_URL,
+    STATUS_PAGE_URL,
     refreshStatus: refreshServiceStatusInternal,
     getCurrentStatus: getServiceStatusFromCache,
 } = require('./serviceStatus');
@@ -197,18 +197,26 @@ function composeCurrentLabel({ isRefreshing = false } = {}) {
         isRefreshing,
     });
 
-    // Extended tooltip lines: append service-status footer ("Last checked:
-    // ...", "[View status page](...)") for parity with the previous
-    // behaviour. The core icon + one-line description comes from
-    // composeClaudeLabel; this adds the "metadata" rows.
-    if (serviceStatus) {
-        const display = getStatusDisplay(serviceStatus.indicator);
+    // Service-status footer: only shown when the service is in a
+    // non-operational state. When the service is operational, the
+    // footer's "Updated HH:MM" row already conveys freshness; a
+    // second timestamp ("Last checked") for the status.anthropic.com
+    // poll only added confusion. During an outage the
+    // poll-cadence timestamp matters again because the user wants to
+    // know how fresh the outage description is.
+    //
+    // The time format here matches the footer's "Updated" row
+    // (toLocaleTimeString, honouring claudemeter.use24HourTime) so
+    // the two stamps line up visually when both are visible.
+    if (serviceStatus
+        && serviceStatus.indicator
+        && serviceStatus.indicator !== 'none') {
         if (serviceStatus.updatedAt) {
-            result.tooltipLines.push(`Last checked ${formatStatusTime(serviceStatus.updatedAt)}`);
+            const ts = new Date(serviceStatus.updatedAt);
+            const t = ts.toLocaleTimeString(undefined, { hour12: !getUse24HourTime() });
+            result.tooltipLines.push(`Claude state last checked ${t}`);
         }
-        if (display.color !== undefined || serviceStatus.indicator !== 'none') {
-            result.tooltipLines.push(`[View status page](${STATUS_PAGE_URL})`);
-        }
+        result.tooltipLines.push(`[View status page](${STATUS_PAGE_URL})`);
     }
 
     return {

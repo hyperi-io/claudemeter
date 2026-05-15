@@ -13,7 +13,7 @@ async function main() {
         sourcesContent: false,
         platform: 'node',
         outfile: 'dist/extension.js',
-        external: ['vscode', 'typescript'],
+        external: ['vscode', 'typescript', 'playwright-core'],
         logLevel: 'info',
         plugins: [
             {

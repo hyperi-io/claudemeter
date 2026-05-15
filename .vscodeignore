@@ -26,8 +26,15 @@ vitest.config.js
 renovate.json
 .mcp.json
 
-# Dependencies (all bundled by esbuild)
+# Dependencies — esbuild bundles everything except playwright-core,
+# which must ship as a real package directory so its runtime
+# `require(packageRoot/browsers.json)` and `require(packageRoot/package.json)`
+# resolve correctly (packageRoot is computed from __dirname of the
+# playwright-core lib, not the bundled extension.js).
 node_modules/**
+!node_modules/playwright-core/**
+# Drop TypeScript .d.ts files — never loaded at runtime
+node_modules/playwright-core/types/**
 
 # Keep bundled output
 !dist/**

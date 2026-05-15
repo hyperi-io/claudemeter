@@ -9,6 +9,9 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         expect(sim.getTokenUsed()).toBe(null);
         expect(sim.getSessionPercent()).toBe(null);
         expect(sim.getWeeklyPercent()).toBe(null);
+        expect(sim.getSonnetPercent()).toBe(null);
+        expect(sim.getOpusPercent()).toBe(null);
+        expect(sim.getCreditsPercent()).toBe(null);
         expect(sim.getHappyHour()).toBe(null);
         expect(sim.getColorMode()).toBe(null);
         expect(sim.getProfileOverride()).toBe(null);
@@ -47,6 +50,49 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         expect(sim.getSessionPercent()).toBe(null);
     });
 
+    it('roundtrips sonnetPercent and clamps 0..100', () => {
+        sim.setSonnetPercent(42);
+        expect(sim.getSonnetPercent()).toBe(42);
+        sim.setSonnetPercent(150);
+        expect(sim.getSonnetPercent()).toBe(100);
+        sim.setSonnetPercent(-5);
+        expect(sim.getSonnetPercent()).toBe(0);
+        sim.setSonnetPercent(null);
+        expect(sim.getSonnetPercent()).toBe(null);
+    });
+
+    it('rejects non-numeric sonnetPercent', () => {
+        sim.setSonnetPercent('fifty');
+        expect(sim.getSonnetPercent()).toBe(null);
+    });
+
+    it('roundtrips opusPercent and clamps 0..100', () => {
+        sim.setOpusPercent(15);
+        expect(sim.getOpusPercent()).toBe(15);
+        sim.setOpusPercent(200);
+        expect(sim.getOpusPercent()).toBe(100);
+        sim.setOpusPercent(-1);
+        expect(sim.getOpusPercent()).toBe(0);
+        sim.setOpusPercent(null);
+        expect(sim.getOpusPercent()).toBe(null);
+    });
+
+    it('rejects non-numeric opusPercent', () => {
+        sim.setOpusPercent(NaN);
+        expect(sim.getOpusPercent()).toBe(null);
+    });
+
+    it('roundtrips creditsPercent and clamps 0..100', () => {
+        sim.setCreditsPercent(75);
+        expect(sim.getCreditsPercent()).toBe(75);
+        sim.setCreditsPercent(101);
+        expect(sim.getCreditsPercent()).toBe(100);
+        sim.setCreditsPercent(0);
+        expect(sim.getCreditsPercent()).toBe(0);
+        sim.setCreditsPercent(null);
+        expect(sim.getCreditsPercent()).toBe(null);
+    });
+
     it('roundtrips happyHour as strict boolean', () => {
         sim.setHappyHour(true);
         expect(sim.getHappyHour()).toBe(true);
@@ -77,6 +123,9 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         sim.setTokenUsed(800_000);
         sim.setSessionPercent(50);
         sim.setWeeklyPercent(30);
+        sim.setSonnetPercent(20);
+        sim.setOpusPercent(40);
+        sim.setCreditsPercent(80);
         sim.setHappyHour(true);
         sim.setColorMode('basic');
         sim.setProfileOverride('pro');
@@ -87,6 +136,9 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         expect(sim.getTokenUsed()).toBe(null);
         expect(sim.getSessionPercent()).toBe(null);
         expect(sim.getWeeklyPercent()).toBe(null);
+        expect(sim.getSonnetPercent()).toBe(null);
+        expect(sim.getOpusPercent()).toBe(null);
+        expect(sim.getCreditsPercent()).toBe(null);
         expect(sim.getHappyHour()).toBe(null);
         expect(sim.getColorMode()).toBe(null);
         expect(sim.getProfileOverride()).toBe(null);

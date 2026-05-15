@@ -47,6 +47,8 @@ const {
     PATHS,
     TIMEOUTS,
     CLAUDE_URLS,
+    BROWSER_UA,
+    BROWSER_LAUNCH_ARGS,
     isDebugEnabled,
     getDebugChannel,
     sleep,
@@ -57,9 +59,11 @@ const {
 const { readCredentials } = require('./credentialsReader');
 const { AccountIdentityCache } = require('./accountIdentityCache');
 
-// Browser-like headers to pass Cloudflare challenge
+// Browser-like headers to pass Cloudflare challenge. UA is shared with
+// the legacy scraper via BROWSER_UA in utils.js — bump the Chrome
+// version there, not here.
 const BROWSER_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+    'User-Agent': BROWSER_UA,
     'Accept': 'application/json, text/plain, */*',
     'Accept-Language': 'en-US,en;q=0.9',
     'Sec-Fetch-Dest': 'empty',
@@ -607,19 +611,7 @@ class ClaudeHttpFetcher {
                 headless: false,
                 executablePath: chromePath,
                 timeout: 60000,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-session-crashed-bubble',
-                    '--disable-infobars',
-                    '--noerrdialogs',
-                    '--hide-crash-restore-bubble',
-                    '--no-first-run',
-                    '--no-default-browser-check',
-                    `--remote-debugging-port=${port}`
-                ],
+                args: BROWSER_LAUNCH_ARGS(port),
                 viewport: { width: 1280, height: 800 },
                 userAgent: BROWSER_HEADERS['User-Agent'],
             });

@@ -183,7 +183,15 @@ function renderCurrentContextBlock(state) {
     ];
 
     if (tokensInfo?.recommendation) {
-        lines.push(`_${tokensInfo.recommendation}_`);
+        // Recommendations are pre-split into short segments separated
+        // by markdown line breaks. Emit each segment as its own
+        // italic line so the tooltip width is bounded by the longest
+        // single line, not the longest sentence. Italic span across a
+        // <br>-converted markdown line break doesn't render reliably,
+        // hence the per-segment push.
+        for (const segment of tokensInfo.recommendation.split('  \n')) {
+            lines.push(`_${segment}_`);
+        }
     }
 
     return lines;
@@ -277,7 +285,6 @@ function renderActivityQuip(state) {
 function renderPlatformBlock(state) {
     // platformTooltipLines comes from claudeLabelComposer.composeClaudeLabel()
     // e.g. ["$(warning) Service degraded — API delays",
-    //       "Last checked: 12:34",
     //       "[View status page](...)"]
     const { platformTooltipLines } = state;
     if (!Array.isArray(platformTooltipLines) || platformTooltipLines.length === 0) {

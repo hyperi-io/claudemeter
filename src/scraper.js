@@ -36,6 +36,8 @@ const {
     PATHS,
     TIMEOUTS,
     VIEWPORT,
+    BROWSER_UA,
+    BROWSER_LAUNCH_ARGS,
     CLAUDE_URLS,
     isDebugEnabled,
     getDebugChannel,
@@ -232,7 +234,7 @@ class ClaudeUsageScraper {
             // header doesn't stick the captured API endpoints still work.
             try {
                 await this.context.setExtraHTTPHeaders({
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+                    'User-Agent': BROWSER_UA,
                 });
             } catch (_uaErr) {
                 // not fatal
@@ -295,21 +297,9 @@ class ClaudeUsageScraper {
                 headless,
                 executablePath: chromePath,
                 timeout: 60000,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-session-crashed-bubble',
-                    '--disable-infobars',
-                    '--noerrdialogs',
-                    '--hide-crash-restore-bubble',
-                    '--no-first-run',
-                    '--no-default-browser-check',
-                    `--remote-debugging-port=${this.browserPort}`
-                ],
+                args: BROWSER_LAUNCH_ARGS(this.browserPort),
                 viewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT },
-                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+                userAgent: BROWSER_UA,
             };
 
             console.log(`Launching Chrome on port ${this.browserPort}`);
@@ -518,49 +508,62 @@ class ClaudeUsageScraper {
             this.capturedEndpoints = [];
 
             await this.page.route('**/*', (route) => {
-                const request = route.request();
-                const url = request.url();
+                // Defensive: the body below mostly just observes the
+                // request, but `matchesEndpoint`, URL parsing, or
+                // `request.headers()` could throw on malformed routes.
+                // If the handler errors without calling route.continue()
+                // the request hangs forever and the page stalls. Wrap
+                // the body in try/finally so the request always
+                // continues, even if observation throws.
+                try {
+                    const request = route.request();
+                    const url = request.url();
 
-                if (url.includes('/api/')) {
-                    if (isDebugEnabled()) {
-                        getDebugChannel().appendLine(`[REQUEST] ${request.method()} ${url}`);
-                    }
-                    this.capturedEndpoints.push({ method: request.method(), url });
-                }
-
-                if (matchesEndpoint(url, API_ENDPOINTS.usage)) {
-                    this.apiEndpoint = url;
-                    this.apiHeaders = {
-                        ...request.headers(),
-                        'Content-Type': 'application/json'
-                    };
-
-                    const orgMatch = url.match(/\/organizations\/([a-f0-9-]+)\//);
-                    if (orgMatch) {
-                        const newOrgId = orgMatch[1];
-                        if (this.currentOrgId && this.currentOrgId !== newOrgId) {
-                            console.log(`Claudemeter: Org changed from ${this.currentOrgId} to ${newOrgId}`);
-                            if (isDebugEnabled()) {
-                                getDebugChannel().appendLine(`Account change detected: ${this.currentOrgId} → ${newOrgId}`);
-                            }
+                    if (url.includes('/api/')) {
+                        if (isDebugEnabled()) {
+                            getDebugChannel().appendLine(`[REQUEST] ${request.method()} ${url}`);
                         }
-                        this.currentOrgId = newOrgId;
+                        this.capturedEndpoints.push({ method: request.method(), url });
                     }
 
-                    console.log('Captured usage endpoint:', this.apiEndpoint);
-                }
+                    if (matchesEndpoint(url, API_ENDPOINTS.usage)) {
+                        this.apiEndpoint = url;
+                        this.apiHeaders = {
+                            ...request.headers(),
+                            'Content-Type': 'application/json'
+                        };
 
-                if (matchesEndpoint(url, API_ENDPOINTS.prepaidCredits)) {
-                    this.creditsEndpoint = url;
-                    console.log('Captured credits endpoint:', this.creditsEndpoint);
-                }
+                        const orgMatch = url.match(/\/organizations\/([a-f0-9-]+)\//);
+                        if (orgMatch) {
+                            const newOrgId = orgMatch[1];
+                            if (this.currentOrgId && this.currentOrgId !== newOrgId) {
+                                console.log(`Claudemeter: Org changed from ${this.currentOrgId} to ${newOrgId}`);
+                                if (isDebugEnabled()) {
+                                    getDebugChannel().appendLine(`Account change detected: ${this.currentOrgId} → ${newOrgId}`);
+                                }
+                            }
+                            this.currentOrgId = newOrgId;
+                        }
 
-                if (matchesEndpoint(url, API_ENDPOINTS.overageSpendLimit)) {
-                    this.overageEndpoint = url;
-                    console.log('Captured overage endpoint:', this.overageEndpoint);
-                }
+                        console.log('Captured usage endpoint:', this.apiEndpoint);
+                    }
 
-                route.continue();
+                    if (matchesEndpoint(url, API_ENDPOINTS.prepaidCredits)) {
+                        this.creditsEndpoint = url;
+                        console.log('Captured credits endpoint:', this.creditsEndpoint);
+                    }
+
+                    if (matchesEndpoint(url, API_ENDPOINTS.overageSpendLimit)) {
+                        this.overageEndpoint = url;
+                        console.log('Captured overage endpoint:', this.overageEndpoint);
+                    }
+                } catch (handlerErr) {
+                    if (isDebugEnabled()) {
+                        getDebugChannel().appendLine(`Route handler error (continuing anyway): ${handlerErr.message}`);
+                    }
+                } finally {
+                    route.continue();
+                }
             });
 
             this.page.on('response', async (response) => {
@@ -832,7 +835,7 @@ class ClaudeUsageScraper {
                     `--remote-debugging-port=${this.browserPort}`
                 ],
                 viewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT },
-                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+                userAgent: BROWSER_UA,
             };
 
             if (debug) {
