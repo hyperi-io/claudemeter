@@ -25,12 +25,12 @@
 
 const TIER_RECOMMENDATIONS = Object.freeze({
     rotLight: [
-        "Context rot warning.",
+        "Context rot - light.",
         "Recall starts to drift in long-context tasks.",
         "/compact when convenient.",
     ].join("  \n"),
     rotDeep: [
-        "Context rot.",
+        "Context rot - deep.",
         "Quality drops sharply on complex multi-step work.",
         "/compact soon, on your terms.",
     ].join("  \n"),
