@@ -1,3 +1,10 @@
+## [2.4.1](https://github.com/hyperi-io/claudemeter/compare/v2.4.0...v2.4.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **tk:** clarify rot tier tooltip headlines ([37ec24f](https://github.com/hyperi-io/claudemeter/commit/37ec24f934cbacb5b114d2f1d65f5333eaba8954))
+
 # [2.4.0](https://github.com/hyperi-io/claudemeter/compare/v2.3.10...v2.4.0) (2026-05-15)
 
 
