@@ -1,3 +1,10 @@
+## [2.4.4](https://github.com/hyperi-io/claudemeter/compare/v2.4.3...v2.4.4) (2026-05-20)
+
+
+### Bug Fixes
+
+* **login:** give the initial login goto 5 min instead of 45s ([ba63750](https://github.com/hyperi-io/claudemeter/commit/ba63750ef8adcf8c8b9f46047e85296a8de2dc3d))
+
 ## [2.4.3](https://github.com/hyperi-io/claudemeter/compare/v2.4.2...v2.4.3) (2026-05-20)
 
 
