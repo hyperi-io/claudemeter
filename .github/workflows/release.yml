@@ -133,7 +133,11 @@ jobs:
         run: npm run build
 
       - name: Package VSIX
-        run: npx @vscode/vsce package --no-dependencies
+        # No --no-dependencies: playwright-core is external (not bundled
+        # by esbuild) and must ship as a real package directory so its
+        # runtime require(packageRoot/browsers.json) resolves. The
+        # .vscodeignore re-includes only node_modules/playwright-core/.
+        run: npx @vscode/vsce package
 
       - name: Get VSIX filename
         id: vsix
