@@ -186,6 +186,13 @@ function getDefaultDebugLogPath() {
 // Timeouts in milliseconds
 const TIMEOUTS = {
     PAGE_LOAD: 45000,
+    // The very first page.goto(login) on a fresh user-data dir often
+    // sits behind Cloudflare's "Verify you are human" interstitial,
+    // a password-manager dance, or a slow corporate network. 45s is
+    // not enough for the realistic case. Use 5 min for the initial
+    // login navigation only - routine post-login fetches stay on
+    // PAGE_LOAD so they fail fast instead of hanging the auto-refresh.
+    INITIAL_LOGIN_PAGE_LOAD: 300000,
     LOGIN_WAIT: 300000,
     LOGIN_POLL: 2000,
     API_RETRY_DELAY: 2000,

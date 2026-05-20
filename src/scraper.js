@@ -855,7 +855,7 @@ class ClaudeUsageScraper {
 
             await this.page.goto(CLAUDE_URLS.LOGIN, {
                 waitUntil: 'networkidle',
-                timeout: TIMEOUTS.PAGE_LOAD
+                timeout: TIMEOUTS.INITIAL_LOGIN_PAGE_LOAD
             });
 
             if (debug) {

@@ -655,7 +655,7 @@ class ClaudeHttpFetcher {
 
             await page.goto(CLAUDE_URLS.LOGIN, {
                 waitUntil: 'networkidle',
-                timeout: TIMEOUTS.PAGE_LOAD,
+                timeout: TIMEOUTS.INITIAL_LOGIN_PAGE_LOAD,
             });
 
             if (debug) {
@@ -702,7 +702,7 @@ class ClaudeHttpFetcher {
                         { modal: false }
                     );
                     // Navigate back to login page for another attempt
-                    await page.goto(CLAUDE_URLS.LOGIN, { waitUntil: 'networkidle', timeout: TIMEOUTS.PAGE_LOAD });
+                    await page.goto(CLAUDE_URLS.LOGIN, { waitUntil: 'networkidle', timeout: TIMEOUTS.INITIAL_LOGIN_PAGE_LOAD });
                     const retryResult = await vscode.window.withProgress(
                         {
                             location: vscode.ProgressLocation.Notification,
