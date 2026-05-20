@@ -1,3 +1,10 @@
+## [2.4.3](https://github.com/hyperi-io/claudemeter/compare/v2.4.2...v2.4.3) (2026-05-20)
+
+
+### Bug Fixes
+
+* **login:** tiny-window, sandbox-warning, and tempdir-cleanup bugs ([efab74d](https://github.com/hyperi-io/claudemeter/commit/efab74dea1b7b7107847eb80c367a31dbe1a1fdd))
+
 ## [2.4.2](https://github.com/hyperi-io/claudemeter/compare/v2.4.1...v2.4.2) (2026-05-20)
 
 
