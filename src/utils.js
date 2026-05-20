@@ -213,16 +213,23 @@ const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 // remote-debugging port is injected per-launch so two parallel browser
 // instances don't fight over the same port.
 //
-// Flags chosen for: containers/CI (--no-sandbox, --disable-setuid-sandbox,
-// --disable-dev-shm-usage), automation-detection bypass
-// (--disable-blink-features=AutomationControlled), and quieter user
-// experience (--disable-session-crashed-bubble, --disable-infobars,
+// The extension runs on user desktops, NOT in containers, so the
+// sandbox-disabling flags (--no-sandbox, --disable-setuid-sandbox)
+// that were copied from container templates have been removed - they
+// triggered visible "Stability and security will suffer" warnings on
+// the login window without any benefit on a normal desktop install
+// (issue #37).
+//
+// Flags chosen for: shared-memory fallback (--disable-dev-shm-usage),
+// automation-detection bypass (--disable-blink-features=
+// AutomationControlled), explicit window-size (--window-size: without
+// it Chrome opens at its default ~640x480 even when viewport is set,
+// producing the "weird tiny window" reported in #37), and quieter
+// user experience (--disable-session-crashed-bubble, --disable-infobars,
 // --noerrdialogs, --hide-crash-restore-bubble, --no-first-run,
 // --no-default-browser-check).
 function BROWSER_LAUNCH_ARGS(remoteDebuggingPort) {
     return [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-blink-features=AutomationControlled',
         '--disable-session-crashed-bubble',
@@ -231,6 +238,7 @@ function BROWSER_LAUNCH_ARGS(remoteDebuggingPort) {
         '--hide-crash-restore-bubble',
         '--no-first-run',
         '--no-default-browser-check',
+        `--window-size=${VIEWPORT.WIDTH},${VIEWPORT.HEIGHT}`,
         `--remote-debugging-port=${remoteDebuggingPort}`,
     ];
 }

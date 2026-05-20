@@ -602,10 +602,20 @@ class ClaudeHttpFetcher {
             }
 
             const port = await this._findAvailablePort();
-            // Fresh tempdir per login so the browser has no tab history,
-            // cache, or cookies between runs. The sessionKey cookie we need
-            // is extracted via context.cookies() before the dir is cleaned up.
-            userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claudemeter-login-'));
+            // Fresh per-login Chrome profile so the browser has no tab
+            // history, cache, or cookies between runs. The sessionKey
+            // cookie we need is extracted via context.cookies() before
+            // the dir is cleaned up.
+            //
+            // Lives under PATHS.CONFIG_DIR rather than os.tmpdir() so
+            // long logins (5+ min for email confirmation, password
+            // managers, 2FA) aren't killed by systemd-tmpfiles /
+            // macOS / Windows tempdir cleanup mid-session - the
+            // "window disappears after 60s" symptom in issue #37.
+            if (!fs.existsSync(PATHS.CONFIG_DIR)) {
+                fs.mkdirSync(PATHS.CONFIG_DIR, { recursive: true });
+            }
+            userDataDir = fs.mkdtempSync(path.join(PATHS.CONFIG_DIR, 'login-tmp-'));
 
             context = await chromium.launchPersistentContext(userDataDir, {
                 headless: false,

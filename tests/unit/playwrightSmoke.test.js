@@ -52,11 +52,22 @@ describe('BROWSER_UA + BROWSER_LAUNCH_ARGS factory', () => {
 
     it('BROWSER_LAUNCH_ARGS includes the load-bearing flags', () => {
         const args = BROWSER_LAUNCH_ARGS(0);
-        // These specific flags are the reason the function exists —
-        // automation-detection bypass, sandbox handling, quiet UX.
-        expect(args).toContain('--no-sandbox');
-        expect(args).toContain('--disable-setuid-sandbox');
+        // The flags that justify a shared factory: automation-detection
+        // bypass, explicit window size (so Chrome doesn't open tiny),
+        // shared-memory fallback, quiet first-run UX.
         expect(args).toContain('--disable-blink-features=AutomationControlled');
+        expect(args).toContain('--disable-dev-shm-usage');
         expect(args).toContain('--no-first-run');
+        expect(args.some(a => a.startsWith('--window-size='))).toBe(true);
+    });
+
+    it('BROWSER_LAUNCH_ARGS no longer disables the Chrome sandbox', () => {
+        const args = BROWSER_LAUNCH_ARGS(0);
+        // Issue #37: the desktop extension does not run in a container,
+        // so --no-sandbox / --disable-setuid-sandbox just triggered the
+        // visible "Stability and security will suffer" Chrome warning
+        // without any benefit. If they ever come back, this fails.
+        expect(args).not.toContain('--no-sandbox');
+        expect(args).not.toContain('--disable-setuid-sandbox');
     });
 });
