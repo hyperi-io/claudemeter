@@ -26,15 +26,20 @@ vitest.config.js
 renovate.json
 .mcp.json
 
-# Dependencies — esbuild bundles everything except playwright-core,
+# Dependencies. esbuild bundles everything except playwright-core,
 # which must ship as a real package directory so its runtime
-# `require(packageRoot/browsers.json)` and `require(packageRoot/package.json)`
+# require(packageRoot/browsers.json) and require(packageRoot/package.json)
 # resolve correctly (packageRoot is computed from __dirname of the
 # playwright-core lib, not the bundled extension.js).
+#
+# We ship the FULL playwright-core directory (lib/, bin/, types/ - all
+# 106 files, ~13MB uncompressed / ~3MB compressed inside the VSIX). The
+# total VSIX is ~5MB which is well within marketplace limits, and
+# shipping every file removes a whole class of "missing module at
+# runtime" bugs. Do not try to slim playwright-core - see STATE.md
+# "Bundle the entire playwright-core package, no slimming" decision.
 node_modules/**
 !node_modules/playwright-core/**
-# Drop TypeScript .d.ts files — never loaded at runtime
-node_modules/playwright-core/types/**
 
 # Keep bundled output
 !dist/**
