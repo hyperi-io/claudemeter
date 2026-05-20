@@ -1,3 +1,10 @@
+## [2.4.2](https://github.com/hyperi-io/claudemeter/compare/v2.4.1...v2.4.2) (2026-05-20)
+
+
+### Bug Fixes
+
+* **ci:** stop stripping node_modules from the published VSIX ([ce8839a](https://github.com/hyperi-io/claudemeter/commit/ce8839aedb3f82289c7904a37883ec8e80ac97de))
+
 ## [2.4.1](https://github.com/hyperi-io/claudemeter/compare/v2.4.0...v2.4.1) (2026-05-18)
 
 
