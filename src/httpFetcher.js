@@ -507,17 +507,49 @@ class ClaudeHttpFetcher {
         try {
             if (!fs.existsSync(LOGIN_LOCK_FILE)) return false;
             const data = JSON.parse(fs.readFileSync(LOGIN_LOCK_FILE, 'utf-8'));
-            if (Date.now() - data.timestamp < LOGIN_LOCK_TTL) {
-                return true;
+
+            // Old-format locks (timestamp only, no pid) fall through to
+            // the TTL backstop -- no liveness signal available.
+            const ownerPid = Number.isInteger(data.pid) ? data.pid : null;
+            const ownerAlive = ownerPid ? this._pidIsAlive(ownerPid) : null;
+            const fresh = Date.now() - data.timestamp < LOGIN_LOCK_TTL;
+
+            // Issue #37: a VS Code force-quit during login leaves the
+            // lock behind. Without a PID liveness check the user is
+            // blocked from retrying for the full 5-minute TTL. With one,
+            // we clear immediately when the owning process is gone.
+            if (ownerAlive === false) {
+                fs.unlinkSync(LOGIN_LOCK_FILE);
+                fileLog(`Stale login lock cleared (owner pid ${ownerPid} no longer running)`);
+                return false;
             }
-            // Stale lock, remove it
+
+            if (fresh) return true;
+
+            // PID alive but lock older than TTL -- either a hang or a
+            // recycled PID. Either way, treat as stale and clear.
             fs.unlinkSync(LOGIN_LOCK_FILE);
+            fileLog(`Stale login lock cleared (older than ${LOGIN_LOCK_TTL}ms)`);
             return false;
         } catch (err) {
-            // Malformed lock file or unexpected fs error — treat as
-            // "no login in progress" so we don't deadlock the user, but
-            // log it so a corrupted lock or disk issue is visible.
+            // Malformed lock or unexpected fs error -- treat as no lock
+            // so we don't deadlock the user, but log it so a corrupted
+            // lock or disk issue is visible.
             fileLog(`Login-lock read failed (treating as no lock): ${err.message}`);
+            return false;
+        }
+    }
+
+    // process.kill(pid, 0) sends no signal; just probes whether the
+    // PID is signallable from this process. Cross-platform on Node.
+    _pidIsAlive(pid) {
+        try {
+            process.kill(pid, 0);
+            return true;
+        } catch (err) {
+            // ESRCH: no such process. EPERM: process exists but we
+            // can't signal it (different user) -- still alive.
+            if (err.code === 'EPERM') return true;
             return false;
         }
     }
@@ -797,6 +829,50 @@ class ClaudeHttpFetcher {
             }
             this._releaseLoginLock();
         }
+    }
+
+    // Manual fallback for users where the spawned-browser flow fails --
+    // email-confirmation links that open in the OS default browser,
+    // SSO/2FA popouts that escape our launched context, password
+    // managers that only auto-fill in the user's real browser. Caller
+    // opens claude.ai in the default browser via vscode.env.openExternal,
+    // then passes the sessionKey cookie value here. We validate it
+    // against /api/bootstrap before saving. See issue #37.
+    async loginWithPastedCookie(rawValue) {
+        const cookieValue = (rawValue || '').trim();
+        if (!cookieValue) {
+            throw new Error('LOGIN_CANCELLED');
+        }
+
+        // Users may paste the raw value or the full "sessionKey=..."
+        // header form copied from DevTools. Accept either.
+        const sessionKey = cookieValue.startsWith('sessionKey=')
+            ? cookieValue.slice('sessionKey='.length)
+            : cookieValue;
+
+        fileLog('Paste-cookie login: validating supplied sessionKey');
+        const bootstrap = await this._fetchBootstrapWithKey(sessionKey);
+        const browserEmail = bootstrap?.account?.email_address || null;
+        if (!browserEmail) {
+            // Anthropic returns 200 + null account for invalid cookies
+            // rather than 401, so this is our only signal it didn't work.
+            throw new Error('INVALID_COOKIE');
+        }
+
+        const cliEmail = await this._fetchBootstrapWithCliToken();
+        if (cliEmail && cliEmail.toLowerCase() !== browserEmail.toLowerCase()) {
+            fileLog(`Paste-cookie account mismatch: browser=${browserEmail}, CLI=${cliEmail}`);
+            throw new Error(`WRONG_ACCOUNT: browser=${browserEmail}, CLI=${cliEmail}`);
+        }
+
+        // Cookie expiry isn't visible from /api/bootstrap, so default to
+        // claude.ai's standard 1-year sessionKey lifetime. The refresh
+        // path catches expiry via SESSION_EXPIRED on the next fetch.
+        const expires = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
+        const creds = readCredentials();
+        this._saveCookie(sessionKey, expires, creds?.orgId);
+        fileLog(`Paste-cookie login successful: ${browserEmail}`);
+        return { email: browserEmail };
     }
 
     async _waitForSessionKey(page, context, isClosed, maxWaitMs = TIMEOUTS.LOGIN_WAIT, pollIntervalMs = TIMEOUTS.LOGIN_POLL) {

@@ -28,6 +28,7 @@ const COMMANDS = {
     RESET_CONNECTION: 'claudemeter.resetConnection',
     CLEAR_SESSION: 'claudemeter.clearSession',
     OPEN_BROWSER: 'claudemeter.openBrowser',
+    LOGIN_PASTE_COOKIE: 'claudemeter.loginPasteCookie',
     RESYNC_ACCOUNT: 'claudemeter.resyncAccount',
     DUMP_STATE: 'claudemeter.dumpState',
     SIMULATE_STATUS: 'claudemeter.simulateStatus',

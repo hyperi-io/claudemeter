@@ -818,22 +818,16 @@ class ClaudeUsageScraper {
 
             this.browserPort = await this.findAvailablePort();
 
+            // Use the shared BROWSER_LAUNCH_ARGS so this legacy path
+            // stays in lockstep with the v2 login flow. Previously this
+            // block hardcoded its own arg list which kept the sandbox-
+            // disabling flags around after v2.4.3 stripped them from
+            // utils.js -- the leftover surfaced the "Stability and
+            // security will suffer" warning in issue #37.
             const launchOptions = {
                 headless: false,
                 executablePath: chromePath,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-session-crashed-bubble',
-                    '--disable-infobars',
-                    '--noerrdialogs',
-                    '--hide-crash-restore-bubble',
-                    '--no-first-run',
-                    '--no-default-browser-check',
-                    `--remote-debugging-port=${this.browserPort}`
-                ],
+                args: BROWSER_LAUNCH_ARGS(this.browserPort),
                 viewport: { width: VIEWPORT.WIDTH, height: VIEWPORT.HEIGHT },
                 userAgent: BROWSER_UA,
             };

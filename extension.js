@@ -996,12 +996,105 @@ async function activate(context) {
                     }
                 }
             } catch (error) {
+                // Offer the cookie-paste fallback only after the
+                // normal browser flow has failed. It's a technical
+                // workaround (DevTools required) so we don't surface
+                // it as a peer in the command palette -- the action
+                // button is the only entry point for users.
+                const FALLBACK = 'Try cookie paste (advanced)';
+                let pick;
                 if (error.message === 'LOGIN_CANCELLED') {
                     vscode.window.showInformationMessage('Login cancelled.');
+                    return;
                 } else if (error.message === 'CHROME_NOT_FOUND') {
-                    vscode.window.showErrorMessage('Chromium-based browser required. Install Chrome, Chromium, Brave, or Edge.');
+                    pick = await vscode.window.showErrorMessage(
+                        'No Chromium-based browser found. Install Chrome / Chromium / Brave / Edge, or use the advanced cookie-paste login.',
+                        FALLBACK
+                    );
+                } else if (error.message === 'LOGIN_TIMEOUT') {
+                    pick = await vscode.window.showErrorMessage(
+                        'Browser login timed out. If the login completed in a different browser (email link, SSO popout), use the advanced cookie-paste flow.',
+                        FALLBACK
+                    );
                 } else {
-                    vscode.window.showErrorMessage(`Failed to open browser: ${error.message}`);
+                    pick = await vscode.window.showErrorMessage(
+                        `Browser login failed: ${error.message}`,
+                        FALLBACK
+                    );
+                }
+                if (pick === FALLBACK) {
+                    await vscode.commands.executeCommand(COMMANDS.LOGIN_PASTE_COOKIE);
+                }
+            }
+        })
+    );
+
+    // Cookie-paste fallback. Not surfaced in the command palette --
+    // entry point is the action button on the spawned-browser failure
+    // toasts above. Issue #37 cases this exists for: email-confirmation
+    // links routing to a different browser, SSO popouts that escape
+    // our spawned context, password managers that won't autofill into
+    // a foreign Chrome instance.
+    context.subscriptions.push(
+        vscode.commands.registerCommand(COMMANDS.LOGIN_PASTE_COOKIE, async () => {
+            try {
+                if (isLegacyMode()) {
+                    vscode.window.showErrorMessage('Paste-cookie login is only available in v2 mode. Disable `claudemeter.useLegacyScraper` to use it.');
+                    return;
+                }
+
+                const proceed = await vscode.window.showInformationMessage(
+                    'Advanced fallback login. Use this only if the normal browser login failed (e.g. email confirmation opened a different browser, or SSO landed in a separate window).\n\n' +
+                    '  1. We open claude.ai in your default browser. Log in there.\n' +
+                    '  2. In that browser, open DevTools (F12 / right-click > Inspect) > Application > Cookies > https://claude.ai. Copy the value of the `sessionKey` cookie.\n' +
+                    '  3. Paste it here.\n\n' +
+                    'Requires DevTools. Most users should use Claudemeter: Login to Claude.ai instead.',
+                    { modal: true },
+                    'Open claude.ai'
+                );
+                if (proceed !== 'Open claude.ai') return;
+
+                await vscode.env.openExternal(vscode.Uri.parse('https://claude.ai/login'));
+
+                const pasted = await vscode.window.showInputBox({
+                    title: 'Paste sessionKey cookie value',
+                    prompt: 'From DevTools > Application > Cookies > https://claude.ai. Either the raw value or the full `sessionKey=...` form.',
+                    password: true,
+                    ignoreFocusOut: true,
+                    placeHolder: 'sk-ant-sid... (around 130 characters)',
+                    validateInput: (v) => {
+                        const t = (v || '').trim();
+                        if (!t) return 'Cookie value required';
+                        if (t.length < 64) return 'Value looks too short to be a sessionKey';
+                        return null;
+                    },
+                });
+                if (pasted === undefined) return;
+
+                if (!httpFetcher) httpFetcher = new ClaudeHttpFetcher();
+                const { email } = await vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: 'Validating sessionKey with Claude.ai...',
+                        cancellable: false,
+                    },
+                    async () => httpFetcher.loginWithPastedCookie(pasted)
+                );
+
+                vscode.window.showInformationMessage(`Logged in as ${email}.`);
+                const { webError } = await performFetch(true);
+                if (webError) {
+                    vscode.window.showErrorMessage(`Fetch failed after login: ${webError.message}`);
+                }
+            } catch (error) {
+                if (error.message === 'LOGIN_CANCELLED') {
+                    vscode.window.showInformationMessage('Login cancelled.');
+                } else if (error.message === 'INVALID_COOKIE') {
+                    vscode.window.showErrorMessage('Claude.ai rejected that cookie. Check you copied the value of `sessionKey` (not another cookie) and that it is current.');
+                } else if (error.message.startsWith('WRONG_ACCOUNT:')) {
+                    vscode.window.showErrorMessage(`${error.message}. Log in to claude.ai as the same account Claude Code is using, then paste that cookie.`);
+                } else {
+                    vscode.window.showErrorMessage(`Paste-cookie login failed: ${error.message}`);
                 }
             }
         })

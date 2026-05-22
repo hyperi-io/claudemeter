@@ -518,6 +518,16 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - The extension auto-detects your default browser; if it's not Chromium-based (e.g., Firefox), install Chrome or Edge
 - Try running VS Code as administrator (Windows)
 
+### Login appears stuck or never completes
+
+The spawned Chrome instance is isolated from your normal browser, so a few login paths can break:
+
+- **Email confirmation links land in a different browser** -- when you click "Confirm" in claude.ai's verification email, your OS opens the link in your default browser, not in the Chrome instance we spawned.
+- **SSO popouts open in separate windows** -- Google / GitHub / Okta redirects can land outside our spawned context.
+- **Password manager refuses to autofill** -- managers typically only autofill into the browser instance they were installed in.
+
+When the login-timed-out toast appears, click **Try cookie paste (advanced)**. That opens claude.ai in your default browser (where the above just works), then takes the `sessionKey` cookie via DevTools (Application > Cookies > https://claude.ai) and a VS Code input box. Requires DevTools.
+
 ### Session expired or fetch errors
 
 - Run **Claudemeter: Clear Session (Re-login)** from the Command Palette
