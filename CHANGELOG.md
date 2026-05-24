@@ -1,3 +1,10 @@
+## [2.4.5](https://github.com/hyperi-io/claudemeter/compare/v2.4.4...v2.4.5) (2026-05-24)
+
+
+### Bug Fixes
+
+* **login:** pid-liveness lock, sandbox-flag cleanup, paste-cookie fallback ([#37](https://github.com/hyperi-io/claudemeter/issues/37)) ([8cff58b](https://github.com/hyperi-io/claudemeter/commit/8cff58bfecf5e5aae3ecdab04800fa897f78eec3))
+
 ## [2.4.4](https://github.com/hyperi-io/claudemeter/compare/v2.4.3...v2.4.4) (2026-05-20)
 
 
