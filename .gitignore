@@ -49,11 +49,17 @@ examine-*.js
 RELEASE_NOTES_*.md
 
 # ===========================================
+
 # HyperI AI Development Tooling (LOCAL ONLY)
+
 # ===========================================
+
 # Submodule contents — defence in depth so the private hyperi-ai
+
 # working tree can never be committed into this public repo. The
+
 # submodule pointer (gitlink) in .gitmodules is fine; only the
+
 # tree of files under hyperi-ai/ must stay out.
 hyperi-ai/
 
@@ -68,5 +74,56 @@ CODEX.md
 GEMINI.md
 .gemini/
 SKILLS.md
-# AI agent working files (not committed)
+
+# Local working files (not committed)
 docs/superpowers/
+.mcp.json
+.ai-version
+.claude/
+hyperi-ai/
+STATE.md
+CLAUDE.md
+TODO.md
+
+# OS junk (never useful in repo)
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Editor / IDE local state
+.idea/
+.vscode/
+
+# Local environment files (never commit -- contain secrets)
+.env
+.env.*
+!.env.example
+!.env.example.*
+
+# Git worktrees (local dev convenience)
+.worktrees/
+
+# Node / TypeScript build artefacts
+node_modules/
+dist/
+build/
+out/
+.next/
+.turbo/
+.vite/
+.nuxt/
+.cache/
+.parcel-cache/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Yarn / pnpm / npm
+.pnpm-store/
+.yarn/cache
+.yarn/install-state.gz
+.pnp.*
