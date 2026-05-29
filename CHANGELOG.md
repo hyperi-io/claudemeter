@@ -1,3 +1,10 @@
+## [2.4.7](https://github.com/hyperi-io/claudemeter/compare/v2.4.6...v2.4.7) (2026-05-29)
+
+
+### Bug Fixes
+
+* **deps:** patch dependency advisories; remove private tooling from repo ([95d3db8](https://github.com/hyperi-io/claudemeter/commit/95d3db8c6a7c9ec4e8bb616048d7c0e5d0a2bb10))
+
 ## [2.4.6](https://github.com/hyperi-io/claudemeter/compare/v2.4.5...v2.4.6) (2026-05-29)
 
 
