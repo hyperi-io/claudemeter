@@ -25,7 +25,9 @@ const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = re
 const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolver');
 const simulator = require('./simulator');
 const { selectProfile } = require('./tk/profileSelector');
-const { getTkLevel } = require('./tk/thresholds');
+const { getTkLevel, rotGradientT } = require('./tk/thresholds');
+const { lerpHexOklab } = require('./tk/gradient');
+const { ROT_GRADIENT } = require('./tk/colorMap');
 const { TIER_RECOMMENDATIONS } = require('./tk/recommendations');
 
 const LABEL_TEXT = 'Claude';
@@ -959,11 +961,33 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
                 : getTkLevel(effectiveUsed, tokenProfile, limit));
         tokenStatus = tokenStatusFromLevel(tokenLevel);
 
+        // The simulator's "used" override drives the whole gauge — bar fill
+        // and count, not just the tier tint — so scrubbing it in F5 moves the
+        // visible needle, matching what a real session at that usage shows.
+        if (simUsed !== null && limit > 0) {
+            tokenPercent = Math.round((effectiveUsed / limit) * 100);
+        }
+
+        // Continuous white→blue rot gradient: when there's a real numeric
+        // `used` (no tier-snap override) and colour mode is on, replace the
+        // two discrete rot swatches with an OKLab-interpolated hex. Outside
+        // the rot zone rotGradientT returns null and the discrete
+        // normal/warning/error colour from tokenStatusFromLevel stands.
+        if (simLevel === null && getColorMode() === 'color') {
+            const t = rotGradientT(effectiveUsed, tokenProfile, limit);
+            if (t !== null) {
+                tokenStatus = {
+                    ...tokenStatus,
+                    color: lerpHexOklab(ROT_GRADIENT.start, ROT_GRADIENT.end, t),
+                };
+            }
+        }
+
         const confidence = sessionData.tokenUsage.limitConfidence || null;
         const knownLimit = confidence === 'authoritative' || confidence === 'configured';
         tokensInfo = {
             percent: tokenPercent,
-            current: sessionData.tokenUsage.current,
+            current: effectiveUsed,
             limit: sessionData.tokenUsage.limit,
             knownLimit,
             level: tokenLevel,

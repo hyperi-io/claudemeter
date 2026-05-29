@@ -43,4 +43,14 @@ const TIER_COLORS = Object.freeze({
     normal: null,
 });
 
-module.exports = { TIER_COLORS };
+// Anchors for the continuous rot gauge gradient (interpolated in OKLab by
+// src/tk/gradient.js). The gauge ramps from `start` at the rot floor
+// (~300K) to `end` just before the yellow threshold, replacing the two
+// discrete rotLight/rotDeep swatches above for the multi-panel Tk colour.
+// rotLight/rotDeep remain in use for compact mode and tier-snap testing.
+const ROT_GRADIENT = Object.freeze({
+    start: '#eef5fc',   // near-white blue (rot floor)
+    end:   '#163a63',   // deep navy (pre-yellow)
+});
+
+module.exports = { TIER_COLORS, ROT_GRADIENT };

@@ -57,4 +57,37 @@ function getTkLevel(used, profile, contextWindow) {
     return 'normal';
 }
 
-module.exports = { getTkLevel };
+/**
+ * Position of `used` within the rot blue zone, for the continuous
+ * white→blue gauge gradient. The zone spans [rotLightTokens, yellow),
+ * i.e. exactly where getTkLevel returns 'rotLight' or 'rotDeep'.
+ *
+ *   t = (used - rotLightTokens) / (yellowThreshold - rotLightTokens)
+ *
+ * Returns null outside the zone (below the rot floor, in the
+ * warning/error zone, on rot-disabled profiles, or when the window is
+ * too small for a zone to exist) so callers fall back to the discrete
+ * normal/warning/error colours.
+ *
+ * @param {number} used - tokens used in the current context (>= 0)
+ * @param {object} profile - profile object from src/tk/profiles.js
+ * @param {number} contextWindow - context window size in tokens
+ * @returns {number|null} t in [0,1), or null when not in the rot zone
+ */
+function rotGradientT(used, profile, contextWindow) {
+    if (!profile || !profile.thresholds) return null;
+    const T = profile.thresholds;
+    if (!T.rotEnabled) return null;
+
+    const compactPoint = contextWindow - T.compactReserveTokens;
+    const yellowThreshold = compactPoint - T.warningRunwayTokens;
+
+    const floor = T.rotLightTokens;
+    if (yellowThreshold <= floor) return null;   // zone collapsed
+    if (used < floor) return null;               // normal zone
+    if (used >= yellowThreshold) return null;    // warning/error zone
+
+    return (used - floor) / (yellowThreshold - floor);
+}
+
+module.exports = { getTkLevel, rotGradientT };
