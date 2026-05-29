@@ -1,3 +1,10 @@
+## [2.4.6](https://github.com/hyperi-io/claudemeter/compare/v2.4.5...v2.4.6) (2026-05-29)
+
+
+### Bug Fixes
+
+* **tk:** continuous white→blue rot gauge gradient ([e6dba52](https://github.com/hyperi-io/claudemeter/commit/e6dba527b67dbabd9026478fcf8237f4e50cb006)), closes [#eef5fc](https://github.com/hyperi-io/claudemeter/issues/eef5fc) [#163a63](https://github.com/hyperi-io/claudemeter/issues/163a63)
+
 ## [2.4.5](https://github.com/hyperi-io/claudemeter/compare/v2.4.4...v2.4.5) (2026-05-24)
 
 
