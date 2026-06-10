@@ -659,7 +659,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
-    "chromium-bidi": "^15.0.0",
+    "chromium-bidi": "^16.0.0",
     "playwright-core": "^1.60.0"
   }
 }
