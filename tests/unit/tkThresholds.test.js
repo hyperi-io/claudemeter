@@ -85,11 +85,11 @@ describe('getTkLevel — 1M window (Max profiles)', () => {
 });
 
 describe('getTkLevel — 500K window (Enterprise profile)', () => {
-    const profile = PROFILES.enterprise;  // standard runway, NO rot (enterprise has rotEnabled=false)
+    const profile = PROFILES.enterprise;  // 500K window is >200K, so rot applies (window-gated, not profile)
     const window = 500_000;
 
-    it('400K used → still normal (yellow at compactPoint-20K = 447K)', () => {
-        expect(getTkLevel(400_000, profile, window)).toBe('normal');
+    it('400K used → rotLight (rot floor 300K, yellow at 447K)', () => {
+        expect(getTkLevel(400_000, profile, window)).toBe('rotLight');
     });
 
     it('warning threshold (447K) → warning', () => {
@@ -100,8 +100,8 @@ describe('getTkLevel — 500K window (Enterprise profile)', () => {
         expect(getTkLevel(462_000, profile, window)).toBe('error');
     });
 
-    it('300K (rotLight if enabled) → still normal (rot disabled on enterprise profile)', () => {
-        expect(getTkLevel(300_000, profile, window)).toBe('normal');
+    it('300K → rotLight (rot keyed to the >200K window, not the profile)', () => {
+        expect(getTkLevel(300_000, profile, window)).toBe('rotLight');
     });
 });
 

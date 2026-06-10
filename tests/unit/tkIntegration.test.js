@@ -91,13 +91,13 @@ describe('tk integration — detection → profile → level → colour → reco
         expect(level).toBe('error');
     });
 
-    it('Enterprise at 350K used on 500K → normal (rot disabled, below warning threshold of ~447K)', () => {
+    it('Enterprise at 350K used on 500K -> rotLight (window-gated, profile rotEnabled ignored)', () => {
         const profile = selectProfile({ orgType: 'Enterprise' });
         expect(profile.name).toBe('enterprise');
-        expect(profile.thresholds.rotEnabled).toBe(false);
+        expect(profile.thresholds.rotEnabled).toBe(false);  // flag off, but a >200K window still rots
 
         const level = getTkLevel(350_000, profile, 500_000);
-        expect(level).toBe('normal');
+        expect(level).toBe('rotLight');
     });
 
     it('Enterprise at 462K used on 500K → error', () => {

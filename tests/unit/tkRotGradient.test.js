@@ -54,12 +54,12 @@ describe('rotGradientT — 1M window (max-20x, rot enabled)', () => {
 });
 
 describe('rotGradientT — rot disabled / defensive', () => {
-    it('rotEnabled=false profile (pro) → null even mid-range', () => {
+    it('pro 200K window → null mid-range (window-gated, <=200K)', () => {
         expect(rotGradientT(150_000, PROFILES.pro, 200_000)).toBeNull();
     });
 
-    it('rotEnabled=false profile (enterprise) → null at 300K', () => {
-        expect(rotGradientT(300_000, PROFILES.enterprise, 500_000)).toBeNull();
+    it('200K window → null for a rot-capable profile (window-gated)', () => {
+        expect(rotGradientT(150_000, PROFILES['max-20x'], 200_000)).toBeNull();
     });
 
     it('null profile → null', () => {
