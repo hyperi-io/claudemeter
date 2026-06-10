@@ -77,6 +77,7 @@ SKILLS.md
 
 # Local working files (not committed)
 docs/superpowers/
+docs/context-rot.md
 .mcp.json
 .ai-version
 .claude/
@@ -127,3 +128,9 @@ coverage/
 .yarn/cache
 .yarn/install-state.gz
 .pnp.*
+
+# hyperi-ai per-project context + tool-specific equivalents.
+# Real files in project tree (Claude Code / Codex / Gemini / Cursor
+# all load these from project root natively). Local-only, never
+# committed -- mirrored in .git/info/exclude.
+AGENTS.md
