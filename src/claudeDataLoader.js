@@ -37,7 +37,8 @@ class ClaudeDataLoader {
         return workspacePath
             .replace(/\\/g, '-')  // Windows backslashes
             .replace(/\//g, '-')  // Unix forward slashes
-            .replace(/:/g, '-');  // Windows drive-letter colon
+            .replace(/:/g, '-')   // Windows drive-letter colon
+            .replace(/ /g, '-');  // spaces -- Claude Code dashes these too, #43
     }
 
     setWorkspacePath(workspacePath) {

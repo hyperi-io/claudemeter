@@ -59,11 +59,12 @@ describe('ClaudeDataLoader.convertPathToClaudeDir', () => {
     });
 
     describe('edge cases', () => {
-        it('preserves spaces in path segments', () => {
-            // Spaces are valid in Claude project dir names — they don't
-            // get touched by the converter.
+        it('maps spaces to dashes (Claude Code dashes them too)', () => {
+            // Claude Code converts spaces to dashes when naming the project
+            // dir, so we must too or the lookup misses and the gauge shows
+            // Tk -. #43
             expect(loader.convertPathToClaudeDir('c:\\My Projects\\thing'))
-                .toBe('c--My Projects-thing');
+                .toBe('c--My-Projects-thing');
         });
 
         it('handles trailing separators', () => {
