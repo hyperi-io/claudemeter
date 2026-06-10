@@ -176,6 +176,35 @@ describe('matchRuleTable', () => {
         expect(result.limit).toBe(1000000);
     });
 
+    it('matches Max + Fable 5 -> 1M (single-version ID)', () => {
+        const result = matchRuleTable(['claude_max'], ['claude-fable-5']);
+        expect(result).not.toBeNull();
+        expect(result.limit).toBe(1000000);
+        expect(result.source).toBe('rule:max-fable-5+');
+    });
+
+    it('matches Team + Fable 5 -> 1M', () => {
+        const result = matchRuleTable(['claude_team'], ['claude-fable-5']);
+        expect(result).not.toBeNull();
+        expect(result.limit).toBe(1000000);
+    });
+
+    it('matches Max + Fable 5 with date suffix -> 1M (date not read as minor)', () => {
+        const result = matchRuleTable(['claude_max'], ['claude-fable-5-20260609']);
+        expect(result).not.toBeNull();
+        expect(result.limit).toBe(1000000);
+    });
+
+    it('does NOT match Pro + Fable 5 (Pro not in rule plans)', () => {
+        const result = matchRuleTable(['claude_pro'], ['claude-fable-5']);
+        expect(result).toBeNull();
+    });
+
+    it('does NOT match Max + Fable 4 (below minVersion 5)', () => {
+        const result = matchRuleTable(['claude_max'], ['claude-fable-4']);
+        expect(result).toBeNull();
+    });
+
     it('does NOT match Max + old-gen Opus 4.5 (minVersion cutoff)', () => {
         const result = matchRuleTable(['claude_max'], ['claude-opus-4-5-20251101']);
         expect(result).toBeNull();
@@ -288,6 +317,20 @@ describe('resolveContextWindow — primary bug regression', () => {
             observedFloor: 1100000,
         });
         expect(result.limit).toBe(1000000);
+    });
+
+    it('fable detection: Max + fable-5 + observed < 200K -> 1M', () => {
+        // The reported bug: a single-version model id (claude-fable-5) failed
+        // to parse, so the rule never matched and the gauge fell back to 200K.
+        const result = resolveContextWindow({
+            capabilities: ['claude_max', 'chat'],
+            subscriptionType: 'max',
+            s1mHasAccess: false,
+            modelIds: ['claude-fable-5'],
+            observedFloor: 150000,
+        });
+        expect(result.limit).toBe(1000000);
+        expect(result.confidence).not.toBe('unknown');
     });
 });
 

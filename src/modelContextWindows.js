@@ -10,7 +10,7 @@
 // e.g. "claude-opus-4-6", "claude-sonnet-4-6[1m]", "claude-opus-4-6[2m]"
 //
 // 1M context is GA (since March 2026) and is the default for Max, Team, and
-// Enterprise accounts on Opus 4.6 and Sonnet 4.6 — no explicit suffix required.
+// Enterprise on Opus 4.6+, Sonnet 4.6+, and Fable 5+ -- no suffix required.
 // Pro accounts stay at 200K by default (extra-usage pay-as-you-go).
 //
 // Claude Code strips the [1m]/[Nm] suffix before writing model IDs to the
@@ -66,17 +66,18 @@ function parseModelAlias(alias) {
 function parseModelId(modelId) {
     if (!modelId || typeof modelId !== 'string') return null;
 
-    // Match: claude-{family}-{major}-{minor} with optional context suffix [Nm] or [Nk]
-    const match = modelId.match(/^claude-([a-z]+)-(\d+)-(\d+)(?:[^[]*)?(\[\d+[mk]\])?/);
+    // claude-{family}-{major} with OPTIONAL -{minor}, then optional [Nm]/[Nk].
+    // Minor optional so claude-fable-5 parses (-> 5.0). (?!\d) excludes a date.
+    const match = modelId.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?!\d))?(?:[^[]*)?(\[\d+[mk]\])?/);
     if (!match) return null;
 
     const family = match[1];
     const major = parseInt(match[2], 10);
-    const minor = parseInt(match[3], 10);
+    const minor = match[3] !== undefined ? parseInt(match[3], 10) : null;
 
     return {
         family,
-        version: parseFloat(`${major}.${minor}`),
+        version: minor !== null ? parseFloat(`${major}.${minor}`) : major,
         contextLimit: parseContextSuffix(match[4]),
         raw: modelId,
     };

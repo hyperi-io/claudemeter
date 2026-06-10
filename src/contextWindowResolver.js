@@ -89,6 +89,15 @@ const CONTEXT_WINDOW_RULES = [
         limit: 1_000_000,
         source: 'rule:max-sonnet-4.6+',
     },
+    // Max/Team/Enterprise get 1M on Fable 5+ (ships 1M by default, listed with
+    // Opus 4.6-4.8). Source: Fable 5 launch 9 Jun 2026, support.claude.com 8606394.
+    {
+        plans: ['claude_max', 'claude_team', 'claude_enterprise'],
+        family: 'fable',
+        minVersion: 5,
+        limit: 1_000_000,
+        source: 'rule:max-fable-5+',
+    },
     // Deliberately no rule for Haiku on any plan: Anthropic has
     // never offered extended context on Haiku as far as we can
     // verify. Falls through to STANDARD_LIMIT on all plans.
@@ -134,11 +143,13 @@ function parseFamilyAndVersion(modelId) {
     if (!modelId || typeof modelId !== 'string') return null;
     // Strip any [Nm]/[Nk] suffix before matching.
     const stripped = modelId.replace(/\[\d+[mk]\]$/, '');
-    const match = stripped.match(/^claude-([a-z]+)-(\d+)-(\d+)/);
+    // minor OPTIONAL for every family. claude-fable-5 -> 5.0, opus-4-6 -> 4.6.
+    // (?!\d) keeps a trailing date out of the minor.
+    const match = stripped.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?!\d))?/);
     if (!match) return null;
     return {
         family: match[1],
-        version: parseFloat(`${match[2]}.${match[3]}`),
+        version: match[3] ? parseFloat(`${match[2]}.${match[3]}`) : parseFloat(match[2]),
     };
 }
 
