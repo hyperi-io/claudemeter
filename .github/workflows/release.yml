@@ -81,8 +81,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          # Match VS Code 1.110's bundled Node (Electron 35 → Node 22.x).
-          node-version: '24'
+          # Match VS Code's bundled Node -- Electron 37/38 -> Node 22.x as of
+          # 2026, Node 24 not until Electron 40.
+          node-version: '22'
 
       - name: Install dependencies
         run: npm ci
@@ -123,8 +124,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          # Match VS Code 1.110's bundled Node (Electron 35 → Node 22.x).
-          node-version: '24'
+          # Match VS Code's bundled Node -- Electron 37/38 -> Node 22.x as of
+          # 2026, Node 24 not until Electron 40.
+          node-version: '22'
 
       - name: Install dependencies
         run: npm ci
