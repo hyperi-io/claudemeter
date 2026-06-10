@@ -11,6 +11,22 @@ const path = require('path');
 const os = require('os');
 const { getTokenLimit, TIMEOUTS, splitLines } = require('./utils');
 
+// Active session = newest transcript with usage, not the max across recent
+// files (max overstated context after /clear). `sessions` sorted newest-first.
+function selectActiveSession(sessions) {
+    let active = null;
+    let activeSessionCount = 0;
+    for (const s of sessions || []) {
+        if (s && s.cacheRead > 0) {
+            activeSessionCount++;
+            if (active === null) {
+                active = s;
+            }
+        }
+    }
+    return { active, activeSessionCount };
+}
+
 class ClaudeDataLoader {
     constructor(workspacePath = null, debugLogger = null) {
         this.claudeConfigPaths = this.getClaudeConfigPaths();
@@ -360,15 +376,8 @@ class ClaudeDataLoader {
                 };
             }
 
-            // Scan ALL recent session files and track the highest cache_read value
-            // This handles multiple Claude Code sessions in the same project
-            let highestCacheRead = 0;
-            let highestCacheCreation = 0;
-            let highestMessageCount = 0;
-            let highestSessionFile = null;
-            let activeSessionCount = 0;
-            const detectedModels = new Set();
-
+            // One summary per recent transcript (already newest-first).
+            const sessions = [];
             for (const fileInfo of recentFiles) {
                 try {
                     const content = await fs.readFile(fileInfo.path, 'utf-8');
@@ -380,23 +389,18 @@ class ClaudeDataLoader {
                             const entry = JSON.parse(lines[i]);
 
                             if (entry.type === 'assistant' && entry.message?.usage) {
-                                const model = entry.message?.model;
-                                if (model && model !== '<synthetic>') {
-                                    detectedModels.add(model);
-                                }
-
                                 const usage = entry.message.usage;
                                 const cacheRead = usage.cache_read_input_tokens || 0;
 
                                 if (cacheRead > 0) {
-                                    activeSessionCount++;
-
-                                    if (cacheRead > highestCacheRead) {
-                                        highestCacheRead = cacheRead;
-                                        highestCacheCreation = usage.cache_creation_input_tokens || 0;
-                                        highestMessageCount = lines.length;
-                                        highestSessionFile = path.basename(fileInfo.path);
-                                    }
+                                    const model = entry.message?.model;
+                                    sessions.push({
+                                        file: path.basename(fileInfo.path),
+                                        cacheRead,
+                                        cacheCreation: usage.cache_creation_input_tokens || 0,
+                                        messageCount: lines.length,
+                                        model: (model && model !== '<synthetic>') ? model : null,
+                                    });
                                     break;
                                 }
                             }
@@ -410,28 +414,29 @@ class ClaudeDataLoader {
                 }
             }
 
-            const modelIds = Array.from(detectedModels);
+            const { active, activeSessionCount } = selectActiveSession(sessions);
+            const modelIds = active && active.model ? [active.model] : [];
 
-            if (highestCacheRead > 0) {
-                const resolvedLimit = getTokenLimit(modelIds, highestCacheRead);
-                this.log(`Found ${activeSessionCount} active session(s), showing highest usage:`);
-                this.log(`   File: ${highestSessionFile}`);
+            if (active) {
+                const resolvedLimit = getTokenLimit(modelIds, active.cacheRead);
+                this.log(`Found ${activeSessionCount} active session(s), showing the active (most recent):`);
+                this.log(`   File: ${active.file}`);
                 this.log(`   Models detected: ${modelIds.join(', ') || 'none'}`);
                 this.log(`   Context window: ${resolvedLimit.toLocaleString()} tokens`);
-                this.log(`   Cache creation: ${highestCacheCreation.toLocaleString()}`);
-                this.log(`   Cache read: ${highestCacheRead.toLocaleString()}`);
-                this.log(`   Session total (cache_read): ${highestCacheRead.toLocaleString()} tokens`);
-                this.log(`   Percentage: ${((highestCacheRead / resolvedLimit) * 100).toFixed(2)}%`);
+                this.log(`   Cache creation: ${active.cacheCreation.toLocaleString()}`);
+                this.log(`   Cache read: ${active.cacheRead.toLocaleString()}`);
+                this.log(`   Session total (cache_read): ${active.cacheRead.toLocaleString()} tokens`);
+                this.log(`   Percentage: ${((active.cacheRead / resolvedLimit) * 100).toFixed(2)}%`);
             }
 
             return {
-                totalTokens: highestCacheRead,
+                totalTokens: active ? active.cacheRead : 0,
                 inputTokens: 0,
                 outputTokens: 0,
-                cacheCreationTokens: highestCacheCreation,
-                cacheReadTokens: highestCacheRead,
-                messageCount: highestMessageCount,
-                isActive: highestCacheRead > 0,
+                cacheCreationTokens: active ? active.cacheCreation : 0,
+                cacheReadTokens: active ? active.cacheRead : 0,
+                messageCount: active ? active.messageCount : 0,
+                isActive: !!active,
                 activeSessionCount: activeSessionCount,
                 modelIds: modelIds,
             };
@@ -458,4 +463,4 @@ class ClaudeDataLoader {
     }
 }
 
-module.exports = { ClaudeDataLoader };
+module.exports = { ClaudeDataLoader, selectActiveSession };

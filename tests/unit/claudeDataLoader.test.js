@@ -6,7 +6,7 @@
 // silently come back the next time someone touches that function.
 
 import { describe, it, expect } from 'vitest';
-const { ClaudeDataLoader } = require('../../src/claudeDataLoader');
+const { ClaudeDataLoader, selectActiveSession } = require('../../src/claudeDataLoader');
 
 describe('ClaudeDataLoader.convertPathToClaudeDir', () => {
     // Use a single instance — the method is pure with respect to its
@@ -71,5 +71,32 @@ describe('ClaudeDataLoader.convertPathToClaudeDir', () => {
             expect(loader.convertPathToClaudeDir('c:\\Projects\\'))
                 .toBe('c--Projects-');
         });
+    });
+});
+
+describe('selectActiveSession', () => {
+    it('picks the newest transcript, not the largest', () => {
+        // newest-first: the fresh 21k chat beats the older 181k one
+        const { active, activeSessionCount } = selectActiveSession([
+            { file: 'new', cacheRead: 21000 },
+            { file: 'old', cacheRead: 181000 },
+        ]);
+        expect(active.file).toBe('new');
+        expect(activeSessionCount).toBe(2);
+    });
+
+    it('skips leading transcripts with no usage', () => {
+        const { active, activeSessionCount } = selectActiveSession([
+            { file: 'fresh', cacheRead: 0 },
+            { file: 'real', cacheRead: 50000 },
+        ]);
+        expect(active.file).toBe('real');
+        expect(activeSessionCount).toBe(1);
+    });
+
+    it('null active when nothing has usage', () => {
+        expect(selectActiveSession([{ cacheRead: 0 }]).active).toBeNull();
+        expect(selectActiveSession([]).active).toBeNull();
+        expect(selectActiveSession(null).activeSessionCount).toBe(0);
     });
 });
