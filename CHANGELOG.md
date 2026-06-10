@@ -1,3 +1,10 @@
+## [2.4.8](https://github.com/hyperi-io/claudemeter/compare/v2.4.7...v2.4.8) (2026-06-10)
+
+
+### Bug Fixes
+
+* verify session cookie before ending login ([e97c199](https://github.com/hyperi-io/claudemeter/commit/e97c199644de350c99318a4e208b333fa5c7186c)), closes [#42](https://github.com/hyperi-io/claudemeter/issues/42) [#42](https://github.com/hyperi-io/claudemeter/issues/42)
+
 ## [2.4.7](https://github.com/hyperi-io/claudemeter/compare/v2.4.6...v2.4.7) (2026-05-29)
 
 
