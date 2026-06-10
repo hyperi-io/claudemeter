@@ -146,7 +146,7 @@ describe('tk integration — colorMap and recommendations cover all five tier na
     });
 
     it('recommendation strings carry no model name, version, or specific token count', () => {
-        for (const [tier, text] of Object.entries(TIER_RECOMMENDATIONS)) {
+        for (const [, text] of Object.entries(TIER_RECOMMENDATIONS)) {
             if (text === null) continue;
             expect(text).not.toMatch(/Opus/);
             expect(text).not.toMatch(/Sonnet/);

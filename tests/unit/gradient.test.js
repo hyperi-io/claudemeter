@@ -64,7 +64,7 @@ describe('lerpHexOklab — white→blue stays blue (no pink, no grey)', () => {
     });
 
     it('midpoint is not a muddy grey (channels not all within 12 of each other)', () => {
-        const { r, g, b } = rgb(lerpHexOklab(WHITE_BLUE_A, WHITE_BLUE_B, 0.5));
+        const { r, b } = rgb(lerpHexOklab(WHITE_BLUE_A, WHITE_BLUE_B, 0.5));
         expect(b - r).toBeGreaterThan(12);
     });
 });

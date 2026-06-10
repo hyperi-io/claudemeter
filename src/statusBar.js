@@ -914,8 +914,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     // the user's profileOverride if set, then resolves to a profile.
     // getTkLevel maps absolute tokens used → 5-tier level. Bar fill is
     // still computed as a percentage for the gauge dots.
-    let tokenProfile = null;
-    let tokenLevel = 'normal';
+    let tokenProfile;
+    let tokenLevel;
 
     if (sessionData && sessionData.tokenUsage) {
         tokenPercent = Math.round((sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100);
