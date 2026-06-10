@@ -174,6 +174,22 @@ function detectOrgType(orgName, orgObj) {
     return null;
 }
 
+// Cheap gate before the caller spends a bootstrap call. Fire on either signal --
+// a new sessionKey value, or landing on the claude.ai app (off /login). We don't
+// rely on the exact login/SSO URL -- bootstrap in the caller is the real check, so
+// a misjudged URL only costs a harmless extra GET. requireValueChange forces a
+// new value (wrong-account retry, where the old cookie is still valid). Pure. #42
+function isSessionCandidate({ sessionKeyValue, baselineValue, requireValueChange, onAppPage }) {
+    if (!sessionKeyValue) {
+        return false;
+    }
+    const valueChanged = sessionKeyValue !== baselineValue;
+    if (requireValueChange) {
+        return valueChanged;
+    }
+    return valueChanged || onAppPage;
+}
+
 // Login lock: simple file-based mutex to prevent multiple login windows
 const LOGIN_LOCK_FILE = path.join(PATHS.CONFIG_DIR, 'login-in-progress.lock');
 const LOGIN_LOCK_TTL = 5 * 60 * 1000; // 5 minutes
@@ -605,6 +621,10 @@ class ClaudeHttpFetcher {
         // context mode the way puppeteer did. We track close via a flag set
         // by `context.on('close', ...)` and consult it in _waitForSessionKey.
         let contextClosed = false;
+        // Value of the sessionKey we pre-inject below, if any. _waitForSessionKey
+        // must not treat the mere presence of this cookie as a successful login --
+        // we put it there ourselves. See issue #42.
+        let preInjectedSessionKey = null;
 
         try {
             // Lazy-load playwright-core
@@ -653,6 +673,11 @@ class ClaudeHttpFetcher {
                 headless: false,
                 executablePath: chromePath,
                 timeout: 60000,
+                // Playwright's chromiumSandbox defaults off, so it injects
+                // --no-sandbox -- the "stability and security will suffer" banner
+                // on the login window. We run on desktops where the sandbox works,
+                // so keep it on. See issue #37.
+                chromiumSandbox: true,
                 args: BROWSER_LAUNCH_ARGS(port),
                 viewport: { width: 1280, height: 800 },
                 userAgent: BROWSER_HEADERS['User-Agent'],
@@ -679,7 +704,8 @@ class ClaudeHttpFetcher {
                         httpOnly: true,
                         secure: true,
                     }]);
-                    fileLog('Pre-injected saved sessionKey — skipping login if still valid');
+                    preInjectedSessionKey = existingCookie.sessionKey;
+                    fileLog('Pre-injected saved sessionKey — skipping login only if the server accepts it');
                 } catch (err) {
                     fileLog(`Cookie pre-injection failed: ${err.message}`);
                 }
@@ -706,25 +732,20 @@ class ClaudeHttpFetcher {
                     cancellable: false,
                 },
                 async () => {
-                    return await this._waitForSessionKey(page, context, () => contextClosed);
+                    return await this._waitForSessionKey(page, context, () => contextClosed, {
+                        baselineValue: preInjectedSessionKey,
+                        allowNavigationSignal: true,
+                    });
                 }
             );
 
             if (loginResult.success) {
-                // Extract and verify the sessionKey cookie before saving
-                const cookies = await context.cookies(CLAUDE_URLS.BASE);
-                const sessionCookie = cookies.find(c => c.name === 'sessionKey');
+                // _waitForSessionKey only returns success once the server has
+                // accepted the cookie, so loginResult already carries a validated
+                // sessionKey and the account email -- no re-fetch, no second guess.
+                const browserEmail = loginResult.email;
 
-                if (!sessionCookie) {
-                    throw new Error('Login appeared successful but no sessionKey cookie found');
-                }
-
-                // Verify the logged-in account matches the CLI account
-                fileLog('Verifying browser account matches CLI account...');
-                const bootstrapData = await this._fetchBootstrapWithKey(sessionCookie.value);
-                const browserEmail = bootstrapData?.account?.email_address || null;
-
-                if (cliEmail && browserEmail && cliEmail.toLowerCase() !== browserEmail.toLowerCase()) {
+                if (cliEmail && cliEmail.toLowerCase() !== browserEmail.toLowerCase()) {
                     // Wrong account — prompt user to log in as the correct account
                     // in the same browser window. The tempdir is always wiped after
                     // this flow, so no cached browser state carries over.
@@ -742,26 +763,25 @@ class ClaudeHttpFetcher {
                             cancellable: false,
                         },
                         async () => {
-                            return await this._waitForSessionKey(page, context, () => contextClosed);
+                            // The wrong-account cookie is still valid, so landing back
+                            // on the app proves nothing -- demand a genuinely new
+                            // sessionKey value (a real re-login) before validating.
+                            return await this._waitForSessionKey(page, context, () => contextClosed, {
+                                baselineValue: loginResult.sessionKey,
+                                requireValueChange: true,
+                            });
                         }
                     );
                     if (!retryResult.success) {
                         throw new Error(retryResult.cancelled ? 'LOGIN_CANCELLED' : 'LOGIN_TIMEOUT');
                     }
-                    const retryCookies = await context.cookies(CLAUDE_URLS.BASE);
-                    const retrySessionCookie = retryCookies.find(c => c.name === 'sessionKey');
-                    if (!retrySessionCookie) {
-                        throw new Error('No sessionKey cookie after retry');
-                    }
-                    // Re-verify after retry
-                    const retryBootstrap = await this._fetchBootstrapWithKey(retrySessionCookie.value);
-                    const retryBrowserEmail = retryBootstrap?.account?.email_address || null;
-                    if (cliEmail && retryBrowserEmail && cliEmail.toLowerCase() !== retryBrowserEmail.toLowerCase()) {
-                        fileLog(`Account mismatch on retry: browser=${retryBrowserEmail}, CLI=${cliEmail}`);
+                    if (cliEmail && cliEmail.toLowerCase() !== retryResult.email.toLowerCase()) {
+                        fileLog(`Account mismatch on retry: browser=${retryResult.email}, CLI=${cliEmail}`);
                         throw new Error('WRONG_ACCOUNT');
                     }
                     const creds = readCredentials();
-                    this._saveCookie(retrySessionCookie.value, retrySessionCookie.expires, creds?.orgId);
+                    this._saveCookie(retryResult.sessionKey, retryResult.expires, creds?.orgId);
+                    fileLog(`Account verified on retry: ${retryResult.email}`);
                 } else {
                     if (!cliEmail) {
                         fileLog('CLI token auth not supported for verification — skipping account check');
@@ -769,7 +789,7 @@ class ClaudeHttpFetcher {
                         fileLog(`Account verified: ${browserEmail}`);
                     }
                     const creds = readCredentials();
-                    this._saveCookie(sessionCookie.value, sessionCookie.expires, creds?.orgId);
+                    this._saveCookie(loginResult.sessionKey, loginResult.expires, creds?.orgId);
                 }
 
                 vscode.window.withProgress(
@@ -875,7 +895,30 @@ class ClaudeHttpFetcher {
         return { email: browserEmail };
     }
 
-    async _waitForSessionKey(page, context, isClosed, maxWaitMs = TIMEOUTS.LOGIN_WAIT, pollIntervalMs = TIMEOUTS.LOGIN_POLL) {
+    // On claude.ai and off /login. False for external SSO pages, so a mid-SSO
+    // redirect isn't read as done. page.url() is sync.
+    _isOnClaudeApp(page) {
+        try {
+            const url = page.url();
+            return url.startsWith('https://claude.ai') && !url.includes('/login');
+        } catch {
+            return false;
+        }
+    }
+
+    // Wait for a sessionKey the server accepts, returning it plus the verified
+    // email. Bootstrap-validated while the window is still open, so an unfinished
+    // login (redirect not settled, magic link propagating, SSO mid-flight) just
+    // keeps waiting -- we never close on a heuristic. Method-agnostic. #42
+    //   baselineValue       sessionKey present when the wait starts
+    //   requireValueChange  demand a new value (wrong-account retry only)
+    async _waitForSessionKey(page, context, isClosed, options = {}) {
+        const {
+            baselineValue = null,
+            requireValueChange = false,
+            maxWaitMs = TIMEOUTS.LOGIN_WAIT,
+            pollIntervalMs = TIMEOUTS.LOGIN_POLL,
+        } = options;
         const debug = isDebugEnabled();
         const startTime = Date.now();
 
@@ -890,14 +933,45 @@ class ClaudeHttpFetcher {
                     return { success: false, cancelled: true };
                 }
 
+                // Pre-injection sets sessionKey on host-only claude.ai; a real
+                // login sets it on .claude.ai. Both come back here, so prefer the
+                // value that differs from the baseline -- the freshly-set authed
+                // cookie -- rather than the stale pre-injected duplicate. #42
                 const cookies = await context.cookies(CLAUDE_URLS.BASE);
-                const hasSessionKey = cookies.some(c => c.name === 'sessionKey');
+                const sessionCookies = cookies.filter(c => c.name === 'sessionKey');
+                const sessionCookie = sessionCookies.find(c => c.value !== baselineValue)
+                    || sessionCookies[0] || null;
+                const sessionKeyValue = sessionCookie ? sessionCookie.value : null;
 
-                if (hasSessionKey) {
+                if (!isSessionCandidate({
+                    sessionKeyValue,
+                    baselineValue,
+                    requireValueChange,
+                    onAppPage: this._isOnClaudeApp(page),
+                })) {
+                    continue;
+                }
+
+                // Authoritative: does the server accept this cookie right now?
+                // This is what makes "verify before we close the window" real -- a
+                // present-but-not-yet-valid cookie returns no account, so we keep
+                // the window open and poll again rather than saving a dead key.
+                const bootstrap = await this._fetchBootstrapWithKey(sessionKeyValue);
+                const email = bootstrap?.account?.email_address || null;
+                if (email) {
                     if (debug) {
-                        getDebugChannel().appendLine('Auth: sessionKey cookie detected');
+                        getDebugChannel().appendLine(`Auth: sessionKey validated for ${email}`);
                     }
-                    return { success: true, cancelled: false };
+                    return {
+                        success: true,
+                        cancelled: false,
+                        sessionKey: sessionKeyValue,
+                        expires: sessionCookie.expires,
+                        email,
+                    };
+                }
+                if (debug) {
+                    getDebugChannel().appendLine('Auth: sessionKey present but not yet valid -- still waiting');
                 }
             } catch (error) {
                 if (error.message.includes('Target closed') ||
@@ -1118,4 +1192,5 @@ module.exports = {
     ClaudeHttpFetcher,
     findChrome,
     selectMembership,
+    isSessionCandidate,
 };
