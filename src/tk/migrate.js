@@ -4,8 +4,8 @@
 //            (claudemeter.thresholds.tokens.warning / .error) into the
 //            new profile-driven token-runway model.
 //
-//            Runs once per activation (idempotent — guard checks "is
-//            new key already set?"). Convert percent → runway tokens
+//            Runs once per activation (idempotent - guard checks "is
+//            new key already set?"). Convert percent -> runway tokens
 //            using the user's current detected context window:
 //                tokensAtThreshold = window * (percent / 100)
 //                runway = window - tokensAtThreshold - compactReserve
@@ -16,7 +16,7 @@
 //            legacy values are noted in the log and skipped.
 //
 //            Failed delete of the legacy key after a successful new-key
-//            write is logged but not fatal — the next activation's
+//            write is logged but not fatal - the next activation's
 //            guard ("is new key already set?") prevents re-migration.
 //
 // License:   MIT
@@ -56,7 +56,7 @@ async function migrateLegacySettings(vscode, contextWindow, profile, logger, con
 
         const userValue = legacyInspect.globalValue;
         if (userValue === undefined) {
-            continue;  // not user-set at global scope → nothing to do
+            continue;  // not user-set at global scope -> nothing to do
         }
 
         // Workspace-scoped legacy values: note + skip
@@ -73,7 +73,7 @@ async function migrateLegacySettings(vscode, contextWindow, profile, logger, con
             continue;
         }
 
-        // Convert percent → runway tokens
+        // Convert percent -> runway tokens
         const tokensAtThreshold = Math.round(contextWindow * (userValue / 100));
         const runway = contextWindow - tokensAtThreshold - compactReserve;
         if (runway <= 0) {
@@ -91,7 +91,7 @@ async function migrateLegacySettings(vscode, contextWindow, profile, logger, con
             continue;
         }
 
-        // Delete legacy key (best effort — failure is logged but not fatal)
+        // Delete legacy key (best effort - failure is logged but not fatal)
         try {
             await config.update(legacyKey, undefined, vscode.ConfigurationTarget.Global);
         } catch (err) {

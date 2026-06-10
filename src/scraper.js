@@ -9,7 +9,7 @@
 // public documentation or stability guarantees. Anthropic could change, gate,
 // or remove these endpoints at any time without notice. If that happens, this
 // browser-based scraper can still extract usage data by intercepting API
-// requests or scraping the rendered HTML — adapting to page-level changes that
+// requests or scraping the rendered HTML - adapting to page-level changes that
 // would break the direct HTTP approach.
 //
 // Enable via "claudemeter.useLegacyScraper": true in settings.
@@ -230,7 +230,7 @@ class ClaudeUsageScraper {
 
             // User-Agent header for already-running browsers is set at the
             // context level. Cannot be retroactively changed on an existing
-            // CDP-attached Chrome instance, so this is best-effort — if the
+            // CDP-attached Chrome instance, so this is best-effort - if the
             // header doesn't stick the captured API endpoints still work.
             try {
                 await this.context.setExtraHTTPHeaders({
@@ -304,7 +304,7 @@ class ClaudeUsageScraper {
 
             console.log(`Launching Chrome on port ${this.browserPort}`);
             // launchPersistentContext both spawns the browser AND returns the
-            // first context. We treat the context as our primary handle —
+            // first context. We treat the context as our primary handle -
             // there is no separate Browser object in this mode.
             this.context = await getChromium().launchPersistentContext(this.sessionDir, launchOptions);
             this.browser = null;
@@ -722,14 +722,14 @@ class ClaudeUsageScraper {
         try {
             if (this.isConnectedBrowser && this.browser) {
                 // Closing a CDP-connected Browser detaches our process from
-                // the Chrome instance without killing it — same semantic as
+                // the Chrome instance without killing it - same semantic as
                 // puppeteer's disconnect().
                 await this.browser.close();
                 console.log('Disconnected from shared browser');
             } else if (this.context) {
-                // launchPersistentContext owns the browser; context.close()
+                // launchPersistentContext owns the browser, context.close()
                 // shuts both down. playwright-core doesn't expose the
-                // underlying process PID, so SIGKILL fallback is gone —
+                // underlying process PID, so SIGKILL fallback is gone -
                 // race against a 5s timeout and let the OS handle any
                 // orphan Chrome processes (rare in practice).
                 const closePromise = this.context.close();

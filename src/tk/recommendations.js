@@ -1,12 +1,12 @@
 //  Project:      Claudemeter
 //  File:         src/tk/recommendations.js
-//  Purpose:      Tier → tooltip recommendation string.
+//  Purpose:      Tier -> tooltip recommendation string.
 //
 //                Strings are deliberately model-agnostic and value-agnostic.
 //                Specific evidence (model names, benchmark numbers, exact
 //                compact trigger %) lives in the README "Why the
 //                context-rot meter exists" section. Putting that data here
-//                would create a maintenance tail — every model release
+//                would create a maintenance tail - every model release
 //                would force a code change.
 //
 //                Each recommendation uses markdown line breaks ("  \\n",
@@ -18,7 +18,7 @@
 //                concept ("Context rot"), the second describes the
 //                effect, the third gives the action.
 //
-//                'normal' maps to null — no recommendation.
+//                'normal' maps to null - no recommendation.
 //
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED

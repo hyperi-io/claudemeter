@@ -15,7 +15,7 @@
 //                Anthropic strings come from src/credentialsReader.js and
 //                the bootstrap API; they're compared as-is. Do not import
 //                or call formatSubscriptionType / formatRateLimitTier here
-//                — those are display formatters and a parallel-normalisation
+//                - those are display formatters and a parallel-normalisation
 //                hazard.
 //
 //                'unknown' fallback emits a one-time output-channel warning
@@ -31,18 +31,18 @@ const { PROFILES } = require('./profiles.js');
 let hasWarnedUnknown = false;
 
 /**
- * Resolve detection signals → Tk profile.
+ * Resolve detection signals -> Tk profile.
  *
  * @param {{ subscriptionType?: string, rateLimitTier?: string, orgType?: string }} signals
  * @param {{ appendLine: (msg: string) => void } | null} logger - optional output channel
- * @returns {object} a profile from PROFILES (never null — always falls back to 'unknown')
+ * @returns {object} a profile from PROFILES (never null - always falls back to 'unknown')
  */
 function selectProfile(signals, logger = null) {
     const subscriptionType = signals?.subscriptionType;
     const rateLimitTier = signals?.rateLimitTier;
     const orgType = signals?.orgType;
 
-    // Most specific first — both subscriptionType AND rateLimitTier set
+    // Most specific first - both subscriptionType AND rateLimitTier set
     if (subscriptionType === 'max' && rateLimitTier === 'default_claude_max_20x') {
         return PROFILES['max-20x'];
     }

@@ -82,7 +82,7 @@ function getUsageFormat() {
         if (inspected.globalValue !== undefined) return inspected.globalValue;
     }
     // Platform-aware default: Windows status-bar fonts commonly lack U+25CB
-    // (○ — White Circle), which forces a fallback font with mismatched
+    // (○ - White Circle), which forces a fallback font with mismatched
     // metrics and renders barCircle as uneven `●●OO` instead of `●●○○○`.
     // Block Elements (▓░) sit in a Unicode range that every standard
     // monospace font ships, so barLight renders cleanly on Windows. macOS
@@ -94,11 +94,11 @@ function getUsageFormat() {
 
 /**
  * Get the tokens display setting (claudemeter.statusBar.tokensDisplay).
- * Controls whether the Tk status bar item shows the bar/percent
- * indicator, the k-count, or both. Default is 'both' so users
- * upgrading from 2.2.x see the new k-count alongside the existing
- * indicator.
- * @returns {string} One of: bar, count, both
+ * Controls how much of the Tk indicator's numeric half is shown next to
+ * the bar/percent. Falls back to DISPLAY_DEFAULT (currently 'limit')
+ * when unset. See statusBarFormatters.js for the per-mode rendering and
+ * the legacy 'both' -> 'extended' migration.
+ * @returns {string} One of: bar, value, extended, limit, count
  */
 function getTokensDisplay() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
@@ -251,7 +251,7 @@ function getServiceStatusColor() {
 
 // VS Code only honours two backgroundColor values on a StatusBarItem:
 // 'statusBarItem.errorBackground' and 'statusBarItem.warningBackground'.
-// We surface this so partial/major outages paint the whole item red —
+// We surface this so partial/major outages paint the whole item red -
 // far more visible than text colour alone.
 function getServiceStatusBackground() {
     return composeCurrentLabel().backgroundColor;
@@ -298,7 +298,7 @@ async function refreshServiceStatus() {
 }
 
 /**
- * Get current service status (cached) — reads from serviceStatus module.
+ * Get current service status (cached) - reads from serviceStatus module.
  * @returns {object|null}
  */
 function getServiceStatus() {
@@ -319,8 +319,8 @@ let isSpinnerActive = false;
 
 let statusBarItems = {
     label: null,
-    spinner: null,       // transient — shown only while a fetch is in flight
-    happyHour: null,     // transient — shown only during off-peak
+    spinner: null,       // transient - shown only while a fetch is in flight
+    happyHour: null,     // transient - shown only during off-peak
     session: null,
     weekly: null,
     sonnet: null,
@@ -362,8 +362,8 @@ function getIconAndColor(percent, warningThreshold = 80, errorThreshold = 90) {
 // Pick the prefix glyph for a usage gauge. The error-cross is
 // reserved for the Claude platform-status panel where it really does
 // mean "something failed". Usage gauges (Se/Wk) use the warning
-// triangle even at the error threshold — high usage isn't a failure,
-// just a heads-up. Tokens (Tk) never show an icon; the colour alone
+// triangle even at the error threshold - high usage isn't a failure,
+// just a heads-up. Tokens (Tk) never show an icon, the colour alone
 // signals the state.
 function gaugeIconForLevel(level, gauge) {
     if (getColorMode() === 'basic') return '';
@@ -417,7 +417,7 @@ function setAllTooltips(tooltip) {
 
 // Convert a future Date into a duration-string like "2h 30m" / "5d 21h"
 // that calculateResetClockTime understands. Used only for the happy-hour
-// panel — other panels already receive duration strings from the API.
+// panel - other panels already receive duration strings from the API.
 function dateToDurationString(futureDate) {
     if (!(futureDate instanceof Date)) return '0m';
     const diffMs = futureDate.getTime() - Date.now();
@@ -522,7 +522,7 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
     }
 
     // Compact aggregate icon mirrors the per-gauge rule: only Se/Wk
-    // drive the prefix, and they always use the warning triangle —
+    // drive the prefix, and they always use the warning triangle -
     // never the error cross. Tokens are signalled by colour only.
     let icon = '';
     const sessionWeeklyLevels = [sessionStatus.level, weeklyStatus.level];
@@ -628,7 +628,7 @@ function renderMultiPanelMode(
             knownLimit: tokensInfo?.knownLimit ?? false,
             usageFormat: getUsageFormat(),
         });
-        // Tk deliberately has no icon at any level — the colour alone
+        // Tk deliberately has no icon at any level - the colour alone
         // signals warning/error. See gaugeIconForLevel for rationale.
         newTokensText = `Tk ${tokenDisplay}`;
         tokensVisible = true;
@@ -638,7 +638,7 @@ function renderMultiPanelMode(
     }
 
     if (tokensVisible) {
-        // Tk colour MUST update on every tick — the rot tiers
+        // Tk colour MUST update on every tick - the rot tiers
         // (rotLight/rotDeep) often fire when the gauge text stays
         // identical (e.g. 80% bar with a 1m limit), so gating colour on
         // text-change leaves the gauge in the previous tier's colour.
@@ -703,7 +703,7 @@ function renderMultiPanelMode(
         lastDisplayedValues.opusText = null;
     }
 
-    // Credits override only meaningful when real monthlyCredits exists —
+    // Credits override only meaningful when real monthlyCredits exists -
     // the override changes the percent for tier-colour testing but keeps
     // currency/used/limit from real data.
     const realCredits = usageData?.monthlyCredits;
@@ -738,7 +738,7 @@ function renderMultiPanelMode(
 
 // Cluster contiguity strategy:
 //
-// 1. basePriority defaults to 10000 — well above VS Code core editor
+// 1. basePriority defaults to 10000 - well above VS Code core editor
 //    items (overtype/encoding/EOL/language/ln-col, all priorities ~100-101)
 //    and most other extensions (typically <2000). The whole cluster
 //    therefore lands together to the LEFT of core items, with no chance
@@ -761,7 +761,7 @@ function createStatusBarItem(context) {
     statusBarItems.label.show();
     context.subscriptions.push(statusBarItems.label);
 
-    // Transient spinner panel — appears only while a fetch is in flight.
+    // Transient spinner panel - appears only while a fetch is in flight.
     // Sits just right of the label using $(sync~spin) which VS Code
     // auto-animates, so we don't need an interval-driven frame loop.
     statusBarItems.spinner = vscode.window.createStatusBarItem(
@@ -771,10 +771,10 @@ function createStatusBarItem(context) {
     statusBarItems.spinner.text = '$(sync~spin)';
     statusBarItems.spinner.tooltip = 'Checking Claude...';
     statusBarItems.spinner.command = COMMANDS.FETCH_NOW;
-    // Initially hidden — shown only during startSpinner().
+    // Initially hidden - shown only during startSpinner().
     context.subscriptions.push(statusBarItems.spinner);
 
-    // Transient happy-hour panel — visible only during Anthropic's
+    // Transient happy-hour panel - visible only during Anthropic's
     // off-peak window. Positioned between spinner and session.
     statusBarItems.happyHour = vscode.window.createStatusBarItem(
         alignment,
@@ -836,7 +836,7 @@ function createStatusBarItem(context) {
 }
 
 function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null) {
-    // Happy-hour panel is independent of fetch state — render on
+    // Happy-hour panel is independent of fetch state - render on
     // every tick so the countdown stays fresh.
     renderHappyHourPanel();
 
@@ -912,7 +912,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     // Profile-driven Tk threshold resolution (post-2026-05-08).
     // Reads detection signals from the credentials/usage stack, applies
     // the user's profileOverride if set, then resolves to a profile.
-    // getTkLevel maps absolute tokens used → 5-tier level. Bar fill is
+    // getTkLevel maps absolute tokens used -> 5-tier level. Bar fill is
     // still computed as a percentage for the gauge dots.
     let tokenProfile;
     let tokenLevel;
@@ -921,7 +921,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         tokenPercent = Math.round((sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100);
         const limit = sessionData.tokenUsage.limit;
 
-        // Profile selection — simulator override > setting override > detection
+        // Profile selection - simulator override > setting override > detection
         const { PROFILES } = require('./tk/profiles');
         const simProfile = simulator.getProfileOverride();
         const settingOverride = config.get('thresholds.tokens.profileOverride', '');
@@ -961,14 +961,14 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
                 : getTkLevel(effectiveUsed, tokenProfile, limit));
         tokenStatus = tokenStatusFromLevel(tokenLevel);
 
-        // The simulator's "used" override drives the whole gauge — bar fill
-        // and count, not just the tier tint — so scrubbing it in F5 moves the
+        // The simulator's "used" override drives the whole gauge - bar fill
+        // and count, not just the tier tint - so scrubbing it in F5 moves the
         // visible needle, matching what a real session at that usage shows.
         if (simUsed !== null && limit > 0) {
             tokenPercent = Math.round((effectiveUsed / limit) * 100);
         }
 
-        // Continuous white→blue rot gradient: when there's a real numeric
+        // Continuous white->blue rot gradient: when there's a real numeric
         // `used` (no tier-snap override) and colour mode is on, replace the
         // two discrete rot swatches with an OKLab-interpolated hex. Outside
         // the rot zone rotGradientT returns null and the discrete

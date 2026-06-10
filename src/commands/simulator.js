@@ -3,7 +3,7 @@
 // Purpose:   Register the 12 dev-only F5 simulator commands.
 //
 //            All commands are gated by the `config.claudemeter.debug`
-//            enablement clause in package.json — they only appear in
+//            enablement clause in package.json - they only appear in
 //            the command palette when claudemeter.debug=true. Each
 //            command sets a simulator override and triggers an
 //            immediate re-fetch so the change is visible without
@@ -28,7 +28,7 @@ const percentValidator = (s) =>
         : 'Enter 0-100 or leave blank';
 
 // Bind a percent-input simulator command. Hides the
-// register-input-box-handler boilerplate that was duplicated 6× before.
+// register-input-box-handler boilerplate that was duplicated 6x before.
 function percentCommand({ id, prompt, setter, performFetch }) {
     return vscode.commands.registerCommand(id, async () => {
         const v = await vscode.window.showInputBox({ prompt, validateInput: percentValidator });
@@ -66,7 +66,7 @@ function registerSimulatorCommands(context, performFetch) {
             onPick: (choice) => simulator.setTokenLevel(choice === 'live' ? null : choice),
             performFetch,
         }),
-        // Absolute-tokens input — different validator (>=0, no upper cap)
+        // Absolute-tokens input - different validator (>=0, no upper cap)
         vscode.commands.registerCommand('claudemeter.simulate.tokenUsed', async () => {
             const v = await vscode.window.showInputBox({
                 prompt: 'Force absolute tokens used (number, blank to clear)',

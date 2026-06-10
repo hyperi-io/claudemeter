@@ -80,7 +80,7 @@ async function acquireFileLock(targetPath, { timeoutMs = 5000, pollMs = 10 } = {
         } catch (err) {
             if (err.code !== 'EEXIST') throw err;
 
-            // Lock file exists — check if it's stale.
+            // Lock file exists - check if it's stale.
             try {
                 const stat = await fs.stat(lockPath);
                 if (Date.now() - stat.mtimeMs > STALE_LOCK_MS) {
@@ -90,7 +90,7 @@ async function acquireFileLock(targetPath, { timeoutMs = 5000, pollMs = 10 } = {
                     continue;
                 }
             } catch {
-                // Lock disappeared between open() and stat() — retry.
+                // Lock disappeared between open() and stat() - retry.
                 continue;
             }
 
@@ -136,7 +136,7 @@ async function atomicWriteJson(targetPath, obj) {
         try {
             await handle.sync();
         } catch {
-            // Some filesystems (tmpfs) don't support fsync — ignore.
+            // Some filesystems (tmpfs) don't support fsync - ignore.
         }
         await handle.close();
         handle = null;
@@ -224,7 +224,7 @@ class SessionTracker {
             this._cachedData = parsed;
             return parsed;
         } catch (error) {
-            // Missing file or invalid JSON — return empty shape without
+            // Missing file or invalid JSON - return empty shape without
             // caching, so a later successful read can replace it.
             return EMPTY_DATA();
         }
@@ -242,7 +242,7 @@ class SessionTracker {
         try {
             await fs.mkdir(dir, { recursive: true });
         } catch {
-            // Ignore — directory may already exist.
+            // Ignore - directory may already exist.
         }
 
         const lockPath = await acquireFileLock(this.sessionFilePath);
@@ -311,7 +311,7 @@ class SessionTracker {
             session = data.sessions.find(s => s.sessionId === this.currentSession.sessionId) || null;
             if (!session) {
                 // The merged on-disk view doesn't know about our session
-                // yet — push the in-memory copy back in.
+                // yet - push the in-memory copy back in.
                 session = this.currentSession;
                 data.sessions.push(session);
             }

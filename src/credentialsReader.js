@@ -30,7 +30,7 @@ function getCredentialsPath() {
     return path.join(getHomeDir(), '.claude', '.credentials.json');
 }
 
-// Back-compat constant — snapshot at module load, still used by callers that
+// Back-compat constant - snapshot at module load, still used by callers that
 // don't override CLAUDE_CONFIG_HOME. Prefer getCredentialsPath() in new code.
 const CREDENTIALS_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
 
@@ -53,11 +53,11 @@ function readCredentialsRaw() {
 // Return a unified view of the current Claude Code account.
 //
 // Identity fields (orgId, email, accountUuid, displayName, organizationName,
-// organizationRole) come from ~/.claude.json oauthAccount (the new source of
-// truth). Token fields (accessToken, refreshToken, subscriptionType,
-// rateLimitTier) come from .credentials.json for backwards compatibility —
-// older Claude Code builds still populate them there, newer builds leave
-// them null.
+// organizationRole, billingType, hasAvailableSubscription) come from
+// ~/.claude.json oauthAccount (the new source of truth). Token fields
+// (accessToken, refreshToken, subscriptionType, rateLimitTier) come from
+// .credentials.json for backwards compatibility - older Claude Code builds
+// still populate them there, newer builds leave them null.
 //
 // Returns null if BOTH files are missing or unreadable. Returns a partial
 // object (with some null fields) if only one source is available, so callers
@@ -73,7 +73,7 @@ function readCredentials() {
     const oauth = (raw && raw.claudeAiOauth) || {};
 
     return {
-        // Identity — prefer .claude.json (new), fall back to .credentials.json (legacy)
+        // Identity - prefer .claude.json (new), fall back to .credentials.json (legacy)
         orgId: oauthAccount?.organizationUuid || raw?.organizationUuid || null,
         accountUuid: oauthAccount?.accountUuid || null,
         email: oauthAccount?.emailAddress || null,
@@ -83,11 +83,11 @@ function readCredentials() {
         billingType: oauthAccount?.billingType || null,
         hasAvailableSubscription: oauthAccount?.hasAvailableSubscription === true,
 
-        // Plan details — only .credentials.json ever had these, may now be null
+        // Plan details - only .credentials.json ever had these, may now be null
         subscriptionType: oauth.subscriptionType || null,
         rateLimitTier: oauth.rateLimitTier || null,
 
-        // OAuth tokens — only .credentials.json has these
+        // OAuth tokens - only .credentials.json has these
         accessToken: oauth.accessToken || null,
         refreshToken: oauth.refreshToken || null,
     };
@@ -97,7 +97,7 @@ function readCredentials() {
 // Prioritised: accountUuid (primary, most stable) > email > orgId.
 // Any of these changing between two readings means the account switched.
 //
-// Returns null if the credentials object has no usable identity signals —
+// Returns null if the credentials object has no usable identity signals -
 // callers should treat that as "no switch detectable" rather than a switch.
 function getIdentityKey(credentials) {
     if (!credentials) return null;
@@ -111,7 +111,7 @@ function getIdentityKey(credentials) {
 }
 
 // Compare two identity keys and return true if they represent different accounts.
-// Uses OR semantics — any of the three fields differing is a switch.
+// Uses OR semantics - any of the three fields differing is a switch.
 // A null previous or null current returns false (no switch detectable).
 function identityChanged(previousKey, currentKey) {
     if (!previousKey || !currentKey) return false;
@@ -124,14 +124,14 @@ function identityChanged(previousKey, currentKey) {
 
 function formatSubscriptionType(type) {
     if (!type) return null;
-    // "max" → "Max", "pro" → "Pro", "free" → "Free"
+    // "max" -> "Max", "pro" -> "Pro", "free" -> "Free"
     return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
 }
 
 function formatRateLimitTier(tier) {
     if (!tier) return null;
-    // "default_claude_max_20x" → "Max 20x"
-    // "default_claude_pro" → "Pro"
+    // "default_claude_max_20x" -> "Max 20x"
+    // "default_claude_pro" -> "Pro"
     const match = tier.match(/default_claude_(\w+?)(?:_(\d+x))?$/);
     if (match) {
         const plan = match[1].charAt(0).toUpperCase() + match[1].slice(1);

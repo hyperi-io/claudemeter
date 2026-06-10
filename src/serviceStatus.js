@@ -16,9 +16,9 @@ const STATUS_PAGE_URL = 'https://status.claude.com';
 //
 // Icons chosen to be visually distinct per level. Kept in sync with
 // claudeLabelComposer.SERVICE_RENDER which is the actual render path.
-//   - minor:    $(warning) caution triangle — service degraded
-//   - major:    $(error)   red X — partial outage, real impact
-//   - critical: $(error) + red background — Claude is dead, total outage
+//   - minor:    $(warning) caution triangle - service degraded
+//   - major:    $(error)   red X - partial outage, real impact
+//   - critical: $(error) + red background - Claude is dead, total outage
 const STATUS_INDICATORS = {
     none: {
         icon: '$(check)',
@@ -171,7 +171,7 @@ function clearStatusCache() {
  * @returns {Promise<{indicator: string, description: string, updatedAt: string}|null>}
  */
 async function refreshStatus() {
-    // Dev simulation override — when active, the real API is not called
+    // Dev simulation override - when active, the real API is not called
     // and the injected status is preserved across refresh ticks.
     if (simulatedIndicator) {
         return currentStatus;
@@ -187,7 +187,7 @@ async function refreshStatus() {
     }
 }
 
-// Dev override — set by the "Simulate Service Status" command. While
+// Dev override - set by the "Simulate Service Status" command. While
 // non-null, refreshStatus() short-circuits and keeps the injected
 // status in place. Set to null to resume real fetches.
 let simulatedIndicator = null;
@@ -195,7 +195,7 @@ let simulatedIndicator = null;
 function setSimulatedStatus(indicator) {
     if (!indicator || indicator === 'clear' || indicator === 'none') {
         simulatedIndicator = null;
-        // Returning to live mode — null out so the next refresh repopulates
+        // Returning to live mode - null out so the next refresh repopulates
         // from the real API rather than leaving a stale simulated status.
         currentStatus = null;
         currentError = null;

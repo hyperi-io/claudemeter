@@ -1,4 +1,4 @@
-// Tests for claudeLabelComposer.js — composes the leftmost "Claude"
+// Tests for claudeLabelComposer.js - composes the leftmost "Claude"
 // status-bar panel from platform-wide state (service status, refresh
 // spinner). Pure function. Happy hour has its own dedicated panel
 // (statusBar.renderHappyHourPanel) and is NOT part of this module.
@@ -8,8 +8,8 @@ const {
     composeClaudeLabel,
 } = require('../../src/claudeLabelComposer');
 
-describe('composeClaudeLabel — baseline', () => {
-    it('no state → just "Claude"', () => {
+describe('composeClaudeLabel - baseline', () => {
+    it('no state -> just "Claude"', () => {
         const r = composeClaudeLabel({});
         expect(r.text).toBe('Claude');
         expect(r.color).toBeUndefined();
@@ -30,7 +30,7 @@ describe('composeClaudeLabel — baseline', () => {
     });
 });
 
-describe('composeClaudeLabel — service status icons', () => {
+describe('composeClaudeLabel - service status icons', () => {
     it('degraded (minor) shows $(warning) yellow, no background', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'minor' } });
         expect(r.text).toContain('$(warning)');
@@ -77,7 +77,7 @@ describe('composeClaudeLabel — service status icons', () => {
     });
 });
 
-describe('composeClaudeLabel — combined states', () => {
+describe('composeClaudeLabel - combined states', () => {
     it('refreshing appended as $(loading) at the end', () => {
         const r = composeClaudeLabel({
             serviceStatus: { indicator: 'minor' },

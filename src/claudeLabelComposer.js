@@ -3,7 +3,7 @@
 // Purpose:   Compose the leftmost "Claude" status-bar panel text,
 //            color, and tooltip lines from platform-wide state
 //            (service status + refresh spinner).
-//            Pure — no vscode deps, fully unit-testable.
+//            Pure - no vscode deps, fully unit-testable.
 // Language:  JavaScript (CommonJS)
 //
 // License:   MIT
@@ -14,28 +14,28 @@
 //     text:            "Claude $(warning) $(loading)",
 //     color:           'charts.yellow' | 'claudemeter.outageRed' | undefined,
 //     backgroundColor: 'statusBarItem.errorBackground' | undefined,
-//     tooltipLines:    ["$(warning) Service degraded — API delays"]
+//     tooltipLines:    ["$(warning) Service degraded - API delays"]
 //   }
 //
 // Colour palette is shared across the extension:
-//   yellow → 'charts.yellow'           (degraded, threshold warning)
-//   red    → 'claudemeter.outageRed'   (partial/major outage, threshold error)
+//   yellow -> 'charts.yellow'           (degraded, threshold warning)
+//   red    -> 'claudemeter.outageRed'   (partial/major outage, threshold error)
 // claudemeter.outageRed is a custom theme colour declared in
 // package.json so it can be tuned to match Claude's brand red and
 // overridden by users via workbench.colorCustomizations.
 //
 // Status bar icons render AFTER the "Claude" text. Service status
-// comes first; the refresh spinner is last. Severity escalates by
-// icon, then by background — text colour stays red from major
+// comes first, the refresh spinner is last. Severity escalates by
+// icon, then by background - text colour stays red from major
 // upward so both outage states read as urgent:
 //
 //   minor    (degraded)        $(warning) yellow, no background
 //   major    (partial outage)  $(error)   red,    no background
 //   critical (major outage)    $(error)   red,    RED BACKGROUND
-//                              + "He's dead, Jim." in the tooltip.
+//                              + "He's dead, Jim." in the quirkyOverride.
 //
-// The icon progression is intentional: warning-triangle → error-cross
-// reads instantly as "something wrong → everything wrong"; critical
+// The icon progression is intentional: warning-triangle -> error-cross
+// reads instantly as "something wrong -> everything wrong". Critical
 // reuses the cross but adds a red background so it's unmistakable.
 //
 // Happy hour has its own dedicated status-bar panel (see
@@ -84,7 +84,7 @@ function composeClaudeLabel(state = {}) {
     let backgroundColor;
     let quirkyOverride;
 
-    // Service status — suppressed when 'none' (operational)
+    // Service status - suppressed when 'none' (operational)
     if (serviceStatus && serviceStatus.indicator && serviceStatus.indicator !== 'none') {
         const render = SERVICE_RENDER[serviceStatus.indicator];
         if (render) {

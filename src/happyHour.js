@@ -2,7 +2,7 @@
 // File:      happyHour.js
 // Purpose:   Determine whether we are currently outside Anthropic's
 //            peak-throttling window. "Happy hour" = off-peak.
-//            Pure logic — no vscode / no I/O. Fully testable with
+//            Pure logic - no vscode / no I/O. Fully testable with
 //            frozen clocks.
 // Language:  JavaScript (CommonJS)
 //
@@ -10,7 +10,7 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 //
 // Anthropic's peak window (per 2026-03-26 announcement, GH issues
-// #41788, #41930): Monday-Friday 05:00-23:00 America/Los_Angeles —
+// #41788, #41930): Monday-Friday 05:00-23:00 America/Los_Angeles -
 // i.e. all LA daytime + evening. Happy hour (off-peak) is weekday
 // overnight (23:00-05:00 LA) plus the whole weekend. During peak
 // hours, Claude Code session limits deplete faster than the 5-hour
@@ -26,7 +26,7 @@ const DEFAULT_PEAK_WINDOW = Object.freeze({
     tz: 'America/Los_Angeles',
 });
 
-// Codicon entries use $(name) syntax — they render monochrome and
+// Codicon entries use $(name) syntax - they render monochrome and
 // inherit the status-bar text colour, so they stay unobtrusive.
 // Emoji entries render in full colour (intentional, for users who
 // want a splash). The monochrome 'sparkle' is the default.
@@ -124,7 +124,7 @@ function isHappyHour(now, peakWindow) {
 }
 
 // Find the next UTC instant at which isHappyHour flips. Iterates
-// minute-by-minute up to 8 days out. Bounded and simple — avoids
+// minute-by-minute up to 8 days out. Bounded and simple - avoids
 // fiddly DST arithmetic by just asking the question repeatedly.
 function nextTransition(now, peakWindow) {
     const window = validatePeakWindow(peakWindow);

@@ -44,7 +44,7 @@ class ClaudeDataLoader {
     //
     // Windows note: Claude Code converts the drive-letter colon to a dash
     // rather than dropping it, so `c:\Projects\foo` becomes
-    // `c--Projects-foo` — one dash from the colon, one from the first
+    // `c--Projects-foo` - one dash from the colon, one from the first
     // backslash. Earlier versions dropped the colon and produced
     // `c-Projects-foo`, which caused the project-dir lookup to silently
     // miss whenever a workspace was open and forced the status bar to
@@ -54,7 +54,7 @@ class ClaudeDataLoader {
             .replace(/\\/g, '-')  // Windows backslashes
             .replace(/\//g, '-')  // Unix forward slashes
             .replace(/:/g, '-')   // Windows drive-letter colon
-            .replace(/ /g, '-');  // spaces -- Claude Code dashes these too, #43
+            .replace(/ /g, '-');  // spaces - Claude Code dashes these too, #43
     }
 
     setWorkspacePath(workspacePath) {

@@ -13,7 +13,7 @@
 // 1. LOGIN FLOW: Claude.ai's login involves OAuth redirects, CAPTCHAs, and
 //    Cloudflare challenges that cannot be replicated with plain HTTP requests.
 //    A real browser is required to obtain the sessionKey cookie. playwright-core
-//    drives the user's existing system browser via the executablePath option —
+//    drives the user's existing system browser via the executablePath option -
 //    no Chromium binary is downloaded or bundled.
 //
 // 2. UNDOCUMENTED API RISK: The three endpoints we fetch (/usage, /prepaid/credits,
@@ -22,7 +22,7 @@
 //    time. The legacy browser scraper (src/scraper.js) is retained as an opt-in
 //    fallback that can adapt to page-level changes even if the API contract breaks.
 //
-// 3. ZERO TRANSITIVE DEPS: playwright-core has no npm runtime dependencies —
+// 3. ZERO TRANSITIVE DEPS: playwright-core has no npm runtime dependencies -
 //    its driver is bundled internally. Replaces puppeteer-core (which dragged
 //    in proxy-agent + basic-ftp + the periodic CVE chain that required a
 //    build-time stub). playwright-core is also the Microsoft-maintained
@@ -60,8 +60,10 @@ const { readCredentials } = require('./credentialsReader');
 const { AccountIdentityCache } = require('./accountIdentityCache');
 
 // Browser-like headers to pass Cloudflare challenge. UA is shared with
-// the legacy scraper via BROWSER_UA in utils.js — bump the Chrome
-// version there, not here.
+// the legacy scraper via BROWSER_UA in utils.js - bump the Chrome
+// version there, not here. The Sec-Ch-Ua client-hint below carries its
+// own hardcoded Chromium version, so keep it roughly in step with
+// BROWSER_UA or Cloudflare can flag the UA/client-hint mismatch.
 const BROWSER_HEADERS = {
     'User-Agent': BROWSER_UA,
     'Accept': 'application/json, text/plain, */*',
@@ -111,7 +113,7 @@ const CHROMIUM_BROWSERS = {
 // When a user has both an Anthropic Console (API) org and a claude.ai
 // subscription (Free/Pro/Max/Team/Enterprise), /api/bootstrap returns
 // multiple memberships. The API-only org has capabilities=['api'] and
-// does NOT expose /api/organizations/{id}/usage — fetching from it
+// does NOT expose /api/organizations/{id}/usage - fetching from it
 // returns 401, which our error heuristic misclassifies as SESSION_EXPIRED,
 // triggering a pointless login flow.
 //
@@ -120,10 +122,10 @@ const CHROMIUM_BROWSERS = {
 //      'claude_*' plan token). If capabilities is missing entirely, keep
 //      the membership (permissive for unknown API shapes).
 //   2. Among the filtered pool, prefer a uuid exact-match against the
-//      CLI creds orgId — honours the user's explicit /login choice.
+//      CLI creds orgId - honours the user's explicit /login choice.
 //   3. Otherwise return the first filtered membership.
 //   4. If the filter yields nothing (every org is API-only or empty),
-//      fall back to credsOrgId match or memberships[0] — same as legacy
+//      fall back to credsOrgId match or memberships[0] - same as legacy
 //      behaviour, so we don't regress edge cases.
 function hasClaudeAiCapability(membership) {
     const caps = membership?.organization?.capabilities;
@@ -159,7 +161,7 @@ function detectOrgType(orgName, orgObj) {
     if (orgName && /'s Organi[sz]ation$/.test(orgName)) {
         return 'Personal';
     }
-    // Probe for explicit type fields (field names are speculative —
+    // Probe for explicit type fields (field names are speculative -
     // we don't have team/enterprise accounts to verify against)
     if (orgObj) {
         for (const key of ['organization_type', 'type', 'plan_type', 'billing_type', 'account_type']) {
@@ -384,7 +386,7 @@ class ClaudeHttpFetcher {
         }
 
         // Pick the right membership. Falls back to memberships[0] only when
-        // no claude.ai-capable org exists (all API-only) — preserves legacy
+        // no claude.ai-capable org exists (all API-only) - preserves legacy
         // behaviour for edge cases without breaking the common multi-org case.
         const creds = readCredentials();
         const picked = selectMembership(memberships, creds?.orgId || null);
@@ -399,7 +401,7 @@ class ClaudeHttpFetcher {
         // the clean plan-token list (e.g. ['claude_max', 'chat'] for Max,
         // ['chat'] for Free). `rate_limit_tier` carries the multiplier
         // variant (e.g. 'default_claude_max_20x') as a secondary signal.
-        // Both are optional — if the API ever stops returning them the
+        // Both are optional - if the API ever stops returning them the
         // resolver falls back to local credentials.
         const capabilities = Array.isArray(org.capabilities) ? org.capabilities.slice() : null;
         const webRateLimitTier = typeof org.rate_limit_tier === 'string' ? org.rate_limit_tier : null;
@@ -414,7 +416,7 @@ class ClaudeHttpFetcher {
         };
         this._identityCache.setResolvedWebOrgId(orgUuid, accountInfo);
 
-        // Log full org object for debugging — helps discover team/enterprise fields
+        // Log full org object for debugging - helps discover team/enterprise fields
         const orgFields = Object.keys(org).filter(k => k !== 'uuid').join(', ');
         const capSummary = capabilities ? capabilities.join(',') : 'none';
         fileLog(`Resolved org: ${orgUuid.slice(0, 8)}... (${orgName}) type=${orgType || 'unknown'} capabilities=[${capSummary}] rate_limit_tier=${webRateLimitTier || 'none'} fields=[${orgFields}]`);
@@ -438,7 +440,7 @@ class ClaudeHttpFetcher {
         // One retry on SESSION_EXPIRED: if the first attempt fails with
         // SESSION_EXPIRED, the cached web org UUID may be stale against a
         // just-switched account. Invalidate it and re-resolve once. If the
-        // second attempt also fails, escalate — that's a real auth problem
+        // second attempt also fails, escalate - that's a real auth problem
         // that the user needs to resolve via login flow.
         try {
             return await this._fetchUsageDataOnce(cookie, debug, debugChannel);
@@ -504,9 +506,9 @@ class ClaudeHttpFetcher {
     // tuple differs from the cached one, the fetcher's resolved-org cache
     // is cleared so the next fetch re-resolves against the new account.
     //
-    // Returns { changed, previous, current } — the caller can use `changed`
+    // Returns { changed, previous, current } - the caller can use `changed`
     // to decide whether to also clear the session cookie (account switch)
-    // or leave it alone (personal↔personal on the same device typically
+    // or leave it alone (personal<->personal on the same device typically
     // still requires a cookie reset too, but that's the caller's call).
     notifyIdentityMaybeChanged() {
         try {
@@ -746,7 +748,7 @@ class ClaudeHttpFetcher {
                 const browserEmail = loginResult.email;
 
                 if (cliEmail && cliEmail.toLowerCase() !== browserEmail.toLowerCase()) {
-                    // Wrong account — prompt user to log in as the correct account
+                    // Wrong account - prompt user to log in as the correct account
                     // in the same browser window. The tempdir is always wiped after
                     // this flow, so no cached browser state carries over.
                     fileLog(`Account mismatch: browser=${browserEmail}, CLI=${cliEmail}`);
@@ -816,8 +818,8 @@ class ClaudeHttpFetcher {
             // Close the login browser. Playwright's launchPersistentContext
             // owns the underlying browser, so context.close() shuts down both
             // the context and the browser process. We still race against a
-            // timeout in case Chrome hangs; orphan-process cleanup beyond that
-            // is left to the OS — playwright-core doesn't expose the
+            // timeout in case Chrome hangs - orphan-process cleanup beyond that
+            // is left to the OS - playwright-core doesn't expose the
             // underlying process handle in persistent-context mode.
             if (context) {
                 try {
@@ -828,7 +830,7 @@ class ClaudeHttpFetcher {
                     try {
                         await Promise.race([closePromise, timeoutPromise]);
                     } catch (err) {
-                        // We can't SIGKILL — the browser PID isn't exposed.
+                        // We can't SIGKILL - the browser PID isn't exposed.
                         // Log so a recurring close-timeout pattern is visible.
                         fileLog(`Context close timed out: ${err.message}`);
                         await sleep(1000);
@@ -1086,7 +1088,7 @@ function findChrome() {
             }
         } catch (err) {
             // Permission-denied or non-existent parent dir while probing
-            // — fine to skip, but log so a permission-config issue
+            // - fine to skip, but log so a permission-config issue
             // doesn't masquerade as "no browser installed".
             fileLog(`Browser-path probe failed for ${browserPath}: ${err.message}`);
         }

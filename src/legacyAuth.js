@@ -22,7 +22,7 @@ class ClaudeAuth {
 
     // The second argument can be either a Playwright `Browser` (set when
     // scraper.js connected via CDP) or a `BrowserContext` (set when
-    // scraper.js launched a persistent context — the persistent-context
+    // scraper.js launched a persistent context - the persistent-context
     // mode hides the underlying Browser handle). Both shapes are duck-typed
     // for liveness in waitForLogin.
     setPageAndBrowser(page, browser) {

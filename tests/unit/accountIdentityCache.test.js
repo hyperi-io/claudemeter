@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 const { AccountIdentityCache } = require('../../src/accountIdentityCache');
 
-// Fixture helpers — the cache accepts the shape returned by
+// Fixture helpers - the cache accepts the shape returned by
 // credentialsReader.readCredentials(), so we match that loosely.
 function creds(overrides = {}) {
     return {
@@ -33,7 +33,7 @@ describe('AccountIdentityCache.noteCurrentIdentity', () => {
         expect(result.changed).toBe(false);
     });
 
-    it('detects accountUuid change (personal → personal)', () => {
+    it('detects accountUuid change (personal -> personal)', () => {
         cache.noteCurrentIdentity(creds({ accountUuid: 'acc-a', email: 'a@x.com', orgId: 'org-a' }));
         const result = cache.noteCurrentIdentity(creds({ accountUuid: 'acc-b', email: 'b@x.com', orgId: 'org-b' }));
         expect(result.changed).toBe(true);
@@ -53,7 +53,7 @@ describe('AccountIdentityCache.noteCurrentIdentity', () => {
         expect(result.changed).toBe(true);
     });
 
-    it('treats null credentials as unknown — no change reported', () => {
+    it('treats null credentials as unknown - no change reported', () => {
         cache.noteCurrentIdentity(creds());
         const before = cache.getCurrentIdentity();
         const result = cache.noteCurrentIdentity(null);
@@ -91,7 +91,7 @@ describe('AccountIdentityCache.invalidateResolved', () => {
         cache.invalidateResolved();
         expect(cache.getResolvedWebOrgId()).toBeNull();
         expect(cache.getAccountInfo()).toBeNull();
-        // Identity still known — so switch detection still works
+        // Identity still known - so switch detection still works
         expect(cache.getCurrentIdentity()).not.toBeNull();
     });
 

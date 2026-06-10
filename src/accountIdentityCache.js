@@ -11,8 +11,8 @@
 // claudemeter needs two different org IDs:
 //
 //   1. The CLI identity (accountUuid / email / organizationUuid) from
-//      ~/.claude.json — used to decide "has the user switched accounts?"
-//   2. The web session's org UUID, resolved via /api/bootstrap — used in
+//      ~/.claude.json - used to decide "has the user switched accounts?"
+//   2. The web session's org UUID, resolved via /api/bootstrap - used in
 //      the /api/organizations/{uuid}/usage URL path.
 //
 // These are NOT the same value. The CLI org UUID and the web org UUID can
@@ -32,7 +32,7 @@
 //   - It caches the resolved web org UUID but invalidates automatically on
 //     identity change.
 //
-// The class is pure logic — it does no I/O and has no dependency on fetch,
+// The class is pure logic - it does no I/O and has no dependency on fetch,
 // vscode, or the file system. All inputs are passed in by the caller. This
 // makes it trivial to unit-test switch detection and cache invalidation
 // without mocking network or disk.
@@ -54,9 +54,9 @@ class AccountIdentityCache {
     //
     // Returns:
     //   {
-    //     changed:  boolean — true if the identity tuple differs from last time
-    //     previous: {accountUuid,email,orgId} | null — what we had before
-    //     current:  {accountUuid,email,orgId} | null — what we have now
+    //     changed:  boolean - true if the identity tuple differs from last time
+    //     previous: {accountUuid,email,orgId} | null - what we had before
+    //     current:  {accountUuid,email,orgId} | null - what we have now
     //   }
     //
     // A null `credentials` argument is treated as "identity unknown" and
@@ -114,7 +114,7 @@ class AccountIdentityCache {
     }
 
     // Drop derived state (web org UUID + accountInfo) without forgetting the
-    // CLI identity. Used when the upstream API says SESSION_EXPIRED — we
+    // CLI identity. Used when the upstream API says SESSION_EXPIRED - we
     // want to force a re-resolve against /api/bootstrap but keep the
     // identity baseline so we can still detect switches.
     invalidateResolved() {

@@ -16,8 +16,8 @@
 // JSONL-declared limit, eligibility limit from s1mAccessCache, and
 // `observedFloor` (set to maxObservedTokens when observed > 200K).
 //
-// The problem was that observedFloor is a LOWER BOUND — it tells
-// you "the limit is at least X" — but the old code treated it as
+// The problem was that observedFloor is a LOWER BOUND - it tells
+// you "the limit is at least X" - but the old code treated it as
 // a definitive limit. For accounts where every other positive
 // signal was 0 (e.g. Max Personal users whose VS Code setting is
 // `"default"`, whose JSONL model suffix has been stripped by
@@ -29,7 +29,7 @@
 // step either returns a concrete {limit, source, confidence} or
 // falls through. `observedFloor` is ONLY consulted as the final
 // fallback, and when it is, the result is snapped to the next
-// known tier (200K → 1M → 2M) rather than returned raw. The
+// known tier (200K -> 1M -> 2M) rather than returned raw. The
 // result is always labelled `inferred` so the UI can say so.
 //
 // Plan detection:
@@ -50,14 +50,14 @@ const STANDARD_LIMIT = 200000;
 // AND add a matching rule to CONTEXT_WINDOW_RULES below.
 const KNOWN_CONTEXT_TIERS = [200000, 1000000, 2000000];
 
-// Rule table mapping (plan, model family, model version) → default
+// Rule table mapping (plan, model family, model version) -> default
 // context window. First match wins. Each rule encodes a product
 // fact from Anthropic's defaults; sources should cite the release
 // announcement or observed behaviour.
 //
 // Future-proofing:
 //   - `minVersion` uses a numeric >= comparison so new point releases
-//     (Opus 4.7, 5.0, …) automatically qualify without code changes.
+//     (Opus 4.7, 5.0, ...) automatically qualify without code changes.
 //   - Adding a new plan tier is a one-line edit (extend the `plans`
 //     array on an existing rule).
 //   - Adding a new family or limit is one new rule entry.
@@ -260,8 +260,8 @@ function resolveContextWindow(input = {}) {
         };
     }
 
-    // 3. JSONL model ID with an explicit suffix (rare in practice —
-    // Claude Code strips these — but still authoritative when present)
+    // 3. JSONL model ID with an explicit suffix (rare in practice -
+    // Claude Code strips these - but still authoritative when present)
     if (jsonlDeclaredLimit > 0) {
         return {
             limit: jsonlDeclaredLimit,
@@ -297,7 +297,7 @@ function resolveContextWindow(input = {}) {
     }
 
     // 6. Claude Code's own eligibility cache corroborates extended
-    // context. Only fires when the rule table DIDN'T match —
+    // context. Only fires when the rule table DIDN'T match -
     // meaning we trust the cache as a last-resort "configured"
     // signal rather than a primary source.
     if (s1mHasAccess === true) {
@@ -320,7 +320,7 @@ function resolveContextWindow(input = {}) {
         };
     }
 
-    // 8. Nothing to go on — default to standard.
+    // 8. Nothing to go on - default to standard.
     return {
         limit: STANDARD_LIMIT,
         source: 'standard',

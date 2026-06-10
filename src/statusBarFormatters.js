@@ -1,7 +1,7 @@
 // Project:   Claudemeter
 // File:      statusBarFormatters.js
 // Purpose:   Pure formatting helpers for the status bar Tk indicator.
-//            No vscode API dependencies — unit-testable in isolation.
+//            No vscode API dependencies - unit-testable in isolation.
 // Language:  JavaScript (CommonJS)
 //
 // License:   MIT
@@ -20,14 +20,14 @@
 // default) are auto-migrated to `extended` in extension.js, so they
 // see no visible change.
 //
-//   bar      — "Tk ●○○○○"              just the progress bar / percent
-//   value    — "Tk ●○○○○ 518k"         bar + current consumption
-//   extended — "Tk ●○○○○ 518k/1m"      bar + current/max (was: "both")
-//   limit    — "Tk ●○○○○ 1m"           bar + max only, but ONLY when the
+//   bar      - "Tk ●○○○○"              just the progress bar / percent
+//   value    - "Tk ●○○○○ 518k"         bar + current consumption
+//   extended - "Tk ●○○○○ 518k/1m"      bar + current/max (was: "both")
+//   limit    - "Tk ●○○○○ 1m"           bar + max only, but ONLY when the
 //                                       max is extended beyond the 200K
 //                                       baseline. 200K sessions show
 //                                       just the bar. NEW DEFAULT.
-//   count    — "Tk 518k/1m"             count only, no bar
+//   count    - "Tk 518k/1m"             count only, no bar
 //
 // The threshold for `limit`'s "is it extended" check mirrors
 // modelContextWindows.STANDARD_LIMIT (200000) but is kept local so
@@ -60,7 +60,7 @@ const NO_DATA = '-';
 
 // Format a raw token count. Uses "k" below 1M and "m" at 1M and above so
 // large context windows (1M / 2M / etc.) stay compact and readable in the
-// status bar — e.g. "355k/1m" instead of "355k/1000k".
+// status bar - e.g. "355k/1m" instead of "355k/1000k".
 //
 //   0       -> "0k"
 //   275000  -> "275k"
@@ -91,10 +91,10 @@ function formatAsBar(percent, style, width = 5) {
     return chars.filled.repeat(filled) + chars.empty.repeat(width - filled);
 }
 
-// Build the indicator half of the Tk display — either a bar (via
+// Build the indicator half of the Tk display - either a bar (via
 // formatAsBar) or the bare percent string, depending on usageFormat.
 // For the default/minimal display modes this is what sits next to
-// the k-count in `both` mode, or alone in `bar` mode.
+// the k-count in the value/extended/limit modes, or alone in `bar` mode.
 function formatIndicator(percent, usageFormat) {
     if (percent == null) return NO_DATA;
     if (usageFormat === 'percent') {
@@ -105,11 +105,11 @@ function formatIndicator(percent, usageFormat) {
 
 // Render the numeric half of the Tk indicator for a given tokensDisplay
 // mode. Returns the empty string when the current mode shouldn't show
-// any numeric content — the caller is expected to fall back to the bar.
+// any numeric content - the caller is expected to fall back to the bar.
 //
 // knownLimit=false (limit is inferred, not authoritative) suppresses
-// any "/max" rendering — we don't want to publish a ratio we're not
-// sure about. `value` still shows the current only; `extended` and
+// any "/max" rendering - we don't want to publish a ratio we're not
+// sure about. `value` still shows the current only, `extended` and
 // `count` drop the denominator.
 //
 // `limit` mode is special: it advertises the ceiling alone, not a
@@ -183,7 +183,7 @@ function formatTokensDisplay(opts) {
     const count = formatKCount(current, limit, knownLimit, mode);
 
     if (mode === DISPLAY_COUNT) {
-        // count-only mode — no bar. If count came back empty (unknown
+        // count-only mode - no bar. If count came back empty (unknown
         // limit on a limit-mode that needs it), fall back to bar so
         // the user sees *something*.
         return count || formatIndicator(percent, usageFormat);

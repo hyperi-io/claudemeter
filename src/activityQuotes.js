@@ -13,11 +13,11 @@
 //            Levels: 'heavy' (>=90%), 'moderate' (>=75%), 'idle' (<75%).
 //
 //            Quote weighting: a quote appearing N times in quirkyOptions
-//            gets N× chance of being picked by pickRandom (uniform
+//            gets Nx chance of being picked by pickRandom (uniform
 //            random over the array). When a single concept warrants
 //            heavier weighting (e.g. the SimCity 2000 'Reticulating
 //            splines' loading message), prefer N distinct variations
-//            on the theme over N copies of the same line — same
+//            on the theme over N copies of the same line - same
 //            weighting effect, no repeated-quote fatigue.
 //
 // Language:  JavaScript (CommonJS)
@@ -27,7 +27,7 @@
 
 const ACTIVITY_DESCRIPTIONS = {
         // =========================================================
-        // HEAVY (≥90%) — Critical warnings, dramatic tension
+        // HEAVY (>=90%) - Critical warnings, dramatic tension
         // =========================================================
         'heavy': {
             short: 'Running low!',
@@ -169,7 +169,7 @@ const ACTIVITY_DESCRIPTIONS = {
             ]
         },
         // =========================================================
-        // MODERATE (≥75%) — Cautionary, keep-an-eye-on-it
+        // MODERATE (>=75%) - Cautionary, keep-an-eye-on-it
         // =========================================================
         'moderate': {
             short: 'Getting low',
@@ -205,7 +205,7 @@ const ACTIVITY_DESCRIPTIONS = {
                 'They took our jobs! ...using own tokens!',
 
                 // ===========================================
-                // CLASSIC HOLLYWOOD (1930s–1960s)
+                // CLASSIC HOLLYWOOD (1930s-1960s)
                 // ===========================================
 
                 // -- Casablanca (1942) --
@@ -276,7 +276,7 @@ const ACTIVITY_DESCRIPTIONS = {
                 'We are the knights who say... "tokens!"',
 
                 // ===========================================
-                // RP1 ERA (late 1970s–1990s)
+                // RP1 ERA (late 1970s-1990s)
                 // ===========================================
 
                 // -- 2001: A Space Odyssey (1968) --
@@ -391,7 +391,7 @@ const ACTIVITY_DESCRIPTIONS = {
                 'Serve the public trust. Protect the innocent. Conserve tokens.',
 
                 // ===========================================
-                // 1990s–2000s
+                // 1990s-2000s
                 // ===========================================
 
                 // -- The Shawshank Redemption (1994) --
@@ -461,7 +461,7 @@ const ACTIVITY_DESCRIPTIONS = {
             ]
         },
         // =========================================================
-        // IDLE (<75%) — All good, relaxed, positive vibes
+        // IDLE (<75%) - All good, relaxed, positive vibes
         // =========================================================
         'idle': {
             short: 'Normal usage',
@@ -921,7 +921,7 @@ const ACTIVITY_DESCRIPTIONS = {
                 'That\'s what she said. About the token levels.',
                 'I am Beyonce, always. Token-wise, at least.',
 
-                // -- SimCity 2000 (1993) — 10 variations on the iconic loading
+                // -- SimCity 2000 (1993) - 10 variations on the iconic loading
                 //    message, so the reference lands often without going stale.
                 'Reticulating splines',
                 'Re-reticulating splines',

@@ -321,7 +321,7 @@ function resolveTokenLimit(ctx = {}) {
     const jsonlDeclaredLimit = getHighestDeclaredLimit(ctx.modelIds || null);
 
     // Claude Code's own eligibility cache. Read lazily (file is small,
-    // cost negligible) and only trusted as a corroborating signal —
+    // cost negligible) and only trusted as a corroborating signal -
     // never as a definitive negative, since we've seen it go stale
     // with hasAccess:false on accounts that were genuinely running
     // 1M context at the time.
@@ -334,7 +334,7 @@ function resolveTokenLimit(ctx = {}) {
     }
 
     // Local subscription fallback (used when live capabilities aren't
-    // available — tokenOnlyMode, pre-first-fetch, offline).
+    // available - tokenOnlyMode, pre-first-fetch, offline).
     let subscriptionType = ctx.subscriptionType || null;
     if (!subscriptionType) {
         try {
@@ -360,7 +360,7 @@ function resolveTokenLimit(ctx = {}) {
 
 // Back-compat wrapper that returns just the numeric limit. New callers
 // that want the source/confidence metadata should use resolveTokenLimit
-// directly. This wrapper is intentionally conservative — existing call
+// directly. This wrapper is intentionally conservative - existing call
 // sites that read a bare number continue to work.
 function getTokenLimit(modelIds = null, maxObservedTokens = 0) {
     return resolveTokenLimit({

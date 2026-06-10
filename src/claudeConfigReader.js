@@ -7,10 +7,11 @@
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
-// Claude Code no longer writes organizationUuid, subscriptionType, or rateLimitTier
-// to ~/.claude/.credentials.json — those fields are now null in the new format.
-// The authoritative account identity lives in ~/.claude.json under oauthAccount,
+// organizationUuid is not reliably present in ~/.claude/.credentials.json, so
+// the authoritative account identity lives in ~/.claude.json under oauthAccount,
 // and extended-context eligibility lives under s1mAccessCache keyed by org UUID.
+// (credentialsReader.js still reads subscriptionType from .credentials.json as a
+// local plan fallback - see resolveTokenLimit.)
 //
 // This module isolates all reads of Claude Code's own state so the rest of
 // claudemeter has a single, well-typed view of "who is Claude Code logged in as
@@ -34,13 +35,13 @@ function getClaudeSessionsDir() {
     return path.join(getHomeDir(), '.claude', 'sessions');
 }
 
-// Back-compat constants — snapshot at module load, still useful for callers
+// Back-compat constants - snapshot at module load, still useful for callers
 // that don't override CLAUDE_CONFIG_HOME. Prefer the getters above in new code.
 const CLAUDE_CONFIG_PATH = path.join(os.homedir(), '.claude.json');
 const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), '.claude', 'sessions');
 
 // Read and parse ~/.claude.json.
-// Returns null on any read/parse error — callers must handle the null case.
+// Returns null on any read/parse error - callers must handle the null case.
 function readClaudeConfig() {
     try {
         const configPath = getClaudeConfigPath();
@@ -90,9 +91,9 @@ function getOAuthAccount() {
 // Check whether the currently logged-in org has 1M ("s1m") context access
 // according to Claude Code's own eligibility cache.
 // Returns:
-//   true  — eligible (hasAccess === true)
-//   false — known-ineligible (hasAccess === false)
-//   null  — unknown (no cache entry for this org, or file missing)
+//   true  - eligible (hasAccess === true)
+//   false - known-ineligible (hasAccess === false)
+//   null  - unknown (no cache entry for this org, or file missing)
 //
 // Claude Code refreshes this cache during its own eligibility checks, so
 // the value reflects Anthropic's current decision at the moment Claude Code
@@ -115,7 +116,7 @@ function hasMaxContextAccess() {
     return entry.hasAccess === true;
 }
 
-// Read ~/.claude/sessions/*.json — each file represents one live Claude Code
+// Read ~/.claude/sessions/*.json - each file represents one live Claude Code
 // process and contains {pid, sessionId, cwd, startedAt, kind, entrypoint}.
 // Returns an array of session records, possibly empty.
 //
@@ -149,7 +150,7 @@ function getLiveSessions() {
 }
 
 // Find the live Claude Code session whose cwd matches the given workspace
-// path. When multiple sessions share a cwd (rare — two Claude Code processes
+// path. When multiple sessions share a cwd (rare - two Claude Code processes
 // in the same workspace), returns the most recently started one.
 // Returns null if no match.
 function findSessionForWorkspace(workspacePath) {

@@ -3,8 +3,8 @@
 // Purpose:   Three-layer colour resolution for Tk gauge tiers.
 //
 //            Layers (highest precedence first):
-//              1. claudemeter.colors.<settingKey> — user-set hex (regex-validated)
-//              2. vscode.ThemeColor(themeId) — picks up workbench.colorCustomizations
+//              1. claudemeter.colors.<settingKey> - user-set hex (regex-validated)
+//              2. vscode.ThemeColor(themeId) - picks up workbench.colorCustomizations
 //              3. colorMap fallback hex
 //
 //            Returns {themeColor, hex} so callers can pick the right
@@ -14,7 +14,7 @@
 //            'normal' tier returns {themeColor: undefined, hex: null}.
 //            Unknown tier name returns the same no-decoration shape.
 //
-//            ALL tier hex values come from src/tk/colorMap.js — this
+//            ALL tier hex values come from src/tk/colorMap.js - this
 //            module holds NO hex constants. Single source of truth.
 //
 // License:   MIT
@@ -33,7 +33,7 @@ const { TIER_COLORS } = require('./tk/colorMap');
 function resolveColor(tier) {
     const entry = TIER_COLORS[tier];
     if (!entry) {
-        // 'normal' tier or unknown — no decoration
+        // 'normal' tier or unknown - no decoration
         return { themeColor: undefined, hex: null };
     }
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);

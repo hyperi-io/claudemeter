@@ -121,7 +121,7 @@ describe('identityChanged', () => {
         expect(identityChanged(null, null)).toBe(false);
     });
 
-    it('detects personal → personal switch via accountUuid alone', () => {
+    it('detects personal -> personal switch via accountUuid alone', () => {
         const personal1 = { accountUuid: 'acc-alice', email: null, orgId: null };
         const personal2 = { accountUuid: 'acc-bob', email: null, orgId: null };
         expect(identityChanged(personal1, personal2)).toBe(true);

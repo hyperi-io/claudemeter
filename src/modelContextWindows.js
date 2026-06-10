@@ -16,18 +16,19 @@
 // Claude Code strips the [1m]/[Nm] suffix before writing model IDs to the
 // JSONL, so JSONL-based detection only works if (a) the user explicitly
 // chose a suffixed alias in the picker AND (b) Claude Code writes it through
-// (rare) — so we can't rely on it. Instead we use Claude Code's own
-// s1mAccessCache in ~/.claude.json as the authoritative eligibility signal.
+// (rare) - so we can't rely on it.
 //
 // The suffix parser is still here as a future-proof belt-and-braces for when
-// larger contexts (2M, 5M, …) get added.
+// larger contexts (2M, 5M, ...) get added.
 //
-// Detection strategy (priority order):
-//   1. Observed tokens > STANDARD_LIMIT → definitive evidence of extended context
-//   2. eligibilityLimit from caller (Claude Code's s1mAccessCache says yes)
-//   3. aliasDeclaredLimit from claudeCode.selectedModel "opus[1m]"-style setting
-//   4. JSONL-declared suffix (future-proofing, rarely present in practice)
-//   5. Default: STANDARD_LIMIT (200K)
+// This module is now PARSING-ONLY. It turns model IDs and alias strings into
+// {family, version, contextLimit} shapes and pulls out any declared suffix.
+// It no longer decides the session limit itself - that lives in
+// contextWindowResolver.resolveContextWindow, which runs the ordered priority
+// chain over every signal (user override, alias, JSONL suffix, rule table,
+// s1mAccessCache, observed floor). The old Math.max strategy that lived here
+// caused the 2026-04 ratchet bug, so resolveSessionContextWindow below is now
+// just a thin delegator kept for back-compat.
 
 const STANDARD_LIMIT = 200000;
 const FALLBACK_LIMIT = STANDARD_LIMIT;
@@ -61,7 +62,7 @@ function parseModelAlias(alias) {
 // Parse "claude-opus-4-6" -> { family: "opus", version: 4.6, contextLimit: 0 }
 // Parse "claude-opus-4-6[1m]" -> { family: "opus", version: 4.6, contextLimit: 1000000 }
 // Parse "claude-opus-4-6[2m]" -> { family: "opus", version: 4.6, contextLimit: 2000000 }
-// contextLimit of 0 means "no suffix — use default"
+// contextLimit of 0 means "no suffix - use default"
 // Returns null for unrecognised formats
 function parseModelId(modelId) {
     if (!modelId || typeof modelId !== 'string') return null;

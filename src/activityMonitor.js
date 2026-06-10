@@ -2,7 +2,7 @@
 // File:      activityMonitor.js
 // Purpose:   Resolve an activity level from usage data and pick a
 //            status-message quote for the tooltip's activity-quip line.
-//            Quote data lives in activityQuotes.js — this module owns
+//            Quote data lives in activityQuotes.js - this module owns
 //            only the level-resolution thresholds and the random pick.
 // Language:  JavaScript (CommonJS)
 //

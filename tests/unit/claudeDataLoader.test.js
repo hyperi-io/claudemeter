@@ -1,7 +1,7 @@
-// Regression tests for convertPathToClaudeDir() — the workspace-path
+// Regression tests for convertPathToClaudeDir() - the workspace-path
 // to Claude-project-directory translator. The Windows variant has bitten
 // us once already (the colon was being dropped, producing a single dash
-// where Claude Code uses two — see fix(windows): drive-letter colon →
+// where Claude Code uses two - see fix(windows): drive-letter colon ->
 // dash). These tests pin the exact mapping so the same regression can't
 // silently come back the next time someone touches that function.
 
@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 const { ClaudeDataLoader, selectActiveSession } = require('../../src/claudeDataLoader');
 
 describe('ClaudeDataLoader.convertPathToClaudeDir', () => {
-    // Use a single instance — the method is pure with respect to its
+    // Use a single instance - the method is pure with respect to its
     // argument, so we don't need a fresh loader per case.
     const loader = new ClaudeDataLoader(null, () => {});
 
@@ -36,7 +36,7 @@ describe('ClaudeDataLoader.convertPathToClaudeDir', () => {
         });
 
         it('handles UNC paths without losing the leading separator', () => {
-            // \\server\share\proj → -server-share-proj (no colon to map)
+            // \\server\share\proj -> -server-share-proj (no colon to map)
             expect(loader.convertPathToClaudeDir('\\\\server\\share\\proj'))
                 .toBe('--server-share-proj');
         });

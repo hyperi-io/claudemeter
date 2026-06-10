@@ -84,7 +84,7 @@ function debugLog(message) {
         getTokenDiagnosticChannel().appendLine(message);
         // Mirror to the rolling debug.log file so JSONL/token-monitoring
         // diagnostics (init, watcher events, session updates) are visible
-        // post-hoc — the Output channel is in-memory only.
+        // post-hoc - the Output channel is in-memory only.
         fileLog(message);
     }
 }
@@ -390,7 +390,7 @@ async function setupTokenMonitoring(context) {
 
 // Build a full diagnostic state dump for bug reports. No secrets (we
 // deliberately omit the OAuth access/refresh tokens and the sessionKey
-// cookie value itself — only boolean "has" and expiry are reported).
+// cookie value itself - only boolean "has" and expiry are reported).
 //
 // The dump is the single source of truth for "what does claudemeter see
 // right now?". Reports with a dump attached are triagable; reports without
@@ -494,8 +494,8 @@ function setupCredentialsMonitoring(context) {
     }
 
     // Account identity lives in TWO files:
-    //   - ~/.claude/.credentials.json — OAuth tokens (legacy identity fallback)
-    //   - ~/.claude.json              — oauthAccount block (new source of truth)
+    //   - ~/.claude/.credentials.json - OAuth tokens (legacy identity fallback)
+    //   - ~/.claude.json              - oauthAccount block (new source of truth)
     //
     // Claude Code writes both on login, but only .claude.json's oauthAccount
     // is guaranteed to contain orgId/accountUuid/email on newer builds.
@@ -503,13 +503,13 @@ function setupCredentialsMonitoring(context) {
     // current Claude Code version rewrites.
     //
     // Account-switch detection uses the identity tuple (accountUuid, email,
-    // orgId). ANY field differing counts as a switch — this catches:
-    //   - personal → personal (same email missing from .credentials.json
+    // orgId). ANY field differing counts as a switch - this catches:
+    //   - personal -> personal (same email missing from .credentials.json
     //     historically, but accountUuid differs in oauthAccount)
-    //   - personal → org (orgId transition)
-    //   - org → org (different orgId)
+    //   - personal -> org (orgId transition)
+    //   - org -> org (different orgId)
     //
-    // Token fields are NOT used — OAuth rotates refresh tokens during normal
+    // Token fields are NOT used - OAuth rotates refresh tokens during normal
     // refresh cycles, which would cause false positives.
 
     const handleIdentityMaybeChanged = async (sourceLabel) => {
@@ -747,14 +747,14 @@ async function migrateDeprecatedSettings() {
 // Uses resolveTokenLimit() which is self-contained (reads credentials,
 // model IDs, etc. internally), so this is safe to call pre-first-fetch.
 // Profile selection uses credentials signals only (orgType is not yet
-// available — that requires a successful usageData fetch). The selector
+// available - that requires a successful usageData fetch). The selector
 // handles missing orgType gracefully and falls through to 'unknown'.
 async function runLegacySettingsMigration() {
     try {
         const { migrateLegacySettings } = require('./src/tk/migrate');
         const { selectProfile } = require('./src/tk/profileSelector');
 
-        // No credentials → no profile → nothing to migrate against
+        // No credentials -> no profile -> nothing to migrate against
         if (!credentialsInfo) {
             return;
         }
@@ -762,7 +762,7 @@ async function runLegacySettingsMigration() {
         const profile = selectProfile({
             subscriptionType: credentialsInfo.subscriptionType,
             rateLimitTier: credentialsInfo.rateLimitTier,
-            // orgType omitted — not yet available pre-first-fetch; selector
+            // orgType omitted - not yet available pre-first-fetch, selector
             // falls through gracefully and uses subscription/tier signals alone
         });
 
@@ -773,7 +773,7 @@ async function runLegacySettingsMigration() {
             return;
         }
 
-        // Logger adapter — proxy to fileLog (already set up by this point)
+        // Logger adapter - proxy to fileLog (already set up by this point)
         const logger = {
             appendLine: (msg) => fileLog(msg),
         };
@@ -959,7 +959,7 @@ async function activate(context) {
         vscode.commands.registerCommand(COMMANDS.RESYNC_ACCOUNT, async () => {
             // Clears the saved session and triggers a fresh browser login.
             // Use this after running /login in the Claude Code CLI when the
-            // automatic account-switch detection didn't fire (e.g. personal → personal).
+            // automatic account-switch detection didn't fire (e.g. personal -> personal).
             try {
                 if (!httpFetcher) httpFetcher = new ClaudeHttpFetcher();
                 httpFetcher.clearSession({ clearLoginBrowserCache: true });
@@ -1137,7 +1137,7 @@ async function activate(context) {
         })
     );
 
-    // Dev-only simulator commands — see src/commands/simulator.js.
+    // Dev-only simulator commands - see src/commands/simulator.js.
     // All 12 are gated by `config.claudemeter.debug` in package.json
     // (enablement clause) so they only appear when claudemeter.debug=true.
     const { registerSimulatorCommands } = require('./src/commands/simulator');
@@ -1157,7 +1157,7 @@ async function activate(context) {
                 : (fetcher && fetcher.hasExistingSession());
 
             if (!hasSession && !isLegacyMode()) {
-                // First v2 run — no session cookie. Prompt user to log in.
+                // First v2 run - no session cookie. Prompt user to log in.
                 httpFetcher = fetcher;
                 fileLog('No session cookie found on startup — prompting user to log in');
                 const action = await vscode.window.showInformationMessage(

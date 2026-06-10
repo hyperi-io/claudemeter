@@ -3,7 +3,7 @@
 //  Purpose:      Reliable colour interpolation for the rot gauge, done in
 //                OKLab space.
 //
-//                Why OKLab and not plain RGB or HSL: a white→blue ramp is
+//                Why OKLab and not plain RGB or HSL: a white->blue ramp is
 //                the pathological case for both naive approaches.
 //                  - sRGB channel-lerp passes through a muddy, too-dark
 //                    midpoint because the gamma curve is never undone.
@@ -12,13 +12,13 @@
 //                    wrong arc.
 //                OKLab is perceptually uniform: equal t-steps look like
 //                equal visual steps, with no grey or pink artefacts. For a
-//                light→dark same-hue blue ramp it is the gold standard.
+//                light->dark same-hue blue ramp it is the gold standard.
 //
 //                Rectangular OKLab (not polar OKLCH) is deliberate: both
 //                endpoints are already blue, so there is no hue-wrap
 //                ambiguity to resolve and the a/b axes interpolate cleanly.
 //
-//                Pure JS — no vscode dependency, no deps, fully testable.
+//                Pure JS - no vscode dependency, no deps, fully testable.
 //
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED

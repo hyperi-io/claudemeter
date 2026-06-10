@@ -27,7 +27,7 @@
 //       use24HourTime,
 //       weeklyPrecisionThreshold,
 //     }
-//   }) → string (markdown body, sections joined with "  \n")
+//   }) -> string (markdown body, sections joined with "  \n")
 
 const {
     calculateResetClockTimeExpanded,
@@ -273,7 +273,7 @@ function renderActivityQuip(state) {
     const { activityStats, activityQuipOverride } = state;
     // When the platform is in a special state (e.g. critical outage),
     // the caller can supply a thematic line that REPLACES the cute
-    // activity quip — so "He's dead, Jim." displaces the usual
+    // activity quip - so "He's dead, Jim." displaces the usual
     // chuckle rather than appearing alongside it.
     if (activityQuipOverride) {
         return ['', `*${activityQuipOverride}*`];
@@ -284,7 +284,7 @@ function renderActivityQuip(state) {
 
 function renderPlatformBlock(state) {
     // platformTooltipLines comes from claudeLabelComposer.composeClaudeLabel()
-    // e.g. ["$(warning) Service degraded — API delays",
+    // e.g. ["$(warning) Service degraded - API delays",
     //       "[View status page](...)"]
     const { platformTooltipLines } = state;
     if (!Array.isArray(platformTooltipLines) || platformTooltipLines.length === 0) {

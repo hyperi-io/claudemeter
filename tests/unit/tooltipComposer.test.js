@@ -1,7 +1,7 @@
-// Tests for tooltipComposer.js — composes the full tooltip markdown
-// body from state. Pure function; no vscode deps.
+// Tests for tooltipComposer.js - composes the full tooltip markdown
+// body from state. Pure function, no vscode deps.
 //
-// Strategy: each section is a private helper; we test the composer's
+// Strategy: each section is a private helper, we test the composer's
 // observable output for assorted state shapes, covering the main
 // branches in the extracted logic.
 
@@ -14,14 +14,14 @@ const baseConfig = {
     weeklyPrecisionThreshold: 75,
 };
 
-describe('composeTooltip — empty state', () => {
+describe('composeTooltip - empty state', () => {
     it('returns a string even with no data', () => {
         const out = composeTooltip({ config: baseConfig });
         expect(typeof out).toBe('string');
     });
 });
 
-describe('composeTooltip — account identity', () => {
+describe('composeTooltip - account identity', () => {
     it('renders name and email when both present', () => {
         const out = composeTooltip({
             config: baseConfig,
@@ -69,7 +69,7 @@ describe('composeTooltip — account identity', () => {
     });
 });
 
-describe('composeTooltip — plan + context', () => {
+describe('composeTooltip - plan + context', () => {
     it('shows plan with Personal suffix when no orgType', () => {
         const out = composeTooltip({
             config: baseConfig,
@@ -108,7 +108,7 @@ describe('composeTooltip — plan + context', () => {
     });
 });
 
-describe('composeTooltip — session block', () => {
+describe('composeTooltip - session block', () => {
     it('renders Session with percent and reset time', () => {
         const out = composeTooltip({
             config: baseConfig,
@@ -140,7 +140,7 @@ describe('composeTooltip — session block', () => {
     });
 });
 
-describe('composeTooltip — weekly block', () => {
+describe('composeTooltip - weekly block', () => {
     it('renders Weekly with percent', () => {
         const out = composeTooltip({
             config: baseConfig,
@@ -168,7 +168,7 @@ describe('composeTooltip — weekly block', () => {
     });
 });
 
-describe('composeTooltip — credits blocks', () => {
+describe('composeTooltip - credits blocks', () => {
     it('renders Extra Usage when monthlyCredits present', () => {
         const out = composeTooltip({
             config: baseConfig,
@@ -205,7 +205,7 @@ describe('composeTooltip — credits blocks', () => {
     });
 });
 
-describe('composeTooltip — activity quip', () => {
+describe('composeTooltip - activity quip', () => {
     it('renders quip in italics when provided', () => {
         const out = composeTooltip({
             config: baseConfig,
@@ -225,7 +225,7 @@ describe('composeTooltip — activity quip', () => {
     });
 });
 
-describe('composeTooltip — service status lines', () => {
+describe('composeTooltip - service status lines', () => {
     it('includes platform lines when provided', () => {
         const out = composeTooltip({
             config: baseConfig,
@@ -235,7 +235,7 @@ describe('composeTooltip — service status lines', () => {
     });
 });
 
-describe('composeTooltip — footer', () => {
+describe('composeTooltip - footer', () => {
     it('includes version when provided', () => {
         const out = composeTooltip({
             config: baseConfig,
@@ -250,13 +250,13 @@ describe('composeTooltip — footer', () => {
     });
 });
 
-describe('composeTooltip — section error containment', () => {
+describe('composeTooltip - section error containment', () => {
     it('a broken section does not kill other sections', () => {
         // Pass malformed data into one section; others should still render.
         const out = composeTooltip({
             config: baseConfig,
             usageData: {
-                // bad accountInfo — not an object; triggers error in identity section
+                // bad accountInfo - not an object, triggers error in identity section
                 accountInfo: 'not an object',
                 usagePercent: 42,
                 resetTime: '1h',
@@ -270,14 +270,14 @@ describe('composeTooltip — section error containment', () => {
     });
 });
 
-describe('composeTooltip — Session / Current context / Weekly section split (post-2026-05-08)', () => {
+describe('composeTooltip - Session / Current context / Weekly section split (post-2026-05-08)', () => {
     const baseConfig = {
         tokenLimitOverride: 0,
         use24HourTime: false,
         weeklyPrecisionThreshold: 75,
     };
 
-    it('emits three distinct headings in order: Session → Current context → Weekly', () => {
+    it('emits three distinct headings in order: Session -> Current context -> Weekly', () => {
         const out = composeTooltip({
             usageData: {
                 usagePercent: 50,
@@ -318,10 +318,10 @@ describe('composeTooltip — Session / Current context / Weekly section split (p
     });
 });
 
-describe('composeTooltip — plain rendering (regression guards)', () => {
+describe('composeTooltip - plain rendering (regression guards)', () => {
     // VS Code's MarkdownString tooltip context strips both raw
     // style="color:#HEX" (microsoft/vscode#142457) AND
-    // `var(--vscode-...)` CSS variables — CSS vars only resolve in
+    // `var(--vscode-...)` CSS variables - CSS vars only resolve in
     // webviews. These tests guard against any future attempt to
     // reintroduce per-row tier colour in the tooltip, which would
     // visibly render as plain text and leave styling tags in the
@@ -408,7 +408,7 @@ describe('composeTooltip — plain rendering (regression guards)', () => {
         expect(out).toContain('**Session - 30%**');
         expect(out).toContain('**Current context - 30%**');
         expect(out).toContain('**Weekly - 10%**');
-        // Headers stand alone on their line — never embedded inside an HTML tag
+        // Headers stand alone on their line - never embedded inside an HTML tag
         expect(out).not.toMatch(/<[^>]*>\*\*(Session|Weekly|Current context)/);
     });
 });

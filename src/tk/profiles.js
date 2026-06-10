@@ -3,21 +3,21 @@
 //  Purpose:      Data: built-in Tk-threshold profiles per Claude account tier.
 //
 //                Each profile carries threshold values + optional UI overrides.
-//                Detection-signal mapping is NOT on the profile object — it
+//                Detection-signal mapping is NOT on the profile object - it
 //                lives in src/tk/profileSelector.js as an explicit priority
 //                chain. Profiles are pure data; selection is pure code.
 //
 //                Adding a new tier: add an entry here AND add an explicit
 //                branch to selectProfile() in profileSelector.js. No
-//                iteration-order coupling — the profile name is the only
+//                iteration-order coupling - the profile name is the only
 //                link between the two files.
 //
-//                'team-premium' is intentionally absent — it ships when the
+//                'team-premium' is intentionally absent - it ships when the
 //                verbatim Anthropic detection strings are observable.
 //
 //                'enterprise' has rotEnabled: false because the typical
 //                500K window means rotDeep (500K) and rotLight (300K)
-//                tiers are unreachable / no-ops — error fires first at
+//                tiers are unreachable / no-ops - error fires first at
 //                ~462K. Honest beats inert.
 //
 //  License:      MIT

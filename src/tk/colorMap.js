@@ -5,10 +5,12 @@
 //                claudemeter.colors.* setting key (custom hex override), and
 //                a fallback hex (used when ThemeColor isn't applicable).
 //
-//                Both src/colorResolver.js and src/tooltipComposer.js read
-//                from this map. No hex constants live anywhere else.
+//                src/colorResolver.js reads TIER_COLORS (status-bar text
+//                colour) and src/statusBar.js reads ROT_GRADIENT directly
+//                for the continuous rot ramp. No hex constants live
+//                anywhere else.
 //
-//                'normal' maps to null — colorResolver treats null as
+//                'normal' maps to null - colorResolver treats null as
 //                "no decoration, default text colour".
 //
 //  License:      MIT
