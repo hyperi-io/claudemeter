@@ -3,5 +3,13 @@
   "extends": [
     "github>hyperi-io/renovate-config"
   ],
-  "dependencyDashboard": false
+  "dependencyDashboard": false,
+  "packageRules": [
+    {
+      "description": "Stay on Node 22 to match VS Code's extension-host runtime (Electron 37/38 -> Node 22.x as of 2026). Node 24 does not reach the host until VS Code adopts Electron 40. Lift this cap and raise engines + .nvmrc to 24 when that happens.",
+      "matchDatasources": ["node-version"],
+      "matchPackageNames": ["node"],
+      "allowedVersions": "<23"
+    }
+  ]
 }
