@@ -1,3 +1,10 @@
+## [2.4.10](https://github.com/hyperi-io/claudemeter/compare/v2.4.9...v2.4.10) (2026-06-11)
+
+
+### Bug Fixes
+
+* Tk shows largest live session in window ([f56ae41](https://github.com/hyperi-io/claudemeter/commit/f56ae4199c1a9283629da6eb91052d1e93cf6dae))
+
 ## [2.4.9](https://github.com/hyperi-io/claudemeter/compare/v2.4.8...v2.4.9) (2026-06-11)
 
 
