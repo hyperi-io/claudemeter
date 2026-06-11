@@ -323,16 +323,23 @@ class ClaudeDataLoader {
         this.log(`   this.projectDirName = ${this.projectDirName}`);
         this.log(`   this.workspacePath = ${this.workspacePath}`);
 
-        // Live window (minutes): how recently a session must have been written
-        // to count as live. Configurable, default 15. Lazy vscode read so this
-        // module stays importable outside the extension host (tests).
-        let windowMs = 15 * 60 * 1000;
+        // Live window + hard deck (minutes). Live window: how recently a session
+        // must have been written to count as live (we show the largest live one).
+        // Hard deck: max age before a session is dead - the local Claude Code CLI
+        // drops an idle session after ~30min, losing its context, so older
+        // transcripts are ignored entirely, not even used as a fallback. Both
+        // configurable. Lazy vscode read so the module stays importable outside
+        // the extension host (tests).
+        let windowMs = 10 * 60 * 1000;
+        let hardDeckMs = 30 * 60 * 1000;
         try {
-            const vscode = require('vscode');
-            const mins = vscode.workspace.getConfiguration('claudemeter').get('sessionWindowMinutes', 15);
-            if (typeof mins === 'number' && mins > 0) windowMs = mins * 60 * 1000;
+            const cfg = require('vscode').workspace.getConfiguration('claudemeter');
+            const win = cfg.get('sessionWindowMinutes', 10);
+            const deck = cfg.get('sessionMaxAgeMinutes', 30);
+            if (typeof win === 'number' && win > 0) windowMs = win * 60 * 1000;
+            if (typeof deck === 'number' && deck > 0) hardDeckMs = deck * 60 * 1000;
         } catch (e) {
-            // not running in the extension host - keep the default
+            // not running in the extension host - keep the defaults
         }
 
         let dataDir;
@@ -402,8 +409,15 @@ class ClaudeDataLoader {
             }
             allFiles.sort((a, b) => b.modified - a.modified);
 
-            if (allFiles.length === 0) {
-                this.log('No main session files - conversation may be inactive');
+            // Hard deck: anything whose last-modified is older than the max age
+            // is dead (the CLI dropped the idle session, context gone). If
+            // nothing is within the deck, return inactive (Tk -) - this wins
+            // ahead of the aged-out fallback below.
+            const hardDeckCutoff = Date.now() - hardDeckMs;
+            const relevantFiles = allFiles.filter(f => f.modified >= hardDeckCutoff);
+
+            if (relevantFiles.length === 0) {
+                this.log(`No session files within the ${Math.round(hardDeckMs / 60000)}min hard deck - inactive`);
                 return {
                     totalTokens: 0,
                     inputTokens: 0,
@@ -416,13 +430,12 @@ class ClaudeDataLoader {
                 };
             }
 
-            // Live = written inside the window. Show the LARGEST live session
-            // (max cache_read) - concurrent sub-agent work leaves several mains
-            // live at once and we want the heavy orchestrator, not a small
-            // sub-task.
+            // Live = written inside the live window (a subset of the deck). Show
+            // the LARGEST live session - concurrent sub-agent work leaves several
+            // mains live and we want the heavy orchestrator, not a small sub-task.
             const liveCutoff = Date.now() - windowMs;
-            const liveFiles = allFiles.filter(f => f.modified >= liveCutoff);
-            this.log(`${liveFiles.length} live session file(s) within ${Math.round(windowMs / 60000)}min (of ${allFiles.length} total)`);
+            const liveFiles = relevantFiles.filter(f => f.modified >= liveCutoff);
+            this.log(`${liveFiles.length} live (${Math.round(windowMs / 60000)}min) of ${relevantFiles.length} in-deck, ${allFiles.length} total`);
 
             const liveSessions = [];
             for (const f of liveFiles) {
@@ -435,8 +448,8 @@ class ClaudeDataLoader {
 
             if (!active) {
                 // Nothing live with usage. Fall back to the most-recent session
-                // overall so the gauge shows the last-known context, not a blank.
-                for (const f of allFiles) {
+                // still inside the hard deck - last-known context, not a blank.
+                for (const f of relevantFiles) {
                     const s = await readSessionUsage(f.path, (m) => this.log(m));
                     if (s) {
                         active = s;

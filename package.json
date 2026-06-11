@@ -625,9 +625,15 @@
         },
         "claudemeter.sessionWindowMinutes": {
           "type": "number",
-          "default": 15,
+          "default": 10,
           "minimum": 1,
-          "markdownDescription": "How recently a Claude session must have been written (minutes) to count as 'live'. The Tk gauge shows the largest live session's context, so concurrent sub-agent work reflects the heavy orchestrator, not a small sub-task. If nothing is live in this window but older sessions exist, the most-recent one's last value is shown rather than blanking. Default 15."
+          "markdownDescription": "How recently a Claude session must have been written (minutes) to count as 'live'. The Tk gauge shows the largest live session's context, so concurrent sub-agent work reflects the heavy orchestrator, not a small sub-task. If nothing is live in this window but older sessions exist (within the hard deck), the most-recent one's last value is shown rather than blanking. Should be <= `sessionMaxAgeMinutes`. Default 10."
+        },
+        "claudemeter.sessionMaxAgeMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "markdownDescription": "Hard deck (minutes): max last-modified age for a session file to be considered at all. Past this the local Claude Code session is treated as dead (the CLI drops an idle session after ~30min, losing its context). If every session file is older than this the gauge blanks (`Tk -`) and usage reads 0 - this wins ahead of the aged-out fallback. Default 30."
         },
         "claudemeter.useLegacyScraper": {
           "type": "boolean",

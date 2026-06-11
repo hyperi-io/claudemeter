@@ -271,9 +271,24 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 ### `claudemeter.sessionWindowMinutes`
 
 - **Type**: Number
-- **Default**: `15`
+- **Default**: `10`
 - **Minimum**: `1`
-- **Description**: How recently a Claude session must have been written (minutes) to count as live. The Tk gauge shows the largest live session's context, so concurrent sub-agent work reflects the heavy orchestrator rather than a small sub-task. If nothing is live in this window but older sessions exist, the most-recent one's last value is shown rather than blanking.
+- **Description**: The live window. The Tk gauge shows the largest session written within this many minutes, so concurrent sub-agent work reflects the heavy orchestrator, not a small sub-task.
+
+### `claudemeter.sessionMaxAgeMinutes`
+
+- **Type**: Number
+- **Default**: `30`
+- **Minimum**: `1`
+- **Description**: The hard deck - max last-modified age for a session file to count at all. The local Claude Code CLI drops an idle session after ~30min and loses its context, so past this a file is treated as dead.
+
+**How the two interoperate:**
+
+- Within `sessionWindowMinutes` (10 min): the largest live session wins.
+- Older than that but within `sessionMaxAgeMinutes` (30 min): nothing is live, so the most-recent file's last value is shown (aged-out fallback).
+- Older than `sessionMaxAgeMinutes` (30 min): all dead - the gauge blanks to `Tk -` and usage reads 0.
+
+Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
 
 ### `claudemeter.tokenOnlyMode`
 
