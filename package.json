@@ -623,6 +623,12 @@
           "default": false,
           "description": "Token-only mode: Only track Claude Code tokens, skip Claude.ai web usage scraping entirely"
         },
+        "claudemeter.sessionWindowMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 1,
+          "markdownDescription": "How recently a Claude session must have been written (minutes) to count as 'live'. The Tk gauge shows the largest live session's context, so concurrent sub-agent work reflects the heavy orchestrator, not a small sub-task. If nothing is live in this window but older sessions exist, the most-recent one's last value is shown rather than blanking. Default 15."
+        },
         "claudemeter.useLegacyScraper": {
           "type": "boolean",
           "default": false,

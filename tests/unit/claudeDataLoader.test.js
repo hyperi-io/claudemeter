@@ -75,13 +75,15 @@ describe('ClaudeDataLoader.convertPathToClaudeDir', () => {
 });
 
 describe('selectActiveSession', () => {
-    it('picks the newest transcript, not the largest', () => {
-        // newest-first: the fresh 21k chat beats the older 181k one
+    it('picks the largest live session, not the newest', () => {
+        // concurrent sub-agent work: the heavy 181k orchestrator wins over a
+        // small 21k sub-task, regardless of order
         const { active, activeSessionCount } = selectActiveSession([
             { file: 'new', cacheRead: 21000 },
             { file: 'old', cacheRead: 181000 },
         ]);
-        expect(active.file).toBe('new');
+        expect(active.file).toBe('old');
+        expect(active.cacheRead).toBe(181000);
         expect(activeSessionCount).toBe(2);
     });
 

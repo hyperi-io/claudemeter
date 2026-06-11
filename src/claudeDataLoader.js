@@ -9,22 +9,59 @@
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
-const { getTokenLimit, TIMEOUTS, splitLines } = require('./utils');
+const { getTokenLimit, splitLines } = require('./utils');
 
-// Active session = newest transcript with usage, not the max across recent
-// files (max overstated context after /clear). `sessions` sorted newest-first.
+// Active session = the largest live session - max cache_read across the main
+// transcripts modified inside the recency window. Newest-wins understated
+// sub-agent / multi-session work (it showed a small concurrent sub-task, not
+// the heavy orchestrator). A /clear can't be told apart from a concurrent
+// session - it starts a fresh transcript with no continuation marker - so a
+// cleared session lingers in the max until it ages out of the window.
 function selectActiveSession(sessions) {
     let active = null;
     let activeSessionCount = 0;
     for (const s of sessions || []) {
         if (s && s.cacheRead > 0) {
             activeSessionCount++;
-            if (active === null) {
+            if (active === null || s.cacheRead > active.cacheRead) {
                 active = s;
             }
         }
     }
     return { active, activeSessionCount };
+}
+
+// Parse a transcript's latest assistant cache_read into a session summary, or
+// null if it has no usage yet. Module-level so both the live scan and the
+// aged-out fallback reuse it.
+async function readSessionUsage(filePath, log) {
+    try {
+        const content = await fs.readFile(filePath, 'utf-8');
+        const lines = splitLines(content.trim());
+        for (let i = lines.length - 1; i >= 0; i--) {
+            try {
+                const entry = JSON.parse(lines[i]);
+                if (entry.type === 'assistant' && entry.message?.usage) {
+                    const cacheRead = entry.message.usage.cache_read_input_tokens || 0;
+                    if (cacheRead > 0) {
+                        const model = entry.message?.model;
+                        return {
+                            file: path.basename(filePath),
+                            cacheRead,
+                            cacheCreation: entry.message.usage.cache_creation_input_tokens || 0,
+                            messageCount: lines.length,
+                            model: (model && model !== '<synthetic>') ? model : null,
+                        };
+                    }
+                }
+            } catch (parseError) {
+                continue;
+            }
+        }
+    } catch (readError) {
+        if (log) log(`Error reading ${path.basename(filePath)}: ${readError.message}`);
+    }
+    return null;
 }
 
 class ClaudeDataLoader {
@@ -286,7 +323,17 @@ class ClaudeDataLoader {
         this.log(`   this.projectDirName = ${this.projectDirName}`);
         this.log(`   this.workspacePath = ${this.workspacePath}`);
 
-        const sessionStart = Date.now() - TIMEOUTS.SESSION_DURATION;
+        // Live window (minutes): how recently a session must have been written
+        // to count as live. Configurable, default 15. Lazy vscode read so this
+        // module stays importable outside the extension host (tests).
+        let windowMs = 15 * 60 * 1000;
+        try {
+            const vscode = require('vscode');
+            const mins = vscode.workspace.getConfiguration('claudemeter').get('sessionWindowMinutes', 15);
+            if (typeof mins === 'number' && mins > 0) windowMs = mins * 60 * 1000;
+        } catch (e) {
+            // not running in the extension host - keep the default
+        }
 
         let dataDir;
         let isProjectSpecific = false;
@@ -343,27 +390,20 @@ class ClaudeDataLoader {
 
             this.log(`Filtered to ${mainSessionFiles.length} main session files (excluding agent files)`);
 
-            const recentFiles = [];
+            // Stat every main session file, newest-first.
+            const allFiles = [];
             for (const filePath of mainSessionFiles) {
                 try {
                     const stats = await fs.stat(filePath);
-                    if (stats.mtimeMs >= sessionStart) {
-                        recentFiles.push({
-                            path: filePath,
-                            modified: stats.mtimeMs
-                        });
-                    }
+                    allFiles.push({ path: filePath, modified: stats.mtimeMs });
                 } catch (statError) {
                     continue;
                 }
             }
+            allFiles.sort((a, b) => b.modified - a.modified);
 
-            recentFiles.sort((a, b) => b.modified - a.modified);
-
-            this.log(`Found ${recentFiles.length} main session file(s) modified in last hour`);
-
-            if (recentFiles.length === 0) {
-                this.log('No recently modified files - conversation may be inactive');
+            if (allFiles.length === 0) {
+                this.log('No main session files - conversation may be inactive');
                 return {
                     totalTokens: 0,
                     inputTokens: 0,
@@ -376,57 +416,46 @@ class ClaudeDataLoader {
                 };
             }
 
-            // One summary per recent transcript (already newest-first).
-            const sessions = [];
-            for (const fileInfo of recentFiles) {
-                try {
-                    const content = await fs.readFile(fileInfo.path, 'utf-8');
-                    const lines = splitLines(content.trim());
+            // Live = written inside the window. Show the LARGEST live session
+            // (max cache_read) - concurrent sub-agent work leaves several mains
+            // live at once and we want the heavy orchestrator, not a small
+            // sub-task.
+            const liveCutoff = Date.now() - windowMs;
+            const liveFiles = allFiles.filter(f => f.modified >= liveCutoff);
+            this.log(`${liveFiles.length} live session file(s) within ${Math.round(windowMs / 60000)}min (of ${allFiles.length} total)`);
 
-                    // Parse from end to find last assistant message with cache data
-                    for (let i = lines.length - 1; i >= 0; i--) {
-                        try {
-                            const entry = JSON.parse(lines[i]);
+            const liveSessions = [];
+            for (const f of liveFiles) {
+                const s = await readSessionUsage(f.path, (m) => this.log(m));
+                if (s) liveSessions.push(s);
+            }
 
-                            if (entry.type === 'assistant' && entry.message?.usage) {
-                                const usage = entry.message.usage;
-                                const cacheRead = usage.cache_read_input_tokens || 0;
+            let { active, activeSessionCount } = selectActiveSession(liveSessions);
+            let agedOut = false;
 
-                                if (cacheRead > 0) {
-                                    const model = entry.message?.model;
-                                    sessions.push({
-                                        file: path.basename(fileInfo.path),
-                                        cacheRead,
-                                        cacheCreation: usage.cache_creation_input_tokens || 0,
-                                        messageCount: lines.length,
-                                        model: (model && model !== '<synthetic>') ? model : null,
-                                    });
-                                    break;
-                                }
-                            }
-                        } catch (parseError) {
-                            continue;
-                        }
+            if (!active) {
+                // Nothing live with usage. Fall back to the most-recent session
+                // overall so the gauge shows the last-known context, not a blank.
+                for (const f of allFiles) {
+                    const s = await readSessionUsage(f.path, (m) => this.log(m));
+                    if (s) {
+                        active = s;
+                        activeSessionCount = 1;
+                        agedOut = true;
+                        break;
                     }
-                } catch (readError) {
-                    this.log(`Error reading ${path.basename(fileInfo.path)}: ${readError.message}`);
-                    continue;
                 }
             }
 
-            const { active, activeSessionCount } = selectActiveSession(sessions);
             const modelIds = active && active.model ? [active.model] : [];
 
             if (active) {
                 const resolvedLimit = getTokenLimit(modelIds, active.cacheRead);
-                this.log(`Found ${activeSessionCount} active session(s), showing the active (most recent):`);
-                this.log(`   File: ${active.file}`);
-                this.log(`   Models detected: ${modelIds.join(', ') || 'none'}`);
-                this.log(`   Context window: ${resolvedLimit.toLocaleString()} tokens`);
-                this.log(`   Cache creation: ${active.cacheCreation.toLocaleString()}`);
-                this.log(`   Cache read: ${active.cacheRead.toLocaleString()}`);
-                this.log(`   Session total (cache_read): ${active.cacheRead.toLocaleString()} tokens`);
-                this.log(`   Percentage: ${((active.cacheRead / resolvedLimit) * 100).toFixed(2)}%`);
+                const pct = ((active.cacheRead / resolvedLimit) * 100).toFixed(2);
+                this.log(`Showing ${agedOut ? 'latest aged-out' : 'largest live'} session: ${active.file}`);
+                this.log(`   Models: ${modelIds.join(', ') || 'none'} | Window: ${resolvedLimit.toLocaleString()} | cache_read: ${active.cacheRead.toLocaleString()} (${pct}%)`);
+            } else {
+                this.log('No session with usage - inactive');
             }
 
             return {
