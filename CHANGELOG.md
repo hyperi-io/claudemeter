@@ -1,3 +1,10 @@
+## [2.4.11](https://github.com/hyperi-io/claudemeter/compare/v2.4.10...v2.4.11) (2026-06-11)
+
+
+### Bug Fixes
+
+* add session hard deck and 10min live window ([d8c9b0f](https://github.com/hyperi-io/claudemeter/commit/d8c9b0f4cc598649bdd1170d16afe7cea5f9ebf4))
+
 ## [2.4.10](https://github.com/hyperi-io/claudemeter/compare/v2.4.9...v2.4.10) (2026-06-11)
 
 
