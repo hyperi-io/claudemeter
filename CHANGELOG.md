@@ -1,3 +1,13 @@
+## [2.4.9](https://github.com/hyperi-io/claudemeter/compare/v2.4.8...v2.4.9) (2026-06-11)
+
+
+### Bug Fixes
+
+* dash spaces in workspace path for Tk gauge ([885562a](https://github.com/hyperi-io/claudemeter/commit/885562aaa075a667b9076303814cc3445a860e60)), closes [#43](https://github.com/hyperi-io/claudemeter/issues/43)
+* detect 1M context window for Fable 5 ([113d13d](https://github.com/hyperi-io/claudemeter/commit/113d13da706b47a26f900e73419ffa9943f1e3d0))
+* gate Tk rot on window size not the profile ([03466a2](https://github.com/hyperi-io/claudemeter/commit/03466a246a3412df0e5a9d6fadb9c503903700b4))
+* Tk gauge follows the active conversation ([a10c2cc](https://github.com/hyperi-io/claudemeter/commit/a10c2cc55d6f986b158b1c05ca95f56ba2aec972))
+
 ## [2.4.8](https://github.com/hyperi-io/claudemeter/compare/v2.4.7...v2.4.8) (2026-06-10)
 
 
