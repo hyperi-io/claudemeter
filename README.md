@@ -268,6 +268,13 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 - **Range**: `0-2000000`
 - **Description**: Context window token limit override. Set to `0` (default) to auto-detect from Claude Code's model selection. Set manually to force a specific limit.
 
+### `claudemeter.sessionWindowMinutes`
+
+- **Type**: Number
+- **Default**: `15`
+- **Minimum**: `1`
+- **Description**: How recently a Claude session must have been written (minutes) to count as live. The Tk gauge shows the largest live session's context, so concurrent sub-agent work reflects the heavy orchestrator rather than a small sub-task. If nothing is live in this window but older sessions exist, the most-recent one's last value is shown rather than blanking.
+
 ### `claudemeter.tokenOnlyMode`
 
 - **Type**: Boolean
