@@ -1,3 +1,10 @@
+## [2.4.13](https://github.com/hyperi-io/claudemeter/compare/v2.4.12...v2.4.13) (2026-06-14)
+
+
+### Bug Fixes
+
+* **login:** carry device cookies, reactive expiry ([eede401](https://github.com/hyperi-io/claudemeter/commit/eede401a6a45bcb3b458fc1112a9ccb9403ed0cc))
+
 ## [2.4.12](https://github.com/hyperi-io/claudemeter/compare/v2.4.11...v2.4.12) (2026-06-14)
 
 
