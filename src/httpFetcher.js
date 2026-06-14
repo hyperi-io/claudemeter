@@ -192,6 +192,27 @@ function isSessionCandidate({ sessionKeyValue, baselineValue, requireValueChange
     return valueChanged || onAppPage;
 }
 
+// Device/anti-abuse cookies we carry between logins so a repeated login looks
+// like a returning device instead of a fresh bot (which trips claude.ai's rate
+// protection). All device/IP-scoped, NONE account-scoped -- safe to keep across
+// account switches. Deliberately excludes sessionKey/sessionKeyLC (account),
+// lastActiveOrg/activitySessionId/routingHint (session/org), __ssid/g_state/
+// ion-vk (auth/analytics that may carry identity).
+const DEVICE_COOKIE_NAMES = ['anthropic-device-id', 'cf_clearance', '__cf_bm', '_cfuvid'];
+
+// Pick the allowlisted, non-expired cookies to persist/re-inject. Pure.
+// Skipping expired cookies is hygiene (a dead cf_clearance is useless), NOT
+// session-expiry enforcement -- the account session is judged by the server.
+function selectDeviceCookies(cookies, nowSeconds) {
+    if (!Array.isArray(cookies)) {
+        return [];
+    }
+    return cookies.filter(c =>
+        c && DEVICE_COOKIE_NAMES.includes(c.name) &&
+        (!c.expires || c.expires < 0 || c.expires > nowSeconds)
+    );
+}
+
 // Login lock: simple file-based mutex to prevent multiple login windows
 const LOGIN_LOCK_FILE = path.join(PATHS.CONFIG_DIR, 'login-in-progress.lock');
 const LOGIN_LOCK_TTL = 5 * 60 * 1000; // 5 minutes
@@ -255,15 +276,49 @@ class ClaudeHttpFetcher {
         fileLog('Session cookie saved');
     }
 
-    hasExistingSession() {
-        const cookie = this._readCookie();
-        if (!cookie) return false;
-        // Check expiry if available
-        if (cookie.expires && cookie.expires <= Date.now() / 1000) {
-            fileLog('Session cookie expired');
-            return false;
+    // Device/anti-abuse cookies (NOT the account session). Best-effort -- read
+    // failures return [] and a write failure is logged but never blocks login.
+    _readDeviceCookies() {
+        try {
+            if (!fs.existsSync(PATHS.DEVICE_COOKIES_FILE)) {
+                return [];
+            }
+            const data = JSON.parse(fs.readFileSync(PATHS.DEVICE_COOKIES_FILE, 'utf-8'));
+            return Array.isArray(data) ? data : [];
+        } catch (error) {
+            fileLog(`Error reading device cookies: ${error.message}`);
+            return [];
         }
-        return true;
+    }
+
+    // Capture the allowlisted device cookies from the live login context so the
+    // next login carries them. Account cookies are filtered out by name.
+    async _saveDeviceCookies(context) {
+        try {
+            const cookies = await context.cookies(CLAUDE_URLS.BASE);
+            const keep = selectDeviceCookies(cookies, Date.now() / 1000);
+            if (!keep.length) {
+                return;
+            }
+            const dir = path.dirname(PATHS.DEVICE_COOKIES_FILE);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(PATHS.DEVICE_COOKIES_FILE, JSON.stringify(keep, null, 2), { mode: 0o600 });
+            fileLog(`Saved ${keep.length} device cookie(s): ${keep.map(c => c.name).join(', ')}`);
+        } catch (err) {
+            fileLog(`Device-cookie save failed (non-fatal): ${err.message}`);
+        }
+    }
+
+    hasExistingSession() {
+        // Presence-based only. We do NOT judge expiry from the local clock --
+        // a stored timestamp can be wrong (clock skew, server-extended session,
+        // 1-year paste-cookie default) and pre-emptively skipping the fetch
+        // cries "logged out" while the server would still accept the cookie.
+        // Expiry is reactive: the server's 401 -> SESSION_EXPIRED on the next
+        // fetch is the only authority.
+        return !!this._readCookie();
     }
 
     clearSession({ clearLoginBrowserCache = false } = {}) {
@@ -432,10 +487,10 @@ class ClaudeHttpFetcher {
             throw new Error('NO_SESSION');
         }
 
-        // Check cookie expiry
-        if (cookie.expires && cookie.expires <= Date.now() / 1000) {
-            throw new Error('SESSION_EXPIRED');
-        }
+        // No local-clock expiry pre-check. Expiry is reactive: we send the
+        // cookie and let the server decide. _fetchEndpoint maps a genuine 401
+        // (account_session_invalid / permission_error) to SESSION_EXPIRED. A
+        // stale stored timestamp must never pre-empt a still-valid session.
 
         // One retry on SESSION_EXPIRED: if the first attempt fails with
         // SESSION_EXPIRED, the cached web org UUID may be stale against a
@@ -720,6 +775,19 @@ class ClaudeHttpFetcher {
                 }
             }
 
+            // Re-inject saved device cookies so this popup looks like a returning
+            // device (reduces rate/abuse blocking). Device-scoped, not account-
+            // scoped, so it never auto-logs-in a prior account. Best-effort.
+            const deviceCookies = selectDeviceCookies(this._readDeviceCookies(), Date.now() / 1000);
+            if (deviceCookies.length) {
+                try {
+                    await context.addCookies(deviceCookies);
+                    fileLog(`Pre-injected ${deviceCookies.length} device cookie(s): ${deviceCookies.map(c => c.name).join(', ')}`);
+                } catch (err) {
+                    fileLog(`Device-cookie pre-injection failed (non-fatal): ${err.message}`);
+                }
+            }
+
             // domcontentloaded, not networkidle -- claude.ai SPA never idles.
             // A code login routes to /new in-document, so a networkidle goto
             // blocks the whole timeout and the cookie loop never starts (hang
@@ -805,6 +873,10 @@ class ClaudeHttpFetcher {
                     const creds = readCredentials();
                     this._saveCookie(loginResult.sessionKey, loginResult.expires, creds?.orgId);
                 }
+
+                // Capture device cookies while the context is still open (the
+                // finally below closes it) so the next login carries them.
+                await this._saveDeviceCookies(context);
 
                 vscode.window.withProgress(
                     {
@@ -1207,4 +1279,5 @@ module.exports = {
     findChrome,
     selectMembership,
     isSessionCandidate,
+    selectDeviceCookies,
 };

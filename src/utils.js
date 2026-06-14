@@ -52,6 +52,10 @@ const CONFIG_DIR = getConfigDir();
 const PATHS = {
     CONFIG_DIR: CONFIG_DIR,
     SESSION_COOKIE_FILE: path.join(CONFIG_DIR, 'session-cookie.json'),
+    // Device/anti-abuse cookies (anthropic-device-id, cf_clearance) re-injected
+    // into the login popup so repeated logins look like a returning device.
+    // Device-scoped, NOT account-scoped -- kept across account switches.
+    DEVICE_COOKIES_FILE: path.join(CONFIG_DIR, 'device-cookies.json'),
     SESSION_DATA_FILE: path.join(CONFIG_DIR, 'session-data.json'),
     USAGE_HISTORY_FILE: path.join(CONFIG_DIR, 'usage-history.json'),
     // Legacy scraper paths (used when useLegacyScraper is enabled)
