@@ -1,3 +1,10 @@
+## [2.4.12](https://github.com/hyperi-io/claudemeter/compare/v2.4.11...v2.4.12) (2026-06-14)
+
+
+### Bug Fixes
+
+* **login:** code login hangs on networkidle goto ([f4a1521](https://github.com/hyperi-io/claudemeter/commit/f4a152115927b4b770b8ae0e99d3557fb4764e72))
+
 ## [2.4.11](https://github.com/hyperi-io/claudemeter/compare/v2.4.10...v2.4.11) (2026-06-11)
 
 
