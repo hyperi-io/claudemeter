@@ -229,17 +229,17 @@ const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 // (issue #37).
 //
 // Flags chosen for: shared-memory fallback (--disable-dev-shm-usage),
-// automation-detection bypass (--disable-blink-features=
-// AutomationControlled), explicit window-size (--window-size: without
-// it Chrome opens at its default ~640x480 even when viewport is set,
-// producing the "weird tiny window" reported in #37), and quieter
-// user experience (--disable-session-crashed-bubble, --disable-infobars,
-// --noerrdialogs, --hide-crash-restore-bubble, --no-first-run,
-// --no-default-browser-check).
+// explicit window-size (--window-size: without it Chrome opens at its
+// default ~640x480 even when viewport is set -- the "weird tiny window"
+// in #37), and quieter UX (--disable-session-crashed-bubble,
+// --disable-infobars, --noerrdialogs, --hide-crash-restore-bubble,
+// --no-first-run, --no-default-browser-check).
+//
+// Dropped --disable-blink-features=AutomationControlled: it tripped
+// Chromium's bad-flag banner. webdriver masking now via addInitScript.
 function BROWSER_LAUNCH_ARGS(remoteDebuggingPort) {
     return [
         '--disable-dev-shm-usage',
-        '--disable-blink-features=AutomationControlled',
         '--disable-session-crashed-bubble',
         '--disable-infobars',
         '--noerrdialogs',

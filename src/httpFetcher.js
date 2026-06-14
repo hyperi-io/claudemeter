@@ -690,6 +690,13 @@ class ClaudeHttpFetcher {
             // reuse it rather than spawning a second one.
             page = context.pages()[0] || await context.newPage();
 
+            // Mask navigator.webdriver -- replaces the AutomationControlled
+            // launch flag that tripped Chromium's bad-flag banner. Before nav.
+            await context.addInitScript(() => {
+                // eslint-disable-next-line no-undef -- runs in the browser
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            });
+
             // Pre-inject the saved sessionKey cookie if we have one. When the
             // cookie is still valid (common case: misclassified SESSION_EXPIRED,
             // transient server glitch) Claude's login page redirects straight
@@ -713,8 +720,13 @@ class ClaudeHttpFetcher {
                 }
             }
 
+            // domcontentloaded, not networkidle -- claude.ai SPA never idles.
+            // A code login routes to /new in-document, so a networkidle goto
+            // blocks the whole timeout and the cookie loop never starts (hang
+            // on a valid session). Magic-link's full nav hid it. Just needs
+            // the page reachable -- the loop watches the cookie jar.
             await page.goto(CLAUDE_URLS.LOGIN, {
-                waitUntil: 'networkidle',
+                waitUntil: 'domcontentloaded',
                 timeout: TIMEOUTS.INITIAL_LOGIN_PAGE_LOAD,
             });
 
@@ -757,7 +769,7 @@ class ClaudeHttpFetcher {
                         { modal: false }
                     );
                     // Navigate back to login page for another attempt
-                    await page.goto(CLAUDE_URLS.LOGIN, { waitUntil: 'networkidle', timeout: TIMEOUTS.INITIAL_LOGIN_PAGE_LOAD });
+                    await page.goto(CLAUDE_URLS.LOGIN, { waitUntil: 'domcontentloaded', timeout: TIMEOUTS.INITIAL_LOGIN_PAGE_LOAD });
                     const retryResult = await vscode.window.withProgress(
                         {
                             location: vscode.ProgressLocation.Notification,

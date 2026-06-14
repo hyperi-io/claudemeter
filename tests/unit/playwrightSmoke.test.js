@@ -52,13 +52,18 @@ describe('BROWSER_UA + BROWSER_LAUNCH_ARGS factory', () => {
 
     it('BROWSER_LAUNCH_ARGS includes the load-bearing flags', () => {
         const args = BROWSER_LAUNCH_ARGS(0);
-        // The flags that justify a shared factory: automation-detection
-        // bypass, explicit window size (so Chrome doesn't open tiny),
-        // shared-memory fallback, quiet first-run UX.
-        expect(args).toContain('--disable-blink-features=AutomationControlled');
+        // The flags that justify a shared factory: explicit window size (so
+        // Chrome doesn't open tiny), shared-memory fallback, quiet first-run UX.
         expect(args).toContain('--disable-dev-shm-usage');
         expect(args).toContain('--no-first-run');
         expect(args.some(a => a.startsWith('--window-size='))).toBe(true);
+    });
+
+    it('BROWSER_LAUNCH_ARGS does not pass the AutomationControlled bad-flag', () => {
+        const args = BROWSER_LAUNCH_ARGS(0);
+        // It tripped Chromium's "unsupported command-line flag" banner.
+        // webdriver masking moved to context.addInitScript in the login flow.
+        expect(args).not.toContain('--disable-blink-features=AutomationControlled');
     });
 
     it('BROWSER_LAUNCH_ARGS no longer disables the Chrome sandbox', () => {
