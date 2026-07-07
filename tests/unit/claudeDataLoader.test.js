@@ -102,3 +102,16 @@ describe('selectActiveSession', () => {
         expect(selectActiveSession(null).activeSessionCount).toBe(0);
     });
 });
+
+describe('getCurrentSessionUsage - no workspace (empty VS Code window)', () => {
+    // Regression: an empty window (no workspace) must NOT show another
+    // project's context. With no workspace the Tk gauge stays blank - the
+    // loader returns inactive early, before any filesystem/global search.
+    it('returns inactive without touching the filesystem', async () => {
+        const loader = new ClaudeDataLoader(null, () => {});
+        const usage = await loader.getCurrentSessionUsage();
+        expect(usage.isActive).toBe(false);
+        expect(usage.totalTokens).toBe(0);
+        expect(usage.cacheReadTokens).toBe(0);
+    });
+});

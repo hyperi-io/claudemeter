@@ -49,15 +49,6 @@ module.exports = [
         },
     },
     {
-        // Puppeteer scripts run in browser context
-        files: ['src/scraper.js'],
-        languageOptions: {
-            globals: {
-                document: 'readonly',
-            },
-        },
-    },
-    {
         // Vitest test files use ESM-style imports (`import { describe, ... } from 'vitest'`)
         // alongside CommonJS require() for local modules.
         files: ['tests/**/*.js', 'tests/**/*.test.js'],

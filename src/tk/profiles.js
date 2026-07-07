@@ -16,9 +16,9 @@
 //                verbatim Anthropic detection strings are observable.
 //
 //                'enterprise' has rotEnabled: false because the typical
-//                500K window means rotDeep (500K) and rotLight (300K)
-//                tiers are unreachable / no-ops - error fires first at
-//                ~462K. Honest beats inert.
+//                500K window makes rotDeep (650K) unreachable and leaves
+//                rot largely inert - the auto-compact/error runway fires
+//                first. Honest beats inert.
 //
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED
@@ -30,10 +30,18 @@ const STANDARD_RUNWAY = Object.freeze({
     errorRunwayTokens:     5_000,
 });
 
+// Rot tiers calibrated for Opus 4.8's long-context curve (see
+// docs/context-rot.md, re-check 7 Jul 2026). 4.8 degrades ~half as fast as
+// 4.7 across 256K->1M (retains ~79% of its 256K GraphWalks BFS at 1M, vs
+// 4.7's ~52%), so the blue tiers sit later than the earlier 300K/500K
+// defaults - which were calibrated on the steeper 4.7-era curve and fired
+// while 4.8 at 256K still scores 85.9% BFS. Held toward the CAG-biased-early
+// end of the doc's 4.8-reasoned bands (400-550K / 650-800K). Still a
+// judgement call - no third-party binned 4.8 data exists in the 256K->1M gap.
 const STANDARD_ROT = Object.freeze({
     rotEnabled:       true,
-    rotLightTokens:  300_000,
-    rotDeepTokens:   500_000,
+    rotLightTokens:  400_000,
+    rotDeepTokens:   650_000,
 });
 
 const NO_ROT = Object.freeze({ rotEnabled: false });
@@ -71,7 +79,7 @@ const PROFILES = Object.freeze({
 
     enterprise: Object.freeze({
         name: 'enterprise',
-        description: 'Anthropic Enterprise — typical 500K window. Rot tiers disabled (rotDeep at 500K is unreachable on a 500K window).',
+        description: 'Anthropic Enterprise — typical 500K window. Rot tiers disabled (rotDeep at 650K is unreachable on a 500K window).',
         thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...NO_ROT }),
     }),
 

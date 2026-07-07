@@ -351,4 +351,6 @@ module.exports = {
     SessionTracker,
     atomicWriteJson,
     mergeSessionData,
+    acquireFileLock,
+    releaseFileLock,
 };

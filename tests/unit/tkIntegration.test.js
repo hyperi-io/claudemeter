@@ -11,14 +11,14 @@ const { TIER_RECOMMENDATIONS } = require('../../src/tk/recommendations');
 describe('tk integration — detection → profile → level → colour → recommendation', () => {
     beforeEach(() => resetUnknownWarning());
 
-    it('Max-20x at 600K used on 1M → rotDeep + rot blue + rot recommendation', () => {
+    it('Max-20x at 700K used on 1M → rotDeep + rot blue + rot recommendation', () => {
         const profile = selectProfile({
             subscriptionType: 'max',
             rateLimitTier: 'default_claude_max_20x',
         });
         expect(profile.name).toBe('max-20x');
 
-        const level = getTkLevel(600_000, profile, 1_000_000);
+        const level = getTkLevel(700_000, profile, 1_000_000);
         expect(level).toBe('rotDeep');
 
         const colour = TIER_COLORS[level];
@@ -28,19 +28,19 @@ describe('tk integration — detection → profile → level → colour → reco
         expect(colour.hex).toMatch(/^#[0-9a-f]{6}$/i);
 
         const text = TIER_RECOMMENDATIONS[level];
-        expect(text).toMatch(/Quality drops sharply/);
-        expect(text).toMatch(/on your terms/);
+        expect(text).toMatch(/Multi-step recall slipping/);
+        expect(text).toMatch(/keep control of what stays/);
     });
 
-    it('Max-20x at 350K used on 1M → rotLight + drift recommendation', () => {
+    it('Max-20x at 450K used on 1M → rotLight + drift recommendation', () => {
         const profile = selectProfile({
             subscriptionType: 'max',
             rateLimitTier: 'default_claude_max_20x',
         });
-        const level = getTkLevel(350_000, profile, 1_000_000);
+        const level = getTkLevel(450_000, profile, 1_000_000);
         expect(level).toBe('rotLight');
         expect(TIER_COLORS[level].theme).toBe('claudemeter.rotLight');
-        expect(TIER_RECOMMENDATIONS[level]).toMatch(/Recall starts to drift/);
+        expect(TIER_RECOMMENDATIONS[level]).toMatch(/Recall starting to drift/);
     });
 
     it('Max-5x at 962K used on 1M → error + imminent recommendation', () => {
@@ -91,12 +91,12 @@ describe('tk integration — detection → profile → level → colour → reco
         expect(level).toBe('error');
     });
 
-    it('Enterprise at 350K used on 500K -> rotLight (window-gated, profile rotEnabled ignored)', () => {
+    it('Enterprise at 420K used on 500K -> rotLight (window-gated, profile rotEnabled ignored)', () => {
         const profile = selectProfile({ orgType: 'Enterprise' });
         expect(profile.name).toBe('enterprise');
         expect(profile.thresholds.rotEnabled).toBe(false);  // flag off, but a >200K window still rots
 
-        const level = getTkLevel(350_000, profile, 500_000);
+        const level = getTkLevel(420_000, profile, 500_000);
         expect(level).toBe('rotLight');
     });
 

@@ -12,7 +12,7 @@
 //
 // Caller shape:
 //   composeTooltip({
-//     usageData,                   // from httpFetcher
+//     usageData,                   // from oauthFetcher
 //     sessionData,                 // from sessionTracker
 //     credentialsInfo,             // from credentialsReader
 //     activityStats,               // from activityMonitor
@@ -20,6 +20,8 @@
 //     activityQuipOverride,        // optional override for activity status line
 //     happyHourState,              // { active, icon, endsAt } from happyHour resolver
 //     extensionVersion,            // from vscode.extensions.getExtension(...)
+//     repositoryUrl,               // manifest repo URL, footer version links to it
+//     brandIconDataUri,            // tiny HyperI hound data URI, footer brand link
 //     claudeCodeSelectedModel,     // from workspace config
 //     tokensInfo,                  // { current, limit, knownLimit, recommendation }
 //     config: {                    // pre-resolved config values
@@ -36,6 +38,28 @@ const {
 } = require('./utils');
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
+
+// The activity quip is free-text and can be long. A VS Code markdown tooltip
+// has no width control - its widest line sets the whole tooltip's width - so an
+// unwrapped quip stretches the tooltip. Hard-wrap it to roughly the width of
+// the normal text lines (e.g. "Resets Wednesday 8 July at 12:52 pm"). Just a
+// quip, so an approximate character column is fine.
+const QUIP_WRAP_COLUMN = 42;
+
+// Greedy word-wrap to at most `width` chars per line, breaking only on spaces
+// (a single word longer than width stays whole rather than chopped). Returns
+// an array of lines.
+function wrapText(text, width) {
+    const lines = [];
+    let line = '';
+    for (const word of String(text).split(/\s+/).filter(Boolean)) {
+        if (!line) line = word;
+        else if (line.length + 1 + word.length <= width) line += ' ' + word;
+        else { lines.push(line); line = word; }
+    }
+    if (line) lines.push(line);
+    return lines;
+}
 
 function composeTooltip(state) {
     const lines = [];
@@ -275,11 +299,13 @@ function renderActivityQuip(state) {
     // the caller can supply a thematic line that REPLACES the cute
     // activity quip - so "He's dead, Jim." displaces the usual
     // chuckle rather than appearing alongside it.
-    if (activityQuipOverride) {
-        return ['', `*${activityQuipOverride}*`];
-    }
-    if (!activityStats || !activityStats.description) return [];
-    return ['', `*${activityStats.description.quirky}*`];
+    const quip = activityQuipOverride
+        || (activityStats && activityStats.description && activityStats.description.quirky);
+    if (!quip) return [];
+    // Wrap to a fixed column so a long quip can't stretch the tooltip width.
+    // composeTooltip joins array elements with a markdown hard break, so each
+    // emphasised line renders on its own line.
+    return ['', ...wrapText(quip, QUIP_WRAP_COLUMN).map((line) => `*${line}*`)];
 }
 
 function renderPlatformBlock(state) {
@@ -293,17 +319,28 @@ function renderPlatformBlock(state) {
     return ['', ...platformTooltipLines];
 }
 
+// HyperI brand link on the footer version line. Hardcoded for now (the
+// manifest carries no company URL); revisit if a homepage field is added.
+const HYPERI_URL = 'https://hyperi.io';
+
 function renderFooter(state) {
-    const { usageData, extensionVersion, config } = state;
+    const { usageData, extensionVersion, repositoryUrl, brandIconDataUri, config } = state;
     const lines = [''];
     if (usageData?.timestamp) {
         const ts = usageData.timestamp instanceof Date ? usageData.timestamp : new Date(usageData.timestamp);
         lines.push(`Updated ${ts.toLocaleTimeString(undefined, { hour12: !config?.use24HourTime })}`);
     }
     if (extensionVersion) {
-        lines.push(`Claudemeter v${extensionVersion}`);
+        const label = `Claudemeter v${extensionVersion}`;
+        // Version text links to the source repo when we have a URL; plain
+        // text otherwise.
+        const version = repositoryUrl ? `[${label}](${repositoryUrl})` : label;
+        // Tiny HyperI hound ahead of the version, linking to hyperi.io. The
+        // clickable image is a data URI (works identically on every platform);
+        // omitted if the asset couldn't be embedded.
+        const brand = brandIconDataUri ? `[![HyperI](${brandIconDataUri})](${HYPERI_URL}) ` : '';
+        lines.push(`${brand}${version}`);
     }
-    lines.push('[Click to resync account](command:claudemeter.resyncAccount)');
     return lines;
 }
 

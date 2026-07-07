@@ -223,6 +223,20 @@ describe('composeTooltip - activity quip', () => {
         expect(out).toMatch(/\*He's dead, Jim\.\*/);
         expect(out).not.toMatch(/Tokens: bodacious!/);
     });
+
+    it('wraps a long quip so no single line drives the tooltip width', () => {
+        const long = 'The truth is out there but the tokens are right here and there are rather a lot of them today';
+        const out = composeTooltip({
+            config: baseConfig,
+            activityStats: { description: { quirky: long } },
+        });
+        // italic quip lines are single-asterisk (bold headers are double)
+        const quipLines = out.split('  \n').filter((l) => l.startsWith('*') && !l.startsWith('**'));
+        expect(quipLines.length).toBeGreaterThan(1);
+        for (const line of quipLines) {
+            expect(line.replace(/^\*|\*$/g, '').length).toBeLessThanOrEqual(42);
+        }
+    });
 });
 
 describe('composeTooltip - service status lines', () => {
@@ -236,17 +250,32 @@ describe('composeTooltip - service status lines', () => {
 });
 
 describe('composeTooltip - footer', () => {
-    it('includes version when provided', () => {
+    it('renders whatever extensionVersion is passed in the footer', () => {
+        // Synthetic placeholder - the real version is read from package.json by
+        // the caller and passed in; composeTooltip never hardcodes a version.
         const out = composeTooltip({
             config: baseConfig,
-            extensionVersion: '2.3.4',
+            extensionVersion: '0.0.0-test',
         });
-        expect(out).toMatch(/Claudemeter v2\.3\.4/);
+        expect(out).toMatch(/Claudemeter v0\.0\.0-test/);
     });
 
-    it('always includes the resync link', () => {
+    it('links the footer version to the repo when a URL is provided', () => {
+        const out = composeTooltip({
+            config: baseConfig,
+            extensionVersion: '0.0.0-test',
+            repositoryUrl: 'https://github.com/hyperi-io/claudemeter',
+        });
+        expect(out).toMatch(/\[Claudemeter v0\.0\.0-test\]\(https:\/\/github\.com\/hyperi-io\/claudemeter\)/);
+    });
+
+    it('does not include the removed resync-account link', () => {
+        // The browserless OAuth switch deleted claudemeter.resyncAccount; the
+        // footer must not render a dead command link. Login is offered via the
+        // status-bar click / the not-logged-in error tooltip instead.
         const out = composeTooltip({ config: baseConfig });
-        expect(out).toMatch(/Click to resync account/);
+        expect(out).not.toMatch(/resync/i);
+        expect(out).not.toMatch(/command:claudemeter\.resyncAccount/);
     });
 });
 

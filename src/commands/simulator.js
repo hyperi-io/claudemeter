@@ -19,7 +19,6 @@
 
 const vscode = require('vscode');
 const simulator = require('../simulator');
-const { CONFIG_NAMESPACE } = require('../utils');
 
 // Shared validator for 0..100 inputs (blank clears).
 const percentValidator = (s) =>
@@ -105,21 +104,6 @@ function registerSimulatorCommands(context, performFetch) {
             id: 'claudemeter.simulate.creditsPercent',
             prompt: 'Force credits % (0-100, blank to clear). Requires real monthlyCredits data and claudemeter.statusBar.showCredits=true.',
             setter: simulator.setCreditsPercent,
-            performFetch,
-        }),
-        quickPickCommand({
-            id: 'claudemeter.simulate.legacyScraper',
-            items: ['off (HTTP fetcher)', 'on (legacy browser scraper)'],
-            placeHolder: 'Toggle claudemeter.useLegacyScraper for this workspace',
-            onPick: async (choice) => {
-                const enable = choice.startsWith('on');
-                await vscode.workspace.getConfiguration(CONFIG_NAMESPACE).update(
-                    'useLegacyScraper', enable, vscode.ConfigurationTarget.Workspace
-                );
-                vscode.window.showInformationMessage(
-                    `Legacy scraper ${enable ? 'enabled' : 'disabled'} for this workspace.`
-                );
-            },
             performFetch,
         }),
         quickPickCommand({

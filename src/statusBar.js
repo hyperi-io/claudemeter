@@ -7,6 +7,8 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
 const vscode = require('vscode');
+const fs = require('fs');
+const path = require('path');
 const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, getCurrencySymbol, getUse24HourTime } = require('./utils');
 const {
     STATUS_PAGE_URL,
@@ -31,6 +33,43 @@ const { ROT_GRADIENT } = require('./tk/colorMap');
 const { TIER_RECOMMENDATIONS } = require('./tk/recommendations');
 
 const LABEL_TEXT = 'Claude';
+
+// Weekly reset time switches from hour to minute precision once you're within
+// 24h of reset AND at/above this weekly-usage %. A niche display-precision
+// detail, kept as a constant rather than a user setting.
+const WEEKLY_MINUTE_PRECISION_PCT = 75;
+
+// Small PNGs embedded into the tooltip as base64 data URIs. VS Code markdown
+// tooltips render PNG (not SVG) images, and only inline-data / trusted URIs.
+// Read once and cached: the assets never change at runtime and the tooltip
+// rebuilds constantly. Returns '' if an asset is missing so the tooltip
+// degrades (drops the image) rather than breaking. Both PNGs are pre-sized
+// because markdown has no width control - native px IS the display width.
+// main = dist/extension.js, so assets/ sits one level up from the bundle.
+const assetUriCache = new Map(); // filename -> data URI ('' if unavailable)
+function assetDataUri(filename) {
+    if (assetUriCache.has(filename)) return assetUriCache.get(filename);
+    let uri = '';
+    try {
+        const b64 = fs.readFileSync(path.join(__dirname, '..', 'assets', filename)).toString('base64');
+        uri = `data:image/png;base64,${b64}`;
+    } catch { /* missing asset -> '' */ }
+    assetUriCache.set(filename, uri);
+    return uri;
+}
+
+// Slim claudemeter banner header (assets/logo-tooltip.png, generate.py -w 158).
+// A single markdown hard break (not a blank line) so the account line sits
+// tight under the banner rather than a paragraph gap below it.
+function getTooltipLogoHeader() {
+    const uri = assetDataUri('logo-tooltip.png');
+    return uri ? `![claudemeter](${uri})  \n` : '';
+}
+
+// Tiny tertiary HyperI hound for the footer brand link (assets/hyperi-hound.png).
+function getBrandIconDataUri() {
+    return assetDataUri('hyperi-hound.png');
+}
 
 /**
  * Return colorMode, consulting the simulator override first.
@@ -1013,10 +1052,9 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     if (usageData && usageData.usagePercentWeek !== undefined) {
         weeklyPercent = usageData.usagePercentWeek;
-        const weeklyPrecisionThreshold = config.get('statusBar.weeklyPrecisionThreshold', 75);
         const resetTimeStr = usageData.resetTimeWeek || '';
         const isWithin24hrs = !resetTimeStr.includes('d');
-        const needsMinutePrecision = isWithin24hrs && weeklyPercent >= weeklyPrecisionThreshold;
+        const needsMinutePrecision = isWithin24hrs && weeklyPercent >= WEEKLY_MINUTE_PRECISION_PCT;
         const weeklyTimeFormat = needsMinutePrecision
             ? { hour: 'numeric', minute: '2-digit' }
             : { hour: 'numeric' };
@@ -1030,7 +1068,14 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     }
 
     // Compose tooltip via the pure composer.
-    const extVersion = vscode.extensions.getExtension('HyperSec.claudemeter')?.packageJSON?.version;
+    const extPackageJson = vscode.extensions.getExtension('HyperSec.claudemeter')?.packageJSON;
+    const extVersion = extPackageJson?.version;
+    // Repo URL from the manifest (no hardcoded string) - normalise the
+    // package.json "git+https://....git" form to a plain browsable URL.
+    const repositoryUrl = (extPackageJson?.repository?.url || extPackageJson?.homepage || '')
+        .replace(/^git\+/, '')
+        .replace(/\.git$/, '')
+        .replace(/#.*$/, '');
     const platformTooltipLines = getServiceStatusTooltipLines();
 
     const markdownBody = composeTooltip({
@@ -1042,16 +1087,18 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         activityQuipOverride: getActivityQuipOverride(),
         happyHourState: resolveHappyHourState(),
         extensionVersion: extVersion,
+        repositoryUrl,
+        brandIconDataUri: getBrandIconDataUri(),
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
         tokensInfo,
         config: {
             tokenLimitOverride: config.get('tokenLimit', 0),
             use24HourTime: getUse24HourTime(),
-            weeklyPrecisionThreshold: config.get('statusBar.weeklyPrecisionThreshold', 75),
+            weeklyPrecisionThreshold: WEEKLY_MINUTE_PRECISION_PCT,
         },
     });
 
-    const markdown = new vscode.MarkdownString(markdownBody);
+    const markdown = new vscode.MarkdownString(getTooltipLogoHeader() + markdownBody);
     markdown.isTrusted = true;  // Enable clickable links
     markdown.supportThemeIcons = true;  // Render $(codicon-name) glyphs
     setAllTooltips(markdown);
@@ -1112,7 +1159,6 @@ function stopSpinner(webError = null, tokenError = null) {
             '**Actions**',
             '• Click to retry',
             '• Run "Claudemeter: Show Debug Output" for details',
-            '• Run "Claudemeter: Clear Session (Re-login)" to re-authenticate'
         ];
         const errorTooltip = new vscode.MarkdownString(errorLines.join('  \n'));
 
@@ -1126,24 +1172,27 @@ function stopSpinner(webError = null, tokenError = null) {
             statusBarItems.label.color = new vscode.ThemeColor('claudemeter.outageRed');
         }
     } else if (webError) {
-        const isLoginCancelled = webError.message.includes('Login cancelled');
-        const isTokenOnlyMode = webError.message.includes('token-only mode') ||
-                                config.get('tokenOnlyMode', false);
+        // tokenOnlyMode is NOT handled here: performFetch short-circuits before
+        // any web fetch when it's on, so webError is never set in that mode.
+        const isNotLoggedIn = webError.message.includes('Not logged into Claude Code');
+        const isAuthOverride = webError.message.includes('subscription usage unavailable');
 
         let errorLines;
-        if (isLoginCancelled || isTokenOnlyMode) {
+        if (isNotLoggedIn) {
             errorLines = [
-                '**Token-Only Mode**',
+                '**Not logged into Claude Code**',
                 '',
-                isLoginCancelled
-                    ? 'Login was cancelled. Showing Claude Code tokens only.'
-                    : 'Token-only mode enabled. Showing Claude Code tokens only.',
+                'Claudemeter reads Claude Code\'s login to show your usage.',
                 '',
-                'Claude.ai web usage (session/weekly limits) not available.',
+                '• **Click to log into Claude Code**',
+            ];
+        } else if (isAuthOverride) {
+            errorLines = [
+                '**Subscription usage unavailable**',
                 '',
-                '**Actions**',
-                '• **Click to retry login**',
-                '• Or enable `claudemeter.tokenOnlyMode` in settings to disable this message'
+                webError.message,
+                '',
+                'The local Tk context gauge still works.',
             ];
         } else {
             errorLines = [
@@ -1159,7 +1208,6 @@ function stopSpinner(webError = null, tokenError = null) {
                 '**Actions**',
                 '• Click to retry',
                 '• Run "Claudemeter: Show Debug Output" for details',
-                '• Run "Claudemeter: Clear Session (Re-login)" to re-authenticate'
             ];
         }
         const errorTooltip = new vscode.MarkdownString(errorLines.join('  \n'));

@@ -39,9 +39,9 @@ describe('getTkLevel — 200K window (Pro / Unknown profiles)', () => {
     });
 
     it('rot tiers do not fire on rotEnabled=false profile', () => {
-        // 300K used would exceed rotLight token threshold IF rot were enabled —
-        // pro profile has rotEnabled=false, so it goes straight to error.
-        // (300K > 162K error threshold on a 200K window — error wins anyway.)
+        // Rot is window-gated (>200K); this pro profile is on a 200K window so
+        // rot never fires regardless. 300K on a 200K window is past the error
+        // threshold (162K) anyway, so error wins.
         expect(getTkLevel(300_000, profile, window)).toBe('error');
     });
 });
@@ -54,16 +54,16 @@ describe('getTkLevel — 1M window (Max profiles)', () => {
         expect(getTkLevel(50_000, profile, window)).toBe('normal');
     });
 
-    it('rotLight threshold (300K) → rotLight', () => {
-        expect(getTkLevel(300_000, profile, window)).toBe('rotLight');
-    });
-
-    it('between rotLight and rotDeep (400K) → rotLight', () => {
+    it('rotLight threshold (400K) → rotLight', () => {
         expect(getTkLevel(400_000, profile, window)).toBe('rotLight');
     });
 
-    it('rotDeep threshold (500K) → rotDeep', () => {
-        expect(getTkLevel(500_000, profile, window)).toBe('rotDeep');
+    it('between rotLight and rotDeep (500K) → rotLight', () => {
+        expect(getTkLevel(500_000, profile, window)).toBe('rotLight');
+    });
+
+    it('rotDeep threshold (650K) → rotDeep', () => {
+        expect(getTkLevel(650_000, profile, window)).toBe('rotDeep');
     });
 
     it('between rotDeep and warning (900K) → rotDeep', () => {
@@ -88,8 +88,8 @@ describe('getTkLevel — 500K window (Enterprise profile)', () => {
     const profile = PROFILES.enterprise;  // 500K window is >200K, so rot applies (window-gated, not profile)
     const window = 500_000;
 
-    it('400K used → rotLight (rot floor 300K, yellow at 447K)', () => {
-        expect(getTkLevel(400_000, profile, window)).toBe('rotLight');
+    it('420K used → rotLight (rot floor 400K, yellow at 447K)', () => {
+        expect(getTkLevel(420_000, profile, window)).toBe('rotLight');
     });
 
     it('warning threshold (447K) → warning', () => {
@@ -100,8 +100,8 @@ describe('getTkLevel — 500K window (Enterprise profile)', () => {
         expect(getTkLevel(462_000, profile, window)).toBe('error');
     });
 
-    it('300K → rotLight (rot keyed to the >200K window, not the profile)', () => {
-        expect(getTkLevel(300_000, profile, window)).toBe('rotLight');
+    it('300K → normal (below the 400K rot floor; rot keyed to the >200K window, not the profile)', () => {
+        expect(getTkLevel(300_000, profile, window)).toBe('normal');
     });
 });
 
@@ -123,16 +123,16 @@ describe('getTkLevel — boundary inclusive (>=) at every threshold', () => {
     const profile = PROFILES['max-20x'];
     const window = 1_000_000;
 
-    it('used exactly at rotLightTokens (300K) → rotLight', () => {
-        expect(getTkLevel(300_000, profile, window)).toBe('rotLight');
+    it('used exactly at rotLightTokens (400K) → rotLight', () => {
+        expect(getTkLevel(400_000, profile, window)).toBe('rotLight');
     });
 
-    it('used at 299_999 (just below rotLight) → normal', () => {
-        expect(getTkLevel(299_999, profile, window)).toBe('normal');
+    it('used at 399_999 (just below rotLight) → normal', () => {
+        expect(getTkLevel(399_999, profile, window)).toBe('normal');
     });
 
-    it('used at 499_999 (just below rotDeep) → rotLight', () => {
-        expect(getTkLevel(499_999, profile, window)).toBe('rotLight');
+    it('used at 649_999 (just below rotDeep) → rotLight', () => {
+        expect(getTkLevel(649_999, profile, window)).toBe('rotLight');
     });
 
     it('used at 946_999 (just below warning) → rotDeep', () => {

@@ -3,11 +3,9 @@
 [![GitHub Issues](https://img.shields.io/github/issues/hyperi-io/claudemeter)](https://github.com/hyperi-io/claudemeter/issues)
 [![GitHub Stars](https://img.shields.io/github/stars/hyperi-io/claudemeter)](https://github.com/hyperi-io/claudemeter)
 
-![Icon](assets/claudemeter-logo-trim.png)
-> VSCode Extension. Monitor your Claude Code usage proactively in real time, with full limit information.
-> *No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'*
->
-> Tracks session, weekly, token limits, context rot, claude platform status and happy hour across all Claude plans.
+![Claudemeter](assets/logo.png)
+> Monitor your Claude Code usage as you go.\
+> Session, weekly and context usage live in your status bar, so you pace yourself instead of simply reacting. Context-rot and happy-hour awareness across every Claude plan.
 
 
 ![Tooltip](assets/tooltip.png)
@@ -32,6 +30,10 @@
 
 ![Status Bar All Warnings](assets/status-bar-all-warnings.png)
 
+## Claudemeter Browser Login No Longer Required
+
+Claude Code changed - its CLI token can now reach the usage API, which it couldn't before. "It just works" now. Install and it works. So as of v2.5+ claudemeter reads that token directly and drops the browser entirely. This also fixes the Google SSO "browser not secure" block, since there's no automated login window any more ([#49](https://github.com/hyperi-io/claudemeter/issues/49)).
+
 ## Context Window Detection
 
 Claudemeter automatically detects your context window size - no manual configuration needed.
@@ -43,8 +45,8 @@ Because Claude Code strips the `[1m]` suffix from model IDs before writing them 
 1. **User override** - `claudemeter.tokenLimit` setting, if set (authoritative)
 2. **Explicit alias suffix** - `claudeCode.selectedModel: "opus[1m]"` (authoritative)
 3. **JSONL suffix** - a model ID with `[Nm]` in session logs (authoritative, rare in practice)
-4. **Live plan + model rule table** - `capabilities` from `/api/bootstrap` + model family from session logs matched against a data-driven rule table (e.g. `claude_max` + `opus-4.6+` or `fable-5` -> 1M)
-5. **Local plan + model rule table** - same table, but plan comes from `.credentials.json subscriptionType` (used when the live API isn't available, e.g. `tokenOnlyMode`)
+4. **Live plan + model rule table** - `subscriptionType` from the OAuth `/profile` response + model family from session logs matched against a data-driven rule table (e.g. Max + `opus-4.6+` or `fable-5` -> 1M)
+5. **Local plan + model rule table** - same table, but plan comes from the token blob's `subscriptionType` (used before the first fetch or when web usage is off, e.g. `tokenOnlyMode`)
 6. **Claude Code's `s1mAccessCache`** - used only as a last-resort corroborating signal, never as a negative
 7. **Observed usage snap-to-tier** - if all authoritative signals fail but observed tokens exceed 200K, snap up to the next known tier (200K -> 1M -> 2M) and label the result as `(inferred)`
 8. **Standard fallback** - 200K
@@ -60,12 +62,24 @@ The rule table is future-proof via numeric `minVersion` comparison - when Anthro
 
 ## Why the context-rot meter exists
 
-> The Tk gauge can turn **light blue at ~300K tokens used**, **dark blue
-> at ~500K**, and **yellow / red as Claude approaches auto-compact** -
+> The Tk gauge can turn **light blue at ~400K tokens used**, **dark blue
+> at ~650K**, and **yellow / red as Claude approaches auto-compact** -
 > *before* the existing yellow warning fires on a 200K-window account.
 > These tiers exist because Claude's effective recall degrades long
 > before the auto-compact trigger fires, and because the *meaning* of
 > "X% used" changes dramatically with window size.
+
+### Current calibration - Opus 4.8 (checked 7 Jul 2026)
+
+The blue tiers track the *current* model. On Opus 4.8 they sit at **~400K
+(light) / ~650K (dark)** on a 1M window - later than the 4.7-era 300K/500K,
+because 4.8 holds long context far better (it retains ~79% of its 256K
+retrieval score at 1M, vs 4.7's ~52%). There is still no third-party
+depth-binned 4.8 data between 256K and 1M, so the exact positions are a
+judgement call biased conservative for cache-heavy coding use. Full research
+record, anchor numbers, and the re-check log live in
+[docs/context-rot.md](docs/context-rot.md) - first researched 30 May 2026,
+re-checked 7 Jul 2026.
 
 ### What sparked this - Opus 4.7 (point-in-time snapshot, 2026-05)
 
@@ -101,7 +115,7 @@ The failure mode users describe most consistently:
 > rule from the original brief."
 
 That happens *before* the existing yellow / red tiers fire. Light blue
-(~300K tokens used) and dark blue (~500K) are the new advisory tiers
+(~400K tokens used) and dark blue (~650K) are the new advisory tiers
 that flag this window - colour first, with a tooltip recommendation
 pointing at `/compact` *on your terms*.
 
@@ -141,10 +155,10 @@ point is worth roughly 5x as much absolute runway as on 1M, which is
 why the percentage thresholds differ so much between the two - but
 the *meaning* (token runway to brain-loss) is identical.
 
-The blue **rot** tiers (~300K / ~500K used) are about something
+The blue **rot** tiers (~400K / ~650K used) are about something
 different - quality degradation in long-context multi-step work - and
 apply on any window larger than 200K, because a big window is what
-makes the 300K / 500K frontier reachable in the first place. They are
+makes the 400K / 650K frontier reachable in the first place. They are
 not auto-compact warnings, they are "context is getting long enough
 that Claude's recall is going to drift" warnings.
 
@@ -166,7 +180,7 @@ The profile sets the yellow / red runway. The blue rot tiers are NOT
 profile-gated - they fire whenever the detected context window is
 larger than 200K. So a 1M session shows rot regardless of which profile
 was detected, a 500K enterprise window shows light-blue rot, and a 200K
-session never does (300K is out of reach). Rot follows the window
+session never does (400K is out of reach). Rot follows the window
 because tier detection isn't always reliable, but the window almost
 always is.
 
@@ -209,33 +223,34 @@ Window is LA-local so the icon lines up with Anthropic's infrastructure peak, re
 
 ## How It Works
 
-Claudemeter v2 uses streamlined HTTP requests to fetch your usage data directly from Claude.ai's API endpoints. A browser is only needed once for the initial login - after that, your session cookie is stored locally and all subsequent fetches complete in 1-3 seconds with no browser overhead.
+Claudemeter reads the OAuth token Claude Code already stores and calls the same usage endpoints Claude Code's own `/usage` uses (`api.anthropic.com/api/oauth/usage` + `/profile`). Claude Code has evolved, so from 2.5 onwards no browser, no scraping, and no separate login are needed - if you use Claude Code, it just works.
 
-When you log in, the extension verifies that the browser account matches the account used by Claude Code CLI. If the accounts don't match, it will prompt you to log in with the correct account.
+The token lives in the shared Claude Code store: the macOS Keychain (`Claude Code-credentials`) or `~/.claude/.credentials.json` elsewhere. Claudemeter reads it fresh each fetch and watches the store, so a token refresh is picked up automatically. It never refreshes or writes the token back, so it can't disturb your Claude Code login - and the usage always matches whichever account Claude Code is on.
 
-> **Why not use the Claude CLI's OAuth token?** The CLI's OAuth scopes (`user:inference`, `user:profile`, etc.) don't grant access to the usage/billing endpoints. Only the `sessionKey` cookie from a browser login works. If Anthropic ever expands the CLI scopes, the browser login could be eliminated entirely.
+Two independent streams feed the status bar. **Web usage** (session / weekly / opus / sonnet / credits) is account-global and shows in any window. The **Tk context gauge** is per-workspace - read live from the current project's Claude Code session - so an empty window (no project) shows the account gauges but no Tk. Multiple VS Code windows share a single web-usage fetch per [`claudemeter.usageRefreshSeconds`](#claudemeterusagerefreshseconds) interval, so N windows don't each hit the API and trip its rate limit.
 
-> **Why keep playwright-core?** The usage API endpoints are undocumented and could change without notice. `playwright-core` (shipped inside the VSIX, no bundled Chromium) drives the user's installed Chrome via the `executablePath` option for the initial login, and powers an opt-in legacy scraper fallback if the API breaks. See `claudemeter.useLegacyScraper` in settings. playwright-core has zero npm runtime dependencies, so there's no transitive-CVE surface to defend against.
+> **Why not a browser?** An earlier build tried this same OAuth approach first, but back then the Claude Code token wasn't authorised for the usage/account API - so the only option was a `sessionKey` cookie from a real browser login, which meant shipping browser automation and hitting Google's anti-automation SSO block. Anthropic has since granted the token that access, so browserless works now. The browser, the cookie, and `playwright-core` are gone; the extension ships with zero runtime dependencies.
 
 ## Installation
 
 ### Prerequisites
 
 - VS Code 1.110.0 or higher
-- A Chromium-based browser for login (Chrome, Chromium, Brave, Edge, Arc, Vivaldi, or Opera)
+- Claude Code installed and logged in (the CLI or the official VS Code extension - they share one login). Claudemeter reads that login to show your usage.
 
 ## First-Time Setup
 
-1. On first launch, the extension prompts you to log in
-2. Click **Log In Now** - a browser window opens to Claude.ai
-3. Complete the Cloudflare verification ("Are you human?") if prompted
-4. Log in with your credentials (Google, email, etc.)
-5. The extension verifies the browser account matches your CLI account, saves the session cookie locally, and closes the browser
-6. All future fetches use fast HTTP requests - no browser needed
+If you already use Claude Code, there's nothing to set up - claudemeter reads your existing login and shows usage immediately.
 
-When switching Claude Code accounts, the extension detects the change instantly via file watchers on `~/.claude/.credentials.json` and `~/.claude.json`, and prompts you to re-login. Switches between two personal accounts are detected via the account email and UUID (not just org UUID), so you won't be left looking at stale usage data. The login browser cache is cleared so you get a fresh login for the new account.
+If you're not logged into Claude Code, claudemeter prompts you:
 
-Multiple VS Code windows running claudemeter at the same time are safe - the session-data file is locked and atomically merged so concurrent writers don't clobber each other.
+1. Click **Log in** - claudemeter runs `claude auth login` in an integrated terminal.
+2. Complete Anthropic's login in your real browser (SSO works - it's Anthropic's own login, not an automated window).
+3. Claudemeter detects the new token and refreshes automatically.
+
+If Claude Code isn't installed at all, claudemeter points you at the install docs instead.
+
+Switching Claude Code accounts needs no action: the token in the shared store changes to the new account, and claudemeter's store watcher refetches automatically. Multiple VS Code windows running claudemeter at the same time are safe - the session-data file is locked and atomically merged so concurrent writers don't clobber each other.
 
 ## Configuration
 
@@ -247,12 +262,12 @@ Open VS Code Settings and search for "Claudemeter" to configure:
 - **Default**: `true`
 - **Description**: Automatically fetch usage data when VS Code starts
 
-### `claudemeter.autoRefreshMinutes`
+### `claudemeter.usageRefreshSeconds`
 
 - **Type**: Number
-- **Default**: `5`
-- **Range**: `1-60` minutes
-- **Description**: Auto-refresh interval in minutes for fetching Claude.ai usage data via HTTP. Each fetch takes 1-3 seconds with no browser overhead.
+- **Default**: `120`
+- **Range**: `30-3600` seconds
+- **Description**: How often web usage (session / weekly / opus / sonnet / credits) is refreshed. The account-global usage is fetched once per interval and cached so all VS Code windows share one network call, rather than each hitting the Claude API and tripping its rate limit (429). Raise it if you still see rate-limit errors with many windows open.
 
 ### `claudemeter.localRefreshSeconds`
 
@@ -294,13 +309,7 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
 
 - **Type**: Boolean
 - **Default**: `false`
-- **Description**: Token-only mode - only track Claude Code tokens, skip Claude.ai usage fetching entirely
-
-### `claudemeter.useLegacyScraper`
-
-- **Type**: Boolean
-- **Default**: `false`
-- **Description**: Use the legacy browser-based scraper instead of streamlined HTTP fetching. The default HTTP method calls undocumented Claude.ai API endpoints that could change without notice. Enable this fallback if the HTTP method stops working due to API changes. Requires a Chromium-based browser.
+- **Description**: Token-only mode - show only the local Tk context gauge, skip fetching web usage (session / weekly / opus / sonnet / credits) from the Claude API.
 
 ### `claudemeter.statusBar.displayMode`
 
@@ -530,59 +539,33 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - **`Claudemeter: Open Claude Settings Page`** - Open claude.ai/settings in your default browser
 - **`Claudemeter: Start New Claude Code Session`** - Start a new token tracking session
 - **`Claudemeter: Show Debug Output`** - Open debug output channel
-- **`Claudemeter: Login to Claude.ai`** - Open browser for login
-- **`Claudemeter: Clear Session (Re-login)`** - Clear saved session and force re-login
-- **`Claudemeter: Resync Account (after /login switch)`** - Force a re-read of Claude Code credentials and refresh usage (useful if an account switch wasn't detected automatically)
-- **`Claudemeter: Dump State (for bug reports)`** - Print a redacted snapshot of current state (identity, resolved org, cache, live sessions) to an output channel - attach this to issues to speed up diagnosis
-- **`Claudemeter: Reset Browser Connection (Legacy)`** - Reset browser connection (legacy scraper mode only)
+- **`Claudemeter: Log into Claude Code`** - Run `claude auth login` in a terminal (or point you at the install docs if Claude Code isn't installed). Only needed when you're not already logged into Claude Code.
+- **`Claudemeter: Dump State (for bug reports)`** - Print a redacted snapshot of current state (identity, resolved org, token presence, live sessions) to an output channel - attach this to issues to speed up diagnosis
 
 ## Troubleshooting
 
-### Browser won't open for login
+### No usage shown / "Not logged into Claude Code"
 
-- Ensure you have a Chromium-based browser installed (Chrome, Edge, Brave, etc.)
-- The extension auto-detects your default browser; if it's not Chromium-based (e.g., Firefox), install Chrome or Edge
-- Try running VS Code as administrator (Windows)
+- Claudemeter reads Claude Code's login. If Claude Code isn't logged in, run **Claudemeter: Log into Claude Code** (or `claude auth login` in a terminal), or just use Claude Code once.
+- If Claude Code isn't installed, install it first - see [claude.com/product/claude-code](https://claude.com/product/claude-code).
+- If you authenticate Claude Code with `ANTHROPIC_API_KEY` (or Bedrock / Vertex / Foundry) instead of a subscription login, there's no subscription usage to show - the local Tk context gauge still works.
 
-### Login appears stuck or never completes
+### Usage looks like the wrong account
 
-The spawned Chrome instance is isolated from your normal browser, so a few login paths can break:
+Claudemeter tracks whichever account Claude Code is on. If it looks wrong, check `claude auth status` - that's the account claudemeter reads. If you run Claude Code with a non-default `CLAUDE_CONFIG_DIR`, claudemeter follows that too.
 
-- **Email confirmation links land in a different browser** -- when you click "Confirm" in claude.ai's verification email, your OS opens the link in your default browser, not in the Chrome instance we spawned.
-- **SSO popouts open in separate windows** -- Google / GitHub / Okta redirects can land outside our spawned context.
-- **Password manager refuses to autofill** -- managers typically only autofill into the browser instance they were installed in.
+### Fetch errors
 
-When the login-timed-out toast appears, click **Try cookie paste (advanced)**. That opens claude.ai in your default browser (where the above just works), then takes the `sessionKey` cookie via DevTools (Application > Cookies > https://claude.ai) and a VS Code input box. Requires DevTools.
-
-### Session expired or fetch errors
-
-- Run **Claudemeter: Clear Session (Re-login)** from the Command Palette
-- Or manually delete the session cookie file:
-  - macOS: `~/Library/Application Support/claudemeter/session-cookie.json`
-  - Linux: `~/.config/claudemeter/session-cookie.json`
-  - Windows: `%APPDATA%\claudemeter\session-cookie.json`
-
-### API changes broke usage fetching
-
-- Claude.ai's usage API endpoints are undocumented and may change without notice
-- Try enabling the legacy scraper: set `claudemeter.useLegacyScraper` to `true` in settings
-- Check if you can see your usage at [claude.ai/settings](https://claude.ai/settings)
-- [Report an issue](https://github.com/hyperi-io/claudemeter/issues) so the extension can be updated
-
-### Wrong account after login
-
-- If the extension detects the browser account doesn't match the CLI account, it will prompt you to log in again with the correct account
-- Run **Claudemeter: Clear Session (Re-login)** if the issue persists
+- Run **Claudemeter: Fetch Claude Usage Now** from the Command Palette.
+- Run **Claudemeter: Dump State (for bug reports)** and [report an issue](https://github.com/hyperi-io/claudemeter/issues) with the output attached.
 
 ## Privacy & Security
 
-- **No credentials stored**: The extension never stores or transmits your login credentials
-- **Local session cookie**: Your `sessionKey` cookie is saved locally at `~/.config/claudemeter/session-cookie.json` (or platform equivalent) and is only sent to `claude.ai`
-- **No data transmission**: Usage data stays on your machine
-- **Self-contained**: `playwright-core` ships inside the VSIX as its own package directory (required so its runtime asset loading resolves correctly). It uses your existing system browser for login only - no Chromium is downloaded or bundled.
-- **Minimal attack surface**: playwright-core has zero npm runtime dependencies - its driver is a self-contained native binary. No proxy-agent chain, no FTP client, no transitive-CVE surface.
-- **Account verification**: The extension verifies the browser login matches the CLI account before saving the session
-- **Open source**: All code is available for review
+- **No credentials stored**: Claudemeter reads Claude Code's existing OAuth token and never stores, copies, or transmits it anywhere except as the `Authorization` header to `api.anthropic.com`. It never writes to Claude Code's credential store.
+- **No data transmission**: Usage data stays on your machine.
+- **Zero runtime dependencies**: The extension bundles no third-party runtime packages - no browser, no Chromium, no scraping stack.
+- **Redacted bug reports**: **Dump State** reports only token presence, source, scopes, and expiry - never the token itself.
+- **Open source**: All code is available for review.
 
 ## Feedback & Issues
 
@@ -598,7 +581,8 @@ If you encounter any issues or have suggestions:
 
 ## Authors
 
-![HyperI Logo](assets/hyperi-logo.png)
+<img src="assets/hyperi-lateral.png" alt="HyperI" width="220">
+
 
 Paying it forward by the hoopy froods at HyperI (formerly HyperSec)
 <https://hyperi.io>

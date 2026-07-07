@@ -14,9 +14,10 @@
 //                segments. The tooltip composer splits on these and emits
 //                each segment as its own italic line, so the tooltip
 //                width is bounded by the longest SINGLE line rather than
-//                the longest sentence. The first segment names the
-//                concept ("Context rot"), the second describes the
-//                effect, the third gives the action.
+//                the longest sentence. The first segment names the state
+//                ("Context getting long"), the second describes the
+//                effect (recall drift), the third gives the action
+//                (/compact). Calm/advisory voice.
 //
 //                'normal' maps to null - no recommendation.
 //
@@ -25,18 +26,18 @@
 
 const TIER_RECOMMENDATIONS = Object.freeze({
     rotLight: [
-        "Context rot - light.",
-        "Recall starts to drift in long-context tasks.",
-        "/compact when convenient.",
+        "Context getting long.",
+        "Recall starting to drift.",
+        "Tidy up with /compact when you can.",
     ].join("  \n"),
     rotDeep: [
-        "Context rot - deep.",
-        "Quality drops sharply on complex multi-step work.",
-        "/compact soon, on your terms.",
+        "Context is deep.",
+        "Multi-step recall slipping.",
+        "/compact soon - keep control of what stays.",
     ].join("  \n"),
     warning: [
         "Auto-compact approaching.",
-        "Claude will compress soon.",
+        "Claude will summarise soon.",
     ].join("  \n"),
     error: "Auto-compact imminent.",
     normal: null,

@@ -20,26 +20,21 @@ extension.js
 scripts/**
 build/**
 
+# Logo generator + its bundled font/icons (build-time only, not shipped).
+# The generated assets/*.png|svg still ship for the icon + README.
+assets/src/**
+.tmp/**
+.ruff_cache/**
+
 # Tests and dev configs (not needed by end users)
 tests/**
 vitest.config.js
 renovate.json
 .mcp.json
 
-# Dependencies. esbuild bundles everything except playwright-core,
-# which must ship as a real package directory so its runtime
-# require(packageRoot/browsers.json) and require(packageRoot/package.json)
-# resolve correctly (packageRoot is computed from __dirname of the
-# playwright-core lib, not the bundled extension.js).
-#
-# We ship the FULL playwright-core directory (lib/, bin/, types/ - all
-# 106 files, ~13MB uncompressed / ~3MB compressed inside the VSIX). The
-# total VSIX is ~5MB which is well within marketplace limits, and
-# shipping every file removes a whole class of "missing module at
-# runtime" bugs. Do not try to slim playwright-core - see STATE.md
-# "Bundle the entire playwright-core package, no slimming" decision.
+# Dependencies. esbuild bundles the extension into dist/, and there are no
+# runtime dependencies to ship, so node_modules is fully excluded.
 node_modules/**
-!node_modules/playwright-core/**
 
 # Keep bundled output
 !dist/**

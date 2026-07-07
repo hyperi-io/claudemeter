@@ -1,7 +1,7 @@
 {
   "name": "claudemeter",
   "displayName": "Claudemeter - Claude AI Usage Monitor",
-  "description": "Monitor your Claude Code usage proactively in real time, with full limit information. No more 'Surprise! You've hit your Claude Code weekly limit and it resets in 3 days you lucky, lucky person!'. Tracks session, weekly, and token limits across all Claude plans.",
+  "description": "Monitor your Claude Code usage as you go. Session, weekly and context usage live in your status bar, so you pace yourself instead of simply reacting. Context-rot and happy-hour awareness across every Claude plan.",
   "version": "2.4.13",
   "publisher": "hypersec",
   "author": {
@@ -17,7 +17,7 @@
   },
   "homepage": "https://github.com/hyperi-io/claudemeter#readme",
   "license": "MIT",
-  "icon": "assets/claudemeter-logo-icon-128.png",
+  "icon": "assets/icon.png",
   "galleryBanner": {
     "color": "#1a1a2e",
     "theme": "dark"
@@ -73,7 +73,9 @@
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production && rm -f dist/*.map && vsce package",
     "publish": "node esbuild.js --production && rm -f dist/*.map && vsce publish",
-    "clear-session": "node scripts/clear-session.js",
+    "token:status": "node scripts/dev-token.js status",
+    "token:stash": "node scripts/dev-token.js stash",
+    "token:restore": "node scripts/dev-token.js restore",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -103,23 +105,8 @@
         "category": "Claudemeter"
       },
       {
-        "command": "claudemeter.resetConnection",
-        "title": "Reset Browser Connection (Legacy)",
-        "category": "Claudemeter"
-      },
-      {
-        "command": "claudemeter.clearSession",
-        "title": "Clear Session (Re-login)",
-        "category": "Claudemeter"
-      },
-      {
-        "command": "claudemeter.openBrowser",
-        "title": "Login to Claude.ai",
-        "category": "Claudemeter"
-      },
-      {
-        "command": "claudemeter.resyncAccount",
-        "title": "Resync Account (after /login switch)",
+        "command": "claudemeter.login",
+        "title": "Log into Claude Code",
         "category": "Claudemeter"
       },
       {
@@ -171,12 +158,6 @@
       {
         "command": "claudemeter.simulate.creditsPercent",
         "title": "Claudemeter: Simulate Credits %",
-        "enablement": "config.claudemeter.debug",
-        "category": "Claudemeter (debug)"
-      },
-      {
-        "command": "claudemeter.simulate.legacyScraper",
-        "title": "Claudemeter: Simulate — Toggle Legacy Scraper",
         "enablement": "config.claudemeter.debug",
         "category": "Claudemeter (debug)"
       },
@@ -251,12 +232,12 @@
           "default": true,
           "description": "Automatically fetch usage data when VS Code starts"
         },
-        "claudemeter.autoRefreshMinutes": {
+        "claudemeter.usageRefreshSeconds": {
           "type": "number",
-          "default": 5,
-          "minimum": 1,
-          "maximum": 60,
-          "description": "Auto-refresh interval in minutes for fetching Claude.ai usage data (1-60 minutes)"
+          "default": 120,
+          "minimum": 30,
+          "maximum": 3600,
+          "description": "How often web usage (session / weekly / opus / sonnet / credits) is refreshed, in seconds. The account-global usage is fetched once per this interval and cached so ALL VS Code windows share one network call, rather than each hitting the Claude API and tripping its rate limit (429). Raise it if you still see rate-limit errors with many windows open. Floor 30s."
         },
         "claudemeter.localRefreshSeconds": {
           "type": "number",
@@ -621,7 +602,7 @@
         "claudemeter.tokenOnlyMode": {
           "type": "boolean",
           "default": false,
-          "description": "Token-only mode: Only track Claude Code tokens, skip Claude.ai web usage scraping entirely"
+          "description": "Token-only mode: show only the local Tk context gauge, skip fetching web usage (session / weekly / opus / sonnet / credits) from the Claude API."
         },
         "claudemeter.sessionWindowMinutes": {
           "type": "number",
@@ -634,11 +615,6 @@
           "default": 30,
           "minimum": 1,
           "markdownDescription": "Hard deck (minutes): max last-modified age for a session file to be considered at all. Past this the local Claude Code session is treated as dead (the CLI drops an idle session after ~30min, losing its context). If every session file is older than this the gauge blanks (`Tk -`) and usage reads 0 - this wins ahead of the aged-out fallback. Default 30."
-        },
-        "claudemeter.useLegacyScraper": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use legacy browser-based scraper instead of streamlined HTTP fetching. The default HTTP method calls undocumented Claude.ai API endpoints that could change without notice. Enable this fallback if the HTTP method stops working due to API changes. Requires a Chromium-based browser (Chrome, Edge, Brave, etc.)."
         },
         "claudemeter.debugLogFile": {
           "type": "string",
@@ -665,13 +641,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@vscode/vsce": "^3.7.1",
-    "esbuild": "^0.28.0",
-    "eslint": "^10.1.0",
-    "vitest": "^4.1.5"
-  },
-  "dependencies": {
-    "chromium-bidi": "^16.0.0",
-    "playwright-core": "^1.60.0"
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.6.0",
+    "vitest": "^4.1.10"
   }
 }

@@ -1,12 +1,16 @@
 // Project:   Claudemeter
 // File:      apiSchema.js
-// Purpose:   Claude.ai API field mappings (centralised for easy updates)
+// Purpose:   Usage-payload field mappings (centralised for easy updates)
 // Language:  JavaScript (CommonJS)
+//
+// Field paths for the api.anthropic.com/api/oauth/usage payload (the same
+// field names the old claude.ai usage endpoint used, which is why the switch
+// to the OAuth source needed no schema change). Consumed by processApiResponse.
 //
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
-// Usage API: /api/organizations/{org}/usage
+// Usage payload: five_hour / seven_day / seven_day_{opus,sonnet} / extra_usage
 const USAGE_API_SCHEMA = {
     fiveHour: {
         utilization: { path: 'five_hour.utilization', type: 'percent', default: 0 },
@@ -29,35 +33,14 @@ const USAGE_API_SCHEMA = {
     },
 };
 
-// Overage API: /api/organizations/{org}/overage_spend_limit
+// Overage/extra-usage mapping. oauthFetcher.deriveCreditsArgs adapts the
+// usage payload's `extra_usage` block into this shape for processOverageData.
 const OVERAGE_API_SCHEMA = {
     isEnabled: { path: 'is_enabled', type: 'boolean', default: false },
     monthlyLimit: { path: 'monthly_credit_limit', type: 'cents', default: 0 },
     usedCredits: { path: 'used_credits', type: 'cents', default: 0 },
     currency: { path: 'currency', type: 'string', default: 'USD' },
     outOfCredits: { path: 'out_of_credits', type: 'boolean', default: false },
-};
-
-// Prepaid Credits API: /api/organizations/{org}/prepaid/credits
-const PREPAID_API_SCHEMA = {
-    balance: { path: 'remaining_credits', type: 'cents', default: 0 },
-    currency: { path: 'currency', type: 'string', default: 'USD' },
-};
-
-// URL patterns for request interception
-const API_ENDPOINTS = {
-    usage: {
-        pattern: '/api/organizations/',
-        contains: '/usage',
-    },
-    prepaidCredits: {
-        pattern: '/api/organizations/',
-        contains: '/prepaid/credits',
-    },
-    overageSpendLimit: {
-        pattern: '/api/organizations/',
-        contains: '/overage_spend_limit',
-    },
 };
 
 // Keys that traverse into the prototype chain. Even though schema
@@ -100,10 +83,6 @@ function extractFromSchema(response, schema) {
     }
 
     return result;
-}
-
-function matchesEndpoint(url, endpointConfig) {
-    return url.includes(endpointConfig.pattern) && url.includes(endpointConfig.contains);
 }
 
 // Convert cents to dollars and calculate percentage
@@ -206,18 +185,14 @@ function getSchemaInfo() {
         version: '2.0',
         usageFields: Object.keys(USAGE_API_SCHEMA),
         overageFields: Object.keys(OVERAGE_API_SCHEMA),
-        endpoints: Object.keys(API_ENDPOINTS),
     };
 }
 
 module.exports = {
     USAGE_API_SCHEMA,
     OVERAGE_API_SCHEMA,
-    PREPAID_API_SCHEMA,
-    API_ENDPOINTS,
     getNestedValue,
     extractFromSchema,
-    matchesEndpoint,
     processOverageData,
     processPrepaidData,
     calculateResetTime,

@@ -1,40 +1,32 @@
-// Project:   Claudemeter v2 (Streamlined)
+// Project:   Claudemeter
 // File:      extension.js
 // Purpose:   VS Code extension entry point and lifecycle management
 // Language:  JavaScript (CommonJS)
 //
-// v2 replaces full browser automation with streamlined HTTP cookie-based
-// fetching. A real browser (via playwright-core, driving the user's installed
-// Chrome) is used only for the one-time login flow. The legacy browser
-// scraper is retained as an opt-in fallback via the
-// "claudemeter.useLegacyScraper" setting.
+// The browserless build drops all browser automation. Web usage
+// (session / weekly / opus / sonnet / credits) is fetched from the
+// first-party api.anthropic.com OAuth endpoints using the SAME token
+// Claude Code stores -- CLI or the VS Code extension, they share one
+// credential store per config dir. No
+// Playwright, no sessionKey cookie, no Google-SSO login block (#49). See
+// src/oauthFetcher.js and src/tokenSource.js.
 //
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
 const vscode = require('vscode');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { ClaudeHttpFetcher } = require('./src/httpFetcher');
-
-// Legacy scraper is lazy-loaded only when useLegacyScraper is enabled.
-// This avoids loading playwright-core's chromium driver at startup when
-// it's not needed.
-let _scraperModule = null;
-function getScraperModule() {
-    if (!_scraperModule) {
-        _scraperModule = require('./src/scraper');
-    }
-    return _scraperModule;
-}
-function getLegacyBrowserState() {
-    return getScraperModule().BrowserState;
-}
+const { execFileSync } = require('child_process');
+const oauthFetcher = require('./src/oauthFetcher');
+const { cachedFetchUsage } = require('./src/usageCache');
+const { readToken, watchToken, detectAuthOverride } = require('./src/tokenSource');
 const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
-const { CONFIG_NAMESPACE, COMMANDS, PATHS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
+const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
 const {
     CREDENTIALS_PATH,
     readCredentials,
@@ -52,9 +44,17 @@ const {
 } = require('./src/claudeConfigReader');
 
 let statusBarItem;
-let httpFetcher;
-let scraper; // Legacy browser-based scraper
+// The two independent data streams the status bar renders:
+//   usageData          - web usage (Se/Wk/Opus/Sonnet/Credits). Account-global,
+//                        shown in ANY window whenever a fetch has succeeded.
+//   currentSessionData - the LIVE Tk context for THIS window's workspace, or
+//                        null when there is no workspace or no active session.
+//                        Set only by updateTokensFromJsonl. NEVER the global
+//                        sessionTracker.getCurrentSession() (that returns the
+//                        most-recent session from ANY project and leaks another
+//                        project's Tk into an empty/other window).
 let usageData = null;
+let currentSessionData = null;
 let credentialsInfo = null;
 let autoRefreshTimer;
 let localRefreshTimer;
@@ -65,10 +65,9 @@ let jsonlWatcher;
 let jsonlUpdateTimer = null;
 let credentialsWatcher;
 let claudeConfigWatcher;
+let tokenWatcherDispose = null;
+let awaitTokenTimer = null;
 let currentWorkspacePath = null;
-
-// Prevents auto-retry after user closes login browser
-let loginWasCancelled = false;
 
 let tokenDiagnosticChannel = null;
 
@@ -89,217 +88,240 @@ function debugLog(message) {
     }
 }
 
-function isLegacyMode() {
-    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    return config.get('useLegacyScraper', false);
+// Locate the `claude` CLI. VS Code (GUI-launched) often has a stunted PATH,
+// so we check common install locations first, then fall back to which/where.
+// Returns an absolute path, or null if not found.
+function resolveClaudeCli() {
+    const isWin = process.platform === 'win32';
+    const home = os.homedir();
+    const candidates = isWin ? [
+        path.join(process.env.APPDATA || '', 'npm', 'claude.cmd'),
+        path.join(home, 'AppData', 'Local', 'Programs', 'claude', 'claude.exe'),
+        path.join(home, '.local', 'bin', 'claude.exe'),
+    ] : [
+        '/usr/local/bin/claude',
+        '/opt/homebrew/bin/claude',
+        path.join(home, '.local', 'bin', 'claude'),
+        path.join(home, '.claude', 'local', 'claude'),
+        path.join(home, '.npm-global', 'bin', 'claude'),
+    ];
+    for (const c of candidates) {
+        try { if (c && fs.existsSync(c)) return c; } catch { /* keep looking */ }
+    }
+    try {
+        const out = execFileSync(isWin ? 'where' : 'which', ['claude'], { encoding: 'utf-8', timeout: 3000 })
+            .trim().split(/\r?\n/)[0];
+        if (out && fs.existsSync(out)) return out;
+    } catch { /* not on PATH the extension host can see */ }
+    return null;
 }
 
-// Fetch with spinner, error handling, and login state management
-async function performFetch(isManualRetry = false) {
+// Claude Code install docs, opened when the CLI isn't present.
+const CLAUDE_CODE_INSTALL_URL = 'https://code.claude.com/docs/en/setup';
+
+// No usable token: either launch `claude auth login`, or -- if Claude Code
+// isn't installed at all -- tell the user this extension needs it. Anthropic's
+// own login uses the user's REAL browser, so SSO works there (unlike our old
+// sandboxed Playwright popup, #49).
+async function beginLoginOrInstall() {
+    const cli = resolveClaudeCli();
+    if (!cli) {
+        fileLog('claude CLI not found - prompting install');
+        const pick = await vscode.window.showWarningMessage(
+            'Claudemeter needs Claude Code installed - it reads Claude Code\'s login to show your usage. Install Claude Code, then log in.',
+            'Install Claude Code',
+            'Later'
+        );
+        if (pick === 'Install Claude Code') {
+            vscode.env.openExternal(vscode.Uri.parse(CLAUDE_CODE_INSTALL_URL));
+        }
+        return;
+    }
+    const action = await vscode.window.showInformationMessage(
+        'Claudemeter: log into Claude Code to see your usage limits.',
+        'Log in',
+        'Later'
+    );
+    if (action === 'Log in') launchClaudeLogin(cli);
+}
+
+// Run `claude auth login` in an integrated terminal (real shell PATH), then
+// poll for the token so we refresh as soon as it lands.
+function launchClaudeLogin(cli) {
+    let bin = cli || resolveClaudeCli() || 'claude';
+    // The which/where branch of resolveClaudeCli resolves via PATH, which an
+    // attacker could seed with a directory whose name contains shell
+    // metacharacters. Only a conservative path charset is allowed into the
+    // terminal command; anything else falls back to the bare command name
+    // (resolved safely by the shell's own PATH). With metacharacters excluded,
+    // quoting for spaces is sufficient.
+    if (!/^[\w./\\: -]+$/.test(bin)) {
+        fileLog('Resolved claude path had unsafe characters - falling back to bare `claude`');
+        bin = 'claude';
+    }
+    const quoted = bin.includes(' ') ? `"${bin}"` : bin;
+    const term = vscode.window.createTerminal('Claude Code Login');
+    term.show();
+    term.sendText(`${quoted} auth login`);
+    fileLog('Launched `claude auth login` in a terminal');
+    awaitTokenThenFetch();
+}
+
+// Poll the credential store after a login launch so we refresh as soon as
+// the token lands (the macOS Keychain can't be fs.watched). Best-effort,
+// self-limiting: ~90s at 3s intervals. Held in a module var so a second
+// login launch replaces (not stacks) the poll, and deactivate() can clear it.
+function awaitTokenThenFetch() {
+    if (awaitTokenTimer) clearInterval(awaitTokenTimer);
+    let elapsed = 0;
+    awaitTokenTimer = setInterval(async () => {
+        elapsed += 3000;
+        if (readToken().ok) {
+            clearInterval(awaitTokenTimer);
+            awaitTokenTimer = null;
+            fileLog('Token appeared after login - fetching');
+            await performFetch(true);
+        } else if (elapsed >= 90000) {
+            clearInterval(awaitTokenTimer);
+            awaitTokenTimer = null;
+        }
+    }, 3000);
+}
+
+// Prompt to log into Claude Code (or to install it if the CLI is missing).
+// Called only on an explicit user action (status-bar click / first startup) --
+// auto-refresh passes isManual=false and never reaches here, so no throttle is
+// needed. Every explicit click re-offers login, keeping the "click to log in"
+// tooltip honest.
+async function promptClaudeLogin() {
+    await beginLoginOrInstall();
+}
+
+// Single-flight guard. performFetch is triggered by the auto-refresh timer,
+// the credential-store watcher, the post-login poll, account-switch, and
+// manual commands -- these overlap and would race the global usageData and
+// the spinner (an early finisher hides the spinner while a later fetch is
+// still running). Coalesce concurrent runs into one promise; a manual caller
+// waits for any in-flight run then does its own, so the no-token login prompt
+// still fires on demand.
+let fetchInFlight = null;
+async function performFetch(isManual = false) {
+    if (fetchInFlight) {
+        if (!isManual) return fetchInFlight;
+        try { await fetchInFlight; } catch { /* the in-flight run handled its own error */ }
+    }
+    const run = performFetchInner(isManual);
+    fetchInFlight = run;
+    try {
+        return await run;
+    } finally {
+        if (fetchInFlight === run) fetchInFlight = null;
+    }
+}
+
+// Fetch web usage via the OAuth endpoints, with spinner + error handling.
+// isManual is true for explicit user actions (status-bar click, command,
+// first startup) -- only then do we surface the login prompt.
+async function performFetchInner(isManual = false) {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     let webError = null;
     let tokenError = null;
-    let wasLoginCancelled = false;
+    // handled = this branch already showed its own UX (login prompt / info),
+    // so a caller like FETCH_NOW should not also show a generic error toast.
+    let handled = false;
 
-    // Skip web fetch if user previously cancelled login (unless they clicked to retry)
-    if (loginWasCancelled && !isManualRetry) {
-        console.log('Claudemeter: Skipping web fetch (login was cancelled). Click status bar to retry.');
-        const sessionData = sessionTracker ? await sessionTracker.getCurrentSession() : null;
-        if (!sessionData || !sessionData.tokenUsage) {
-            tokenError = new Error('No token data available');
-        }
-        await updateStatusBarWithAllData();
-        return { webError: new Error('Login cancelled. Click status bar to retry.'), tokenError, loginCancelled: true };
-    }
-
-    // Don't prompt for login on auto-refresh - only when user explicitly clicks
-    const fetcher = isLegacyMode() ? scraper : httpFetcher;
-    if (!isManualRetry && fetcher && !fetcher.hasExistingSession()) {
-        console.log('Claudemeter: No session exists, skipping auto-refresh web fetch. Click status bar to login.');
-        const sessionData = sessionTracker ? await sessionTracker.getCurrentSession() : null;
-        if (!sessionData || !sessionData.tokenUsage) {
-            tokenError = new Error('No token data available');
-        }
-        await updateStatusBarWithAllData();
-        return { webError: new Error('No session. Click status bar to login.'), tokenError, loginCancelled: false };
+    // tokenOnlyMode: user opted out of web usage, just the local Tk gauge.
+    if (config.get('tokenOnlyMode', false)) {
+        fileLog('Skipping web fetch - tokenOnlyMode enabled');
+        if (!currentSessionData?.tokenUsage) tokenError = new Error('No token data available');
+        updateStatusBarWithAllData();
+        return { webError: null, tokenError, handled: true };
     }
 
     try {
         startSpinner();
-
-        if (isManualRetry && loginWasCancelled) {
-            console.log('Claudemeter: Manual retry - attempting login again');
-            loginWasCancelled = false;
-        }
-
-        const result = await fetchUsage(isManualRetry);
-        webError = result.webError;
-        wasLoginCancelled = result.loginCancelled || false;
-
-        if (wasLoginCancelled) {
-            loginWasCancelled = true;
-        }
-
-        const sessionData = sessionTracker ? await sessionTracker.getCurrentSession() : null;
-        if (!sessionData || !sessionData.tokenUsage) {
-            tokenError = new Error('No token data available');
+        // Share the account-global usage across windows: fetch at most once per
+        // usageRefreshSeconds, others read the cache. Avoids N windows tripping
+        // the api.anthropic.com rate limit (429). Floor 30s.
+        const maxAgeMs = Math.max(30, config.get('usageRefreshSeconds', 120)) * 1000;
+        const res = await cachedFetchUsage(() => oauthFetcher.fetchUsageData(), maxAgeMs);
+        usageData = res.usageData;
+        applyProfileSignals(usageData.accountInfo);
+        if (res.fromCache) {
+            fileLog(res.error
+                ? `Web usage from cache (live fetch failed: ${res.error.message})`
+                : 'Web usage from shared cache');
+        } else {
+            fileLog('OAuth usage fetch OK');
         }
     } catch (error) {
-        webError = webError || error;
-        console.error('Failed to fetch usage:', error);
+        webError = error;
+        if (error.message === 'NO_OAUTH_TOKEN') {
+            webError = new Error('Not logged into Claude Code. Click to log in.');
+            if (isManual) { await promptClaudeLogin(); handled = true; }
+        } else if (error.message === 'AUTH_OVERRIDE') {
+            // API key / Bedrock / Vertex user -- no subscription usage to show.
+            // Informational, not an error toast; the state shows in the tooltip.
+            webError = new Error(`Using ${error.detail} - subscription usage unavailable.`);
+            fileLog(`Auth override active (${error.detail}); web usage unavailable`);
+            handled = true;
+        } else {
+            fileLog(`OAuth usage fetch failed: ${error.message}`);
+            console.error('Claudemeter web fetch failed:', error);
+        }
     } finally {
+        if (!currentSessionData?.tokenUsage) tokenError = new Error('No token data available');
         stopSpinner(webError, tokenError);
-        await updateStatusBarWithAllData();
+        updateStatusBarWithAllData();
     }
 
-    return { webError, tokenError, loginCancelled: wasLoginCancelled };
+    return { webError, tokenError, handled };
 }
 
-// Fetch usage data from Claude.ai
-async function fetchUsage(isManualRetry = false) {
-    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    const tokenOnlyMode = config.get('tokenOnlyMode', false);
-
-    fileLog(`fetchUsage() called (isManualRetry=${isManualRetry}, tokenOnlyMode=${tokenOnlyMode}, legacy=${isLegacyMode()})`);
-
-    if (tokenOnlyMode) {
-        console.log('Claudemeter: Token-only mode enabled, skipping web fetch');
-        fileLog('Skipping web fetch - tokenOnlyMode enabled');
-        return { webError: null, loginCancelled: false };
-    }
-
-    if (isLegacyMode()) {
-        return fetchUsageLegacy(isManualRetry);
-    }
-
-    return fetchUsageHttp(isManualRetry);
+// Seed the Tk profile signals (subscriptionType, rateLimitTier) from the
+// stored token. On macOS the .credentials.json FILE is absent (the token
+// lives in the Keychain), so readCredentials() returns null for these and
+// the Tk gauge would fall back to the 'unknown' profile. tokenSource reads
+// the Keychain, and the blob carries the SAME verbatim Anthropic strings
+// profileSelector compares against ('max', 'default_claude_max_20x'). Safe
+// to call before any web fetch and in tokenOnlyMode -- keeps the offline Tk
+// gauge on the correct thresholds.
+function seedTierFromToken() {
+    const tok = readToken();
+    if (!tok.ok) return;
+    if (!credentialsInfo) credentialsInfo = {};
+    if (!credentialsInfo.subscriptionType) credentialsInfo.subscriptionType = tok.subscriptionType;
+    if (!credentialsInfo.rateLimitTier) credentialsInfo.rateLimitTier = tok.rateLimitTier;
 }
 
-// v2 default: HTTP cookie-based fetching
-async function fetchUsageHttp(isManualRetry = false) {
-    if (!httpFetcher) {
-        httpFetcher = new ClaudeHttpFetcher();
-        fileLog('Created new ClaudeHttpFetcher instance');
-    }
-
-    try {
-        fileLog('Calling fetchUsageData()...');
-        usageData = await httpFetcher.fetchUsageData();
-        fileLog('fetchUsageData() completed successfully');
-        return { webError: null, loginCancelled: false };
-    } catch (error) {
-        fileLog(`fetchUsageHttp() error: ${error.message}`);
-
-        if (error.message === 'NO_SESSION' || error.message === 'SESSION_EXPIRED' || error.message === 'NO_ORG_ID') {
-            if (!isManualRetry) {
-                const msg = error.message === 'NO_ORG_ID'
-                    ? 'No Claude Code credentials found. Install and run Claude Code first.'
-                    : 'No session. Click status bar to login.';
-                return { webError: new Error(msg), loginCancelled: false };
-            }
-
-            // Manual retry: trigger login flow
-            try {
-                fileLog('Triggering login flow...');
-                await httpFetcher.login();
-                fileLog('Login completed, retrying fetch...');
-                usageData = await httpFetcher.fetchUsageData();
-                fileLog('Post-login fetch successful');
-                return { webError: null, loginCancelled: false };
-            } catch (loginError) {
-                fileLog(`Login/fetch error: ${loginError.message}`);
-                if (loginError.message === 'LOGIN_CANCELLED') {
-                    return { webError: new Error('Login cancelled. Running in token-only mode. Click status bar to retry.'), loginCancelled: true };
-                } else if (loginError.message === 'LOGIN_IN_PROGRESS') {
-                    return { webError: null, loginCancelled: false };
-                } else if (loginError.message === 'LOGIN_TIMEOUT') {
-                    return { webError: new Error('Login timed out. Click status bar to retry.'), loginCancelled: false };
-                } else if (loginError.message === 'CHROME_NOT_FOUND') {
-                    return { webError: new Error('Chromium-based browser required. Install Chrome, Chromium, Brave, or Edge to fetch Claude.ai usage stats.'), loginCancelled: false };
-                }
-                return { webError: loginError, loginCancelled: false };
-            }
-        }
-
-        if (error.message === 'LOGIN_IN_PROGRESS') {
-            console.log('Claudemeter: Another instance is logging in, skipping this fetch');
-            return { webError: null, loginCancelled: false };
-        }
-
-        console.error('Web fetch failed:', error);
-        return { webError: error, loginCancelled: false };
-    }
+// After a web fetch, refine those signals with the authoritative OAuth
+// /profile response (rate_limit_tier is the org's, more accurate than the
+// token blob's), and fill in display identity.
+function applyProfileSignals(accountInfo) {
+    seedTierFromToken();
+    if (!accountInfo) return;
+    if (!credentialsInfo) credentialsInfo = {};
+    if (accountInfo.rateLimitTier) credentialsInfo.rateLimitTier = accountInfo.rateLimitTier;
+    if (accountInfo.name && !credentialsInfo.displayName) credentialsInfo.displayName = accountInfo.name;
+    if (accountInfo.email && !credentialsInfo.email) credentialsInfo.email = accountInfo.email;
+    if (accountInfo.orgName && !credentialsInfo.organizationName) credentialsInfo.organizationName = accountInfo.orgName;
 }
 
-// Legacy: browser-based scraping (fallback if HTTP method breaks)
-async function fetchUsageLegacy(isManualRetry = false) {
-    if (!scraper) {
-        scraper = new (getScraperModule().ClaudeUsageScraper)();
-        fileLog('Created new ClaudeUsageScraper instance (legacy mode)');
-    }
-
-    try {
-        const hasSession = scraper.hasExistingSession();
-        fileLog(`Legacy: hasExistingSession() = ${hasSession}`);
-
-        if (hasSession) {
-            fileLog('Legacy: Initializing scraper (headless)...');
-            await scraper.initialize(false);
-        }
-
-        if (isManualRetry) {
-            getLegacyBrowserState().clear();
-        }
-
-        fileLog('Legacy: Calling ensureLoggedIn()...');
-        await scraper.ensureLoggedIn();
-        fileLog('Legacy: ensureLoggedIn() completed');
-
-        fileLog('Legacy: Calling fetchUsageData()...');
-        usageData = await scraper.fetchUsageData();
-        fileLog('Legacy: fetchUsageData() completed successfully');
-
-        return { webError: null, loginCancelled: false };
-    } catch (error) {
-        fileLog(`Legacy: fetchUsage() error: ${error.message}`);
-        if (error.message === 'CHROME_NOT_FOUND') {
-            return { webError: new Error('Chromium-based browser required. Install Chrome, Chromium, Brave, or Edge to fetch Claude.ai usage stats.'), loginCancelled: false };
-        } else if (error.message === 'LOGIN_CANCELLED') {
-            return { webError: new Error('Login cancelled. Running in token-only mode. Click status bar to retry.'), loginCancelled: true };
-        } else if (error.message === 'LOGIN_FAILED_SHARED') {
-            return { webError: new Error('Login failed in another window. Running in token-only mode.'), loginCancelled: true };
-        } else if (error.message === 'LOGIN_IN_PROGRESS') {
-            return { webError: null, loginCancelled: false };
-        } else if (error.message === 'LOGIN_TIMEOUT') {
-            return { webError: new Error('Login timed out. Click status bar to retry.'), loginCancelled: false };
-        } else if (error.message.includes('Browser busy')) {
-            return { webError: new Error('Another Claudemeter is logging in. Please wait and retry.'), loginCancelled: false };
-        }
-        return { webError: error, loginCancelled: false };
-    } finally {
-        if (scraper) {
-            fileLog('Legacy: Closing scraper...');
-            await scraper.close();
-            fileLog('Legacy: Scraper closed');
-        }
-    }
+function updateStatusBarWithAllData() {
+    const activityStats = getActivityStats(usageData, currentSessionData);
+    updateStatusBar(statusBarItem, usageData, activityStats, currentSessionData, credentialsInfo);
 }
 
-async function updateStatusBarWithAllData() {
-    const sessionData = sessionTracker ? await sessionTracker.getCurrentSession() : null;
-    const activityStats = getActivityStats(usageData, sessionData);
-    updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo);
-}
-
-function createAutoRefreshTimer(minutes) {
-    const clampedMinutes = Math.max(1, Math.min(60, minutes));
-
-    if (clampedMinutes <= 0) return null;
-
-    console.log(`Web auto-refresh enabled: fetching Claude.ai usage every ${clampedMinutes} minutes`);
-
+// Web-usage refresh cadence, in seconds. Also the shared-cache max-age (see
+// usageRefreshSeconds), so the timer and the cache agree: a tick fetches only
+// when the shared cache has gone stale, and only one window actually hits the
+// network. Floor 30s.
+function createAutoRefreshTimer(seconds) {
+    const clamped = Math.max(30, Math.min(3600, seconds));
+    console.log(`Web auto-refresh enabled: every ${clamped}s (shared across windows)`);
     return setInterval(async () => {
         await performFetch();
-    }, clampedMinutes * 60 * 1000);
+    }, clamped * 1000);
 }
 
 function createLocalRefreshTimer(seconds) {
@@ -332,7 +354,7 @@ async function setupTokenMonitoring(context) {
         debugLog(`Workspace path: ${currentWorkspacePath}`);
         fileLog(`Extension activated for workspace: ${currentWorkspacePath}`);
     } else {
-        debugLog('No workspace folder open - will use global token search');
+        debugLog('No workspace folder open - Tk gauge stays blank (no project session)');
         fileLog('Extension activated (no workspace)');
     }
 
@@ -389,8 +411,8 @@ async function setupTokenMonitoring(context) {
 }
 
 // Build a full diagnostic state dump for bug reports. No secrets (we
-// deliberately omit the OAuth access/refresh tokens and the sessionKey
-// cookie value itself - only boolean "has" and expiry are reported).
+// deliberately omit the OAuth access/refresh tokens themselves - only
+// presence booleans, source, scopes and expiry are reported).
 //
 // The dump is the single source of truth for "what does claudemeter see
 // right now?". Reports with a dump attached are triagable; reports without
@@ -416,13 +438,21 @@ function buildStateDump() {
         try { return findSessionForWorkspace(currentWorkspacePath); } catch { return null; }
     })();
 
-    const fetcherDiag = (() => {
+    // Token state (no secrets - only presence, source, expiry, scopes).
+    const tokenState = (() => {
         try {
-            if (httpFetcher && typeof httpFetcher.getDiagnostics === 'function') {
-                return httpFetcher.getDiagnostics();
-            }
-        } catch { /* ignore */ }
-        return null;
+            const t = readToken();
+            if (!t.ok) return { ok: false, reason: t.reason, authOverride: detectAuthOverride() };
+            return {
+                ok: true,
+                source: t.source,
+                expiresAt: t.expiresAt,
+                expired: t.expired,
+                scopes: t.scopes,
+                subscriptionType: t.subscriptionType,
+                rateLimitTier: t.rateLimitTier,
+            };
+        } catch { return null; }
     })();
 
     // Redact anything that looks sensitive. The dump is safe to paste into
@@ -449,7 +479,7 @@ function buildStateDump() {
     return {
         timestamp: new Date().toISOString(),
         version: getExtensionVersion(),
-        mode: isLegacyMode() ? 'legacy-scraper' : 'http-fetcher',
+        mode: 'oauth',
         workspacePath: currentWorkspacePath,
         identity: getIdentityKey(creds),
         credentials: safeCreds,
@@ -465,7 +495,7 @@ function buildStateDump() {
             kind: workspaceSession.kind,
             entrypoint: workspaceSession.entrypoint,
         } : null,
-        fetcher: fetcherDiag,
+        token: tokenState,
         usage: usageData ? {
             timestamp: usageData.timestamp,
             usagePercent: usageData.usagePercent,
@@ -485,8 +515,11 @@ function getExtensionVersion() {
 }
 
 function setupCredentialsMonitoring(context) {
-    // Read credentials on startup
+    // Read credentials on startup, then seed tier signals from the token so
+    // the Tk gauge has the correct profile even on macOS (Keychain) before
+    // the first web fetch.
     credentialsInfo = readCredentials();
+    seedTierFromToken();
     if (credentialsInfo) {
         fileLog(`Credentials loaded: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
     } else {
@@ -536,35 +569,12 @@ function setupCredentialsMonitoring(context) {
         fileLog(`Account switched via ${sourceLabel} (${fmt(previousKey)} → ${fmt(currentKey)})`);
         fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
 
-        // Clear session so next fetch uses the new account
-        if (isLegacyMode()) {
-            getLegacyBrowserState().clear();
-            if (fs.existsSync(PATHS.BROWSER_SESSION_DIR)) {
-                try {
-                    fs.rmSync(PATHS.BROWSER_SESSION_DIR, { recursive: true, force: true });
-                    fileLog('Browser session cleared for account switch');
-                } catch (e) {
-                    fileLog(`Failed to clear browser session: ${e.message}`);
-                }
-            }
-        } else if (httpFetcher) {
-            // Clear login browser cache so the browser opens fresh for the
-            // new account rather than auto-logging in as the old one
-            httpFetcher.clearSession({ clearLoginBrowserCache: true });
-        }
-        loginWasCancelled = false;
-
-        // Prompt user to log in for the new account
-        const action = await vscode.window.showInformationMessage(
-            'Claudemeter: Account switched. Log in to refresh usage data.',
-            'Log In Again',
-            'Later'
-        );
-        if (action === 'Log In Again') {
-            performFetch(true).catch(err => {
-                fileLog(`Post-switch fetch failed: ${err.message}`);
-            });
-        }
+        // No session to clear -- the OAuth token in the store already belongs
+        // to the new account (that's what changed). Just re-fetch; the new
+        // account's usage comes back automatically.
+        performFetch(false).catch(err => {
+            fileLog(`Post-switch fetch failed: ${err.message}`);
+        });
     };
 
     // Watcher 1: ~/.claude/.credentials.json
@@ -630,39 +640,50 @@ async function updateTokensFromJsonl(silent = false) {
 
         if (statusBarItem) {
             if (usage.isActive && usage.totalTokens > 0) {
+                // Feed the resolver the authoritative live signals when a web
+                // fetch has completed. accountInfo comes from the OAuth /profile
+                // response (usageData); it's null on tokenOnlyMode or before the
+                // first fetch, and the resolver falls back to local creds then.
+                const liveAccountInfo = usageData?.accountInfo || null;
+                const resolved = resolveTokenLimit({
+                    modelIds: usage.modelIds,
+                    observedFloor: usage.totalTokens,
+                    capabilities: liveAccountInfo?.capabilities || null,
+                    subscriptionType: liveAccountInfo?.subscriptionType || credentialsInfo?.subscriptionType || null,
+                });
+                if (!silent) {
+                    debugLog(`Context window resolved: ${resolved.limit.toLocaleString()} (source=${resolved.source}, confidence=${resolved.confidence})`);
+                }
                 if (sessionTracker) {
-                    let currentSession = await sessionTracker.getCurrentSession();
-                    if (!currentSession) {
-                        currentSession = await sessionTracker.startSession('Claude Code session (auto-created)');
-                        debugLog(`Created new session: ${currentSession.sessionId}`);
-                    }
-                    // Build the full signal context so the resolver can use
-                    // the authoritative live API signals when available.
-                    // capabilities + webRateLimitTier come from the most
-                    // recent /api/bootstrap response via the identity cache;
-                    // they'll be null on tokenOnlyMode or before the first
-                    // fetch completes, and the resolver falls back to local
-                    // credentials in that case.
-                    const liveAccountInfo = httpFetcher?.accountInfo || null;
-                    const resolved = resolveTokenLimit({
-                        modelIds: usage.modelIds,
-                        observedFloor: usage.totalTokens,
-                        capabilities: liveAccountInfo?.capabilities || null,
-                        subscriptionType: credentialsInfo?.subscriptionType || null,
-                    });
-                    if (!silent) {
-                        debugLog(`Context window resolved: ${resolved.limit.toLocaleString()} (source=${resolved.source}, confidence=${resolved.confidence})`);
+                    // Persist for history; this window owns its own session so
+                    // this never reads another project's data.
+                    let s = await sessionTracker.getCurrentSession();
+                    if (!s) {
+                        s = await sessionTracker.startSession('Claude Code session (auto-created)');
+                        debugLog(`Created new session: ${s.sessionId}`);
                     }
                     await sessionTracker.updateTokens(usage.totalTokens, resolved.limit, resolved);
                 }
 
-                const sessionData = await sessionTracker.getCurrentSession();
-                const activityStats = getActivityStats(usageData, sessionData);
-                updateStatusBar(statusBarItem, usageData, activityStats, sessionData, credentialsInfo);
+                // The Tk display value is built straight from THIS window's live
+                // read - not the global tracker - so it can never show another
+                // project's context.
+                currentSessionData = {
+                    tokenUsage: {
+                        current: usage.totalTokens,
+                        limit: resolved.limit,
+                        remaining: resolved.limit - usage.totalTokens,
+                        lastUpdate: new Date().toISOString(),
+                        limitSource: resolved.source,
+                        limitConfidence: resolved.confidence,
+                    },
+                };
             } else {
-                const activityStats = getActivityStats(usageData, null);
-                updateStatusBar(statusBarItem, usageData, activityStats, null, credentialsInfo);
+                // No active session for this workspace (or no workspace at all).
+                currentSessionData = null;
             }
+            const activityStats = getActivityStats(usageData, currentSessionData);
+            updateStatusBar(statusBarItem, usageData, activityStats, currentSessionData, credentialsInfo);
         }
     } catch (error) {
         debugLog(`Error updating tokens: ${error.message}`);
@@ -826,8 +847,8 @@ async function activate(context) {
     // Register commands
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.FETCH_NOW, async () => {
-            const { webError, loginCancelled } = await performFetch(true);
-            if (webError && !loginCancelled) {
+            const { webError, handled } = await performFetch(true);
+            if (webError && !handled) {
                 vscode.window.showErrorMessage(`Failed to fetch Claude usage: ${webError.message}`);
             }
         })
@@ -870,27 +891,20 @@ async function activate(context) {
             const debugChannel = getDebugChannel();
 
             debugChannel.appendLine(`\n=== DIAGNOSTICS (${new Date().toLocaleString()}) ===`);
-            debugChannel.appendLine(`Mode: ${isLegacyMode() ? 'Legacy (browser scraper)' : 'HTTP (streamlined)'}`);
+            debugChannel.appendLine('Mode: OAuth (browserless)');
 
-            if (isLegacyMode() && scraper) {
-                const diag = scraper.getDiagnostics();
-                debugChannel.appendLine('Scraper State (Legacy):');
-                debugChannel.appendLine(`  Initialised: ${diag.isInitialized}`);
-                debugChannel.appendLine(`  Has Browser: ${diag.hasBrowser}`);
-                debugChannel.appendLine(`  Has API Endpoint: ${diag.hasApiEndpoint}`);
-                debugChannel.appendLine(`  Org ID: ${diag.currentOrgId || 'none'}`);
-                debugChannel.appendLine(`  Account: ${diag.accountName || 'unknown'}`);
-            } else if (httpFetcher) {
-                const diag = httpFetcher.getDiagnostics();
-                debugChannel.appendLine('Fetcher State:');
-                debugChannel.appendLine(`  Has Cookie: ${diag.hasCookie}`);
-                debugChannel.appendLine(`  Cookie Expires: ${diag.cookieExpires || 'N/A'}`);
-                debugChannel.appendLine(`  Cookie Saved At: ${diag.cookieSavedAt || 'N/A'}`);
-                debugChannel.appendLine(`  Org ID: ${diag.orgId || 'none'}`);
-                debugChannel.appendLine(`  Subscription: ${diag.subscriptionType || 'unknown'}`);
-                debugChannel.appendLine(`  Rate Limit Tier: ${diag.rateLimitTier || 'unknown'}`);
+            const tok = readToken();
+            debugChannel.appendLine('Token State:');
+            if (tok.ok) {
+                debugChannel.appendLine(`  Source: ${tok.source}`);
+                debugChannel.appendLine(`  Expires: ${tok.expiresAt ? new Date(tok.expiresAt).toISOString() : 'N/A'} (expired=${tok.expired})`);
+                debugChannel.appendLine(`  Subscription: ${tok.subscriptionType || 'unknown'}`);
+                debugChannel.appendLine(`  Rate Limit Tier: ${tok.rateLimitTier || 'unknown'}`);
+                debugChannel.appendLine(`  Scopes: ${(tok.scopes || []).join(', ') || 'none'}`);
             } else {
-                debugChannel.appendLine('Fetcher not initialised');
+                debugChannel.appendLine(`  No usable token (${tok.reason})`);
+                const override = detectAuthOverride();
+                if (override) debugChannel.appendLine(`  Auth override active: ${override}`);
             }
 
             debugChannel.appendLine('');
@@ -910,193 +924,26 @@ async function activate(context) {
         })
     );
 
+    // Log into Claude Code. Runs `claude auth login` in a terminal --
+    // Anthropic's own OAuth in the user's real browser (SSO works). When it
+    // finishes, Claude Code writes the token to the shared store and we pick
+    // it up. Replaces the old browser-login / paste-cookie / resync commands.
     context.subscriptions.push(
-        vscode.commands.registerCommand(COMMANDS.RESET_CONNECTION, async () => {
-            if (!isLegacyMode()) {
-                vscode.window.showInformationMessage('Reset Connection is only available in legacy scraper mode. Use "Clear Session" instead.');
+        vscode.commands.registerCommand(COMMANDS.LOGIN_CLI, async () => {
+            const override = detectAuthOverride();
+            if (override) {
+                vscode.window.showInformationMessage(
+                    `Claudemeter reads Claude Code's subscription token, but ${override} is set - Claude Code is using that instead. Subscription usage is unavailable while it's set.`
+                );
                 return;
             }
-            try {
-                if (scraper) {
-                    const result = await scraper.reset();
-                    vscode.window.showInformationMessage(result.message);
-                } else {
-                    vscode.window.showWarningMessage('Scraper not initialised');
-                }
-            } catch (error) {
-                vscode.window.showErrorMessage(`Reset failed: ${error.message}`);
-            }
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand(COMMANDS.CLEAR_SESSION, async () => {
-            try {
-                const confirm = await vscode.window.showWarningMessage(
-                    'This will delete your saved session. You will need to log in to Claude.ai again. Continue?',
-                    { modal: true },
-                    'Yes, Clear Session'
-                );
-                if (confirm === 'Yes, Clear Session') {
-                    if (isLegacyMode()) {
-                        if (!scraper) scraper = new (getScraperModule().ClaudeUsageScraper)();
-                        const result = await scraper.clearSession();
-                        vscode.window.showInformationMessage(result.message);
-                    } else {
-                        if (!httpFetcher) httpFetcher = new ClaudeHttpFetcher();
-                        const result = httpFetcher.clearSession();
-                        vscode.window.showInformationMessage(result.message);
-                    }
-                    loginWasCancelled = false;
-                }
-            } catch (error) {
-                vscode.window.showErrorMessage(`Clear session failed: ${error.message}`);
-            }
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand(COMMANDS.RESYNC_ACCOUNT, async () => {
-            // Clears the saved session and triggers a fresh browser login.
-            // Use this after running /login in the Claude Code CLI when the
-            // automatic account-switch detection didn't fire (e.g. personal -> personal).
-            try {
-                if (!httpFetcher) httpFetcher = new ClaudeHttpFetcher();
-                httpFetcher.clearSession({ clearLoginBrowserCache: true });
-                loginWasCancelled = false;
-                fileLog('Resync Account: session cleared, starting login flow');
+            if (readToken().ok) {
+                // Already have a token -- just refetch rather than re-login.
                 const { webError } = await performFetch(true);
-                if (webError) {
-                    vscode.window.showErrorMessage(`Login failed: ${webError.message}`);
-                }
-            } catch (error) {
-                vscode.window.showErrorMessage(`Resync failed: ${error.message}`);
+                if (webError) vscode.window.showErrorMessage(webError.message);
+                return;
             }
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand(COMMANDS.OPEN_BROWSER, async () => {
-            try {
-                vscode.window.showInformationMessage('Opening browser for Claude.ai login...');
-                if (isLegacyMode()) {
-                    if (!scraper) scraper = new (getScraperModule().ClaudeUsageScraper)();
-                    const result = await scraper.forceOpenBrowser();
-                    if (result.success) {
-                        vscode.window.showInformationMessage(result.message);
-                    } else {
-                        vscode.window.showErrorMessage(result.message);
-                    }
-                } else {
-                    if (!httpFetcher) httpFetcher = new ClaudeHttpFetcher();
-                    await httpFetcher.login();
-                    const { webError } = await performFetch(true);
-                    if (webError) {
-                        vscode.window.showErrorMessage(`Fetch failed after login: ${webError.message}`);
-                    }
-                }
-            } catch (error) {
-                // Offer the cookie-paste fallback only after the
-                // normal browser flow has failed. It's a technical
-                // workaround (DevTools required) so we don't surface
-                // it as a peer in the command palette -- the action
-                // button is the only entry point for users.
-                const FALLBACK = 'Try cookie paste (advanced)';
-                let pick;
-                if (error.message === 'LOGIN_CANCELLED') {
-                    vscode.window.showInformationMessage('Login cancelled.');
-                    return;
-                } else if (error.message === 'CHROME_NOT_FOUND') {
-                    pick = await vscode.window.showErrorMessage(
-                        'No Chromium-based browser found. Install Chrome / Chromium / Brave / Edge, or use the advanced cookie-paste login.',
-                        FALLBACK
-                    );
-                } else if (error.message === 'LOGIN_TIMEOUT') {
-                    pick = await vscode.window.showErrorMessage(
-                        'Browser login timed out. If the login completed in a different browser (email link, SSO popout), use the advanced cookie-paste flow.',
-                        FALLBACK
-                    );
-                } else {
-                    pick = await vscode.window.showErrorMessage(
-                        `Browser login failed: ${error.message}`,
-                        FALLBACK
-                    );
-                }
-                if (pick === FALLBACK) {
-                    await vscode.commands.executeCommand(COMMANDS.LOGIN_PASTE_COOKIE);
-                }
-            }
-        })
-    );
-
-    // Cookie-paste fallback. Not surfaced in the command palette --
-    // entry point is the action button on the spawned-browser failure
-    // toasts above. Issue #37 cases this exists for: email-confirmation
-    // links routing to a different browser, SSO popouts that escape
-    // our spawned context, password managers that won't autofill into
-    // a foreign Chrome instance.
-    context.subscriptions.push(
-        vscode.commands.registerCommand(COMMANDS.LOGIN_PASTE_COOKIE, async () => {
-            try {
-                if (isLegacyMode()) {
-                    vscode.window.showErrorMessage('Paste-cookie login is only available in v2 mode. Disable `claudemeter.useLegacyScraper` to use it.');
-                    return;
-                }
-
-                const proceed = await vscode.window.showInformationMessage(
-                    'Advanced fallback login. Use this only if the normal browser login failed (e.g. email confirmation opened a different browser, or SSO landed in a separate window).\n\n' +
-                    '  1. We open claude.ai in your default browser. Log in there.\n' +
-                    '  2. In that browser, open DevTools (F12 / right-click > Inspect) > Application > Cookies > https://claude.ai. Copy the value of the `sessionKey` cookie.\n' +
-                    '  3. Paste it here.\n\n' +
-                    'Requires DevTools. Most users should use Claudemeter: Login to Claude.ai instead.',
-                    { modal: true },
-                    'Open claude.ai'
-                );
-                if (proceed !== 'Open claude.ai') return;
-
-                await vscode.env.openExternal(vscode.Uri.parse('https://claude.ai/login'));
-
-                const pasted = await vscode.window.showInputBox({
-                    title: 'Paste sessionKey cookie value',
-                    prompt: 'From DevTools > Application > Cookies > https://claude.ai. Either the raw value or the full `sessionKey=...` form.',
-                    password: true,
-                    ignoreFocusOut: true,
-                    placeHolder: 'sk-ant-sid... (around 130 characters)',
-                    validateInput: (v) => {
-                        const t = (v || '').trim();
-                        if (!t) return 'Cookie value required';
-                        if (t.length < 64) return 'Value looks too short to be a sessionKey';
-                        return null;
-                    },
-                });
-                if (pasted === undefined) return;
-
-                if (!httpFetcher) httpFetcher = new ClaudeHttpFetcher();
-                const { email } = await vscode.window.withProgress(
-                    {
-                        location: vscode.ProgressLocation.Notification,
-                        title: 'Validating sessionKey with Claude.ai...',
-                        cancellable: false,
-                    },
-                    async () => httpFetcher.loginWithPastedCookie(pasted)
-                );
-
-                vscode.window.showInformationMessage(`Logged in as ${email}.`);
-                const { webError } = await performFetch(true);
-                if (webError) {
-                    vscode.window.showErrorMessage(`Fetch failed after login: ${webError.message}`);
-                }
-            } catch (error) {
-                if (error.message === 'LOGIN_CANCELLED') {
-                    vscode.window.showInformationMessage('Login cancelled.');
-                } else if (error.message === 'INVALID_COOKIE') {
-                    vscode.window.showErrorMessage('Claude.ai rejected that cookie. Check you copied the value of `sessionKey` (not another cookie) and that it is current.');
-                } else if (error.message.startsWith('WRONG_ACCOUNT:')) {
-                    vscode.window.showErrorMessage(`${error.message}. Log in to claude.ai as the same account Claude Code is using, then paste that cookie.`);
-                } else {
-                    vscode.window.showErrorMessage(`Paste-cookie login failed: ${error.message}`);
-                }
-            }
+            await beginLoginOrInstall();
         })
     );
 
@@ -1148,60 +995,44 @@ async function activate(context) {
     if (config.get('fetchOnStartup', true) && !config.get('tokenOnlyMode', false)) {
         console.log('Claudemeter: Scheduling fetch on startup...');
         setTimeout(async () => {
-            // Check if we have a session before fetching
-            const fetcher = isLegacyMode() ? null : new ClaudeHttpFetcher();
-            const hasSession = isLegacyMode()
-                ? (getScraperModule().ClaudeUsageScraper.prototype.hasExistingSession
-                    ? new (getScraperModule().ClaudeUsageScraper)().hasExistingSession()
-                    : false)
-                : (fetcher && fetcher.hasExistingSession());
-
-            if (!hasSession && !isLegacyMode()) {
-                // First v2 run - no session cookie. Prompt user to log in.
-                httpFetcher = fetcher;
-                fileLog('No session cookie found on startup — prompting user to log in');
-                const action = await vscode.window.showInformationMessage(
-                    'Claudemeter: Log in to Claude.ai to see your usage limits.',
-                    'Log In Now',
-                    'Later'
-                );
-                if (action === 'Log In Now') {
-                    await performFetch(true);
-                }
-                return;
-            }
-
-            console.log('Claudemeter: Starting fetch on startup...');
+            // isManual=true on startup so a first-run user with no token gets
+            // the one-time login prompt. With a token it just fetches quietly.
             try {
-                if (fetcher && !isLegacyMode()) httpFetcher = fetcher;
-                const result = await performFetch();
+                const result = await performFetch(true);
                 if (result.webError) {
-                    console.log('Claudemeter: Startup fetch web error:', result.webError.message);
+                    fileLog(`Startup fetch web note: ${result.webError.message}`);
                 }
-                console.log('Claudemeter: Fetch on startup complete');
             } catch (error) {
                 console.error('Claudemeter: Fetch on startup failed:', error);
             }
         }, 2000);
     }
 
-    const autoRefreshMinutes = config.get('autoRefreshMinutes', 5);
-    autoRefreshTimer = createAutoRefreshTimer(autoRefreshMinutes);
+    // Watch the credential store so a Claude Code token rotation / fresh
+    // login is picked up instantly (file platforms; macOS Keychain relies
+    // on the per-fetch re-read + post-login poll). Skip in tokenOnlyMode.
+    if (!config.get('tokenOnlyMode', false)) {
+        tokenWatcherDispose = watchToken(() => {
+            fileLog('Credential store changed - refetching');
+            performFetch(false).catch((err) => fileLog(`Watcher refetch failed: ${err.message}`));
+        });
+        context.subscriptions.push({ dispose: () => { if (tokenWatcherDispose) tokenWatcherDispose(); } });
+    }
+
+    autoRefreshTimer = createAutoRefreshTimer(config.get('usageRefreshSeconds', 120));
 
     const localRefreshSeconds = config.get('localRefreshSeconds', 15);
     localRefreshTimer = createLocalRefreshTimer(localRefreshSeconds);
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(async (e) => {
-            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.autoRefreshMinutes`)) {
+            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.usageRefreshSeconds`)) {
                 if (autoRefreshTimer) {
                     clearInterval(autoRefreshTimer);
                     autoRefreshTimer = null;
                 }
-
                 const newConfig = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-                const newAutoRefresh = newConfig.get('autoRefreshMinutes', 5);
-                autoRefreshTimer = createAutoRefreshTimer(newAutoRefresh);
+                autoRefreshTimer = createAutoRefreshTimer(newConfig.get('usageRefreshSeconds', 120));
             }
 
             if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.localRefreshSeconds`)) {
@@ -1251,12 +1082,14 @@ async function deactivate() {
         jsonlUpdateTimer = null;
     }
 
-    if (scraper) {
-        try {
-            await scraper.close();
-        } catch (err) {
-            console.error('Error closing scraper:', err);
-        }
+    if (awaitTokenTimer) {
+        clearInterval(awaitTokenTimer);
+        awaitTokenTimer = null;
+    }
+
+    if (tokenWatcherDispose) {
+        try { tokenWatcherDispose(); } catch { /* already gone */ }
+        tokenWatcherDispose = null;
     }
 }
 

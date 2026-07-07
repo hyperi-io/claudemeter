@@ -25,11 +25,11 @@ const COMMANDS = {
     OPEN_SETTINGS: 'claudemeter.openSettings',
     START_SESSION: 'claudemeter.startNewSession',
     SHOW_DEBUG: 'claudemeter.showDebug',
-    RESET_CONNECTION: 'claudemeter.resetConnection',
-    CLEAR_SESSION: 'claudemeter.clearSession',
-    OPEN_BROWSER: 'claudemeter.openBrowser',
-    LOGIN_PASTE_COOKIE: 'claudemeter.loginPasteCookie',
-    RESYNC_ACCOUNT: 'claudemeter.resyncAccount',
+    // Launches `claude auth login` in a terminal when no OAuth token is
+    // found. Replaced the old browser-login / paste-cookie / resync
+    // commands -- claudemeter no longer owns a session, it tracks Claude
+    // Code's token.
+    LOGIN_CLI: 'claudemeter.login',
     DUMP_STATE: 'claudemeter.dumpState',
     SIMULATE_STATUS: 'claudemeter.simulateStatus',
 };
@@ -51,17 +51,7 @@ const CONFIG_DIR = getConfigDir();
 
 const PATHS = {
     CONFIG_DIR: CONFIG_DIR,
-    SESSION_COOKIE_FILE: path.join(CONFIG_DIR, 'session-cookie.json'),
-    // Device/anti-abuse cookies (anthropic-device-id, cf_clearance) re-injected
-    // into the login popup so repeated logins look like a returning device.
-    // Device-scoped, NOT account-scoped -- kept across account switches.
-    DEVICE_COOKIES_FILE: path.join(CONFIG_DIR, 'device-cookies.json'),
     SESSION_DATA_FILE: path.join(CONFIG_DIR, 'session-data.json'),
-    USAGE_HISTORY_FILE: path.join(CONFIG_DIR, 'usage-history.json'),
-    // Legacy scraper paths (used when useLegacyScraper is enabled)
-    BROWSER_SESSION_DIR: path.join(CONFIG_DIR, 'browser-session'),
-    BROWSER_LOCK_FILE: path.join(CONFIG_DIR, 'browser.lock'),
-    BROWSER_STATE_FILE: path.join(CONFIG_DIR, 'browser-state.json'),
 };
 
 const { FALLBACK_LIMIT: DEFAULT_TOKEN_LIMIT } = require('./modelContextWindows');
@@ -188,80 +178,6 @@ function getDefaultDebugLogPath() {
     return path.join(PATHS.CONFIG_DIR, 'debug.log');
 }
 
-// Timeouts in milliseconds
-const TIMEOUTS = {
-    PAGE_LOAD: 45000,
-    // The very first page.goto(login) on a fresh user-data dir often
-    // sits behind Cloudflare's "Verify you are human" interstitial,
-    // a password-manager dance, or a slow corporate network. 45s is
-    // not enough for the realistic case. Use 5 min for the initial
-    // login navigation only - routine post-login fetches stay on
-    // PAGE_LOAD so they fail fast instead of hanging the auto-refresh.
-    INITIAL_LOGIN_PAGE_LOAD: 300000,
-    LOGIN_WAIT: 300000,
-    LOGIN_POLL: 2000,
-    API_RETRY_DELAY: 2000,
-    SESSION_DURATION: 3600000
-};
-
-// Legacy scraper viewport (used when useLegacyScraper is enabled)
-const VIEWPORT = {
-    WIDTH: 1280,
-    HEIGHT: 800
-};
-
-// Single source of truth for the User-Agent claudemeter presents to
-// Claude.ai. Used by the HTTP fetcher (in BROWSER_HEADERS) and by both
-// browser-driving paths (login flow + legacy scraper).
-//
-// Chrome uses a frozen UA format: `Chrome/$MAJOR.0.0.0` (minor/patch
-// always 0.0.0 since Chrome 95). Only the major version moves.
-// Re-check stable version every ~3 months: https://chromereleases.googleblog.com/
-// Current as of 2026-05-13: Chrome 148 (stable since May 5, 2026).
-const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
-
-// Chrome/Chromium launch arguments shared between the login flow
-// (httpFetcher.js) and the legacy scraper (scraper.js). The
-// remote-debugging port is injected per-launch so two parallel browser
-// instances don't fight over the same port.
-//
-// The extension runs on user desktops, NOT in containers, so the
-// sandbox-disabling flags (--no-sandbox, --disable-setuid-sandbox)
-// that were copied from container templates have been removed - they
-// triggered visible "Stability and security will suffer" warnings on
-// the login window without any benefit on a normal desktop install
-// (issue #37).
-//
-// Flags chosen for: shared-memory fallback (--disable-dev-shm-usage),
-// explicit window-size (--window-size: without it Chrome opens at its
-// default ~640x480 even when viewport is set -- the "weird tiny window"
-// in #37), and quieter UX (--disable-session-crashed-bubble,
-// --disable-infobars, --noerrdialogs, --hide-crash-restore-bubble,
-// --no-first-run, --no-default-browser-check).
-//
-// Dropped --disable-blink-features=AutomationControlled: it tripped
-// Chromium's bad-flag banner. webdriver masking now via addInitScript.
-function BROWSER_LAUNCH_ARGS(remoteDebuggingPort) {
-    return [
-        '--disable-dev-shm-usage',
-        '--disable-session-crashed-bubble',
-        '--disable-infobars',
-        '--noerrdialogs',
-        '--hide-crash-restore-bubble',
-        '--no-first-run',
-        '--no-default-browser-check',
-        `--window-size=${VIEWPORT.WIDTH},${VIEWPORT.HEIGHT}`,
-        `--remote-debugging-port=${remoteDebuggingPort}`,
-    ];
-}
-
-const CLAUDE_URLS = {
-    BASE: 'https://claude.ai',
-    LOGIN: 'https://claude.ai/login',
-    USAGE: 'https://claude.ai/settings/usage',
-    API_ORGS: 'https://claude.ai/api/organizations'
-};
-
 // Debug output channel (lazy initialised)
 let debugChannel = null;
 let runningInDevMode = false;
@@ -300,9 +216,12 @@ function sleep(ms) {
 // Accepts an optional `ctx` object with any of these pre-fetched signals:
 //   modelIds         - array of model IDs from JSONL (e.g. from claudeDataLoader)
 //   observedFloor    - max cache_read tokens observed (e.g. highestCacheRead)
-//   capabilities     - live /api/bootstrap org.capabilities array
-//                      (from httpFetcher AccountIdentityCache.accountInfo.capabilities)
-//   subscriptionType - local .credentials.json subscriptionType fallback
+//   capabilities     - live org capabilities array, when a caller has one.
+//                      The OAuth /profile payload does not expose this, so it
+//                      is currently always null and the resolver leans on
+//                      subscriptionType + the s1m-access cache instead. Kept
+//                      in the signature in case a future signal supplies it.
+//   subscriptionType - subscriptionType ('max'/'pro') from the token/profile
 //
 // Signals not passed in ctx are resolved here from VS Code settings /
 // ~/.claude.json etc. This design lets call sites that already have
@@ -502,30 +421,11 @@ function formatCompact(value) {
     return Math.round(value).toString();
 }
 
-// Find an available TCP port (for browser debugging)
-function findAvailablePort() {
-    const net = require('net');
-    return new Promise((resolve, reject) => {
-        const server = net.createServer();
-        server.unref();
-        server.on('error', reject);
-        server.listen(0, () => {
-            const port = server.address().port;
-            server.close(() => resolve(port));
-        });
-    });
-}
-
 module.exports = {
     CONFIG_NAMESPACE,
     COMMANDS,
     PATHS,
     DEFAULT_TOKEN_LIMIT,
-    TIMEOUTS,
-    VIEWPORT,
-    BROWSER_UA,
-    BROWSER_LAUNCH_ARGS,
-    CLAUDE_URLS,
     getTokenLimit,
     resolveTokenLimit,
     getTimeFormat,
@@ -546,5 +446,4 @@ module.exports = {
     fileLog,
     getDefaultDebugLogPath,
     splitLines,
-    findAvailablePort
 };

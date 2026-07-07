@@ -15,18 +15,20 @@ issues.
 The marketplace artifact `dist/extension.js` is built from `extension.js`
 via `node esbuild.js --production`.
 
-Claudemeter uses `playwright-core` for its browser-driving needs (the
-one-time login flow and the opt-in legacy scraper). `playwright-core`
-ships with **zero npm runtime dependencies** — its driver is bundled
-internally as a self-contained native binary. There is no
-proxy-agent / pac-proxy-agent / basic-ftp / get-uri transitive chain
-to defend against.
+Claudemeter has **zero runtime dependencies** (`package.json`
+`dependencies` is empty). It ships no browser, no Chromium, and no
+scraping stack — usage is fetched with the platform `fetch` from the
+first-party `api.anthropic.com` OAuth endpoints. The only third-party
+packages are dev-only (`esbuild`, `@vscode/vsce`, `eslint`, `vitest`),
+which never reach an installed extension.
 
-(For historical context: prior versions used `puppeteer-core`, whose
+(For historical context: earlier versions drove a browser to harvest a
+`claude.ai` session cookie — first `puppeteer-core` (whose
 `@puppeteer/browsers → proxy-agent → pac-proxy-agent → get-uri →
-basic-ftp` chain was the recurring source of advisories. We carried
-a build-time alias stub to strip that chain from the bundle. The
-migration to playwright-core removed both the chain and the stub.)
+basic-ftp` chain was a recurring advisory source, stripped via a
+build-time stub), then `playwright-core`. Both are gone: the switch to
+Claude Code's OAuth token removed the browser entirely, and with it the
+whole runtime-dependency surface.)
 
 ## Known accepted risks
 
@@ -74,13 +76,20 @@ fires:
 
 ## Credentials handling
 
-- Session cookies are stored under the OS config dir
-  (`%APPDATA%\claudemeter` / `~/Library/Application Support/claudemeter`
-  / `~/.config/claudemeter`) — never in the workspace, never in the
-  repo, and never logged in plaintext.
-- The HTTP fetcher reads Claude Code's existing credentials from
-  `~/.claude/.credentials.json`; we don't request, copy, or persist
-  the OAuth bearer token ourselves.
-- Debug logs (rotated under the config dir, max 256 KB by default) do
-  not include cookie values, bearer tokens, or org UUIDs. If you find
-  a log that does, please report per the section above.
+- Claudemeter reads Claude Code's existing OAuth token from the shared
+  store it writes — the macOS Keychain (`Claude Code-credentials`) or
+  `~/.claude/.credentials.json` on Linux/Windows (honouring
+  `CLAUDE_CONFIG_DIR`). It reads the token fresh per fetch and never
+  copies, persists, or writes it back — so it cannot disturb Claude
+  Code's own login.
+- The token is used only as the `Authorization: Bearer` header to
+  `https://api.anthropic.com`. Requests set `redirect: 'error'` so a
+  Bearer-bearing request is never followed to another host.
+- Claudemeter never refreshes the token. Claude Code owns the token
+  lifecycle (and Anthropic rotates refresh tokens); claudemeter only
+  tracks the current value, avoiding any chance of invalidating Claude
+  Code's session.
+- Debug logs (rotated under the config dir, max 256 KB by default) and
+  the **Dump State** report never include the token — only its
+  presence, source, scopes, and expiry. If you find a log that leaks a
+  token, please report per the section above.

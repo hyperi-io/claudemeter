@@ -103,7 +103,7 @@ class ClaudeDataLoader {
 
     async getProjectDataDirectory() {
         if (!this.projectDirName) {
-            this.log('No workspace path set, falling back to global search');
+            this.log('No workspace path set - no project directory');
             return null;
         }
 
@@ -343,11 +343,9 @@ class ClaudeDataLoader {
         }
 
         let dataDir;
-        let isProjectSpecific = false;
 
         if (this.projectDirName) {
             dataDir = await this.getProjectDataDirectory();
-            isProjectSpecific = !!dataDir;
             this.log(`   Project-specific dataDir = ${dataDir}`);
 
             if (!dataDir) {
@@ -364,12 +362,11 @@ class ClaudeDataLoader {
                 };
             }
         } else {
-            this.log('   No projectDirName set, using global search');
-            dataDir = await this.findClaudeDataDirectory();
-        }
-
-        if (!dataDir) {
-            this.log('Claude data directory not found');
+            // No workspace open (e.g. an empty VS Code window). There is no
+            // project to attribute a session to, so show nothing rather than
+            // leaking another project's context via a global search - the Tk
+            // gauge is per-project, only the web usage (Se/Wk) is account-global.
+            this.log('   No workspace open - no project session to show (Tk -)');
             return {
                 totalTokens: 0,
                 inputTokens: 0,
@@ -377,13 +374,16 @@ class ClaudeDataLoader {
                 cacheCreationTokens: 0,
                 cacheReadTokens: 0,
                 messageCount: 0,
-                isActive: false
+                isActive: false,
+                activeSessionCount: 0,
             };
         }
 
+        // Reaching here guarantees a project-specific dataDir (the no-workspace
+        // and project-not-found cases returned above).
         try {
             const allJsonlFiles = await this.findJsonlFiles(dataDir);
-            this.log(`Found ${allJsonlFiles.length} JSONL files in ${isProjectSpecific ? 'project' : 'global'} directory`);
+            this.log(`Found ${allJsonlFiles.length} JSONL files in the project directory`);
 
             // Filter to main session files (UUID format), excluding agent-* subprocesses
             const mainSessionFiles = allJsonlFiles.filter(filePath => {

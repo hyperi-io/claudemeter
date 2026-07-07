@@ -15,19 +15,19 @@ const { PROFILES } = require('../../src/tk/profiles');
 describe('rotGradientT — 1M window (max-20x, rot enabled)', () => {
     const profile = PROFILES['max-20x'];
     const window = 1_000_000;
-    // rotLightTokens = 300_000; yellow threshold = 947_000.
-    // zone span = 647_000.
+    // rotLightTokens = 400_000; yellow threshold = 947_000.
+    // zone span = 547_000; midpoint = 673_500.
 
-    it('below rot floor (299_999) → null', () => {
-        expect(rotGradientT(299_999, profile, window)).toBeNull();
+    it('below rot floor (399_999) → null', () => {
+        expect(rotGradientT(399_999, profile, window)).toBeNull();
     });
 
-    it('exactly at rot floor (300_000) → 0', () => {
-        expect(rotGradientT(300_000, profile, window)).toBe(0);
+    it('exactly at rot floor (400_000) → 0', () => {
+        expect(rotGradientT(400_000, profile, window)).toBe(0);
     });
 
-    it('midpoint of zone (623_500) → 0.5', () => {
-        expect(rotGradientT(623_500, profile, window)).toBeCloseTo(0.5, 5);
+    it('midpoint of zone (673_500) → 0.5', () => {
+        expect(rotGradientT(673_500, profile, window)).toBeCloseTo(0.5, 5);
     });
 
     it('just below yellow (946_999) → close to 1 but < 1', () => {
@@ -45,8 +45,8 @@ describe('rotGradientT — 1M window (max-20x, rot enabled)', () => {
     });
 
     it('is monotonically increasing across the zone', () => {
-        const a = rotGradientT(350_000, profile, window);
-        const b = rotGradientT(500_000, profile, window);
+        const a = rotGradientT(450_000, profile, window);
+        const b = rotGradientT(550_000, profile, window);
         const c = rotGradientT(900_000, profile, window);
         expect(a).toBeLessThan(b);
         expect(b).toBeLessThan(c);

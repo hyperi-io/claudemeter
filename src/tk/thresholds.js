@@ -17,10 +17,14 @@
 //                Rot tiers fire on absolute used, gated by a >200K window -
 //                NOT the account profile (unreliable - e.g. macOS keeps
 //                creds in the Keychain not a file, so the profile falls
-//                back to 'unknown'). A big window makes the 300K/500K
+//                back to 'unknown'). A big window makes the 400K/650K
 //                frontier reachable - on a 200K window it never fires:
-//                  rotDeep  when used >= rotDeepTokens  (default 500K)
-//                  rotLight when used >= rotLightTokens (default 300K)
+//                  rotDeep  when used >= rotDeepTokens  (default 650K)
+//                  rotLight when used >= rotLightTokens (default 400K)
+//                Defaults track Opus 4.8's gentler long-context curve - see
+//                docs/context-rot.md (re-check 7 Jul 2026). The frontier is
+//                a model property, so it is the same whether it comes from a
+//                profile's explicit values or these defaults.
 //
 //                Pure JS — no vscode dependency, no I/O, fully testable.
 //                See STATE.md "Claude Code auto-compact trigger" for the
@@ -30,8 +34,8 @@
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
 const STANDARD_LIMIT = 200_000;
-const DEFAULT_ROT_LIGHT_TOKENS = 300_000;
-const DEFAULT_ROT_DEEP_TOKENS = 500_000;
+const DEFAULT_ROT_LIGHT_TOKENS = 400_000;
+const DEFAULT_ROT_DEEP_TOKENS = 650_000;
 
 /**
  * Resolve the Tk tier for a given (used, profile, contextWindow) tuple.
@@ -52,7 +56,7 @@ function getTkLevel(used, profile, contextWindow) {
     if (used >= compactPoint - T.warningRunwayTokens) return 'warning';
 
     // Rot keys off the window, not the profile - a >200K window is what
-    // makes the 300K/500K frontier reachable. Profile may tune the
+    // makes the 400K/650K frontier reachable. Profile may tune the
     // thresholds, else defaults.
     if (contextWindow > STANDARD_LIMIT) {
         const rotDeep = T.rotDeepTokens ?? DEFAULT_ROT_DEEP_TOKENS;

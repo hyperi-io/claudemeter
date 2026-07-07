@@ -7,8 +7,6 @@ const {
     calculateResetTime,
     processApiResponse,
     getSchemaInfo,
-    matchesEndpoint,
-    API_ENDPOINTS,
 } = require('../../src/apiSchema');
 
 describe('getNestedValue', () => {
@@ -208,22 +206,6 @@ describe('processApiResponse', () => {
     });
 });
 
-describe('matchesEndpoint', () => {
-    it('matches usage endpoint', () => {
-        const url = 'https://claude.ai/api/organizations/abc-123/usage';
-        expect(matchesEndpoint(url, API_ENDPOINTS.usage)).toBe(true);
-    });
-
-    it('matches prepaid credits endpoint', () => {
-        const url = 'https://claude.ai/api/organizations/abc-123/prepaid/credits';
-        expect(matchesEndpoint(url, API_ENDPOINTS.prepaidCredits)).toBe(true);
-    });
-
-    it('does not match unrelated URLs', () => {
-        expect(matchesEndpoint('https://claude.ai/chat', API_ENDPOINTS.usage)).toBe(false);
-    });
-});
-
 describe('getSchemaInfo', () => {
     it('returns version string', () => {
         expect(getSchemaInfo().version).toBe('2.0');
@@ -233,9 +215,5 @@ describe('getSchemaInfo', () => {
         const info = getSchemaInfo();
         expect(info.usageFields).toContain('fiveHour');
         expect(info.usageFields).toContain('sevenDay');
-    });
-
-    it('returns endpoint names', () => {
-        expect(getSchemaInfo().endpoints).toContain('usage');
     });
 });
