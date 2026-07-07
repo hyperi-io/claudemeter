@@ -1,3 +1,10 @@
+# [2.5.0](https://github.com/hyperi-io/claudemeter/compare/v2.4.13...v2.5.0) (2026-07-07)
+
+
+### Features
+
+* browserless usage via Claude Code token ([bf2ef65](https://github.com/hyperi-io/claudemeter/commit/bf2ef658aeaacf45e42effd9c996a237887c005e)), closes [#49](https://github.com/hyperi-io/claudemeter/issues/49)
+
 ## [2.4.13](https://github.com/hyperi-io/claudemeter/compare/v2.4.12...v2.4.13) (2026-06-14)
 
 
