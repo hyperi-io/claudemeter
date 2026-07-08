@@ -182,18 +182,27 @@ async function fetchUsageData() {
     try {
         return await fetchWithToken(tok);
     } catch (e) {
-        if (e.message !== 'TOKEN_REJECTED') throw e;
-        // The token was refused. Claude Code may have just rotated it -- read
-        // fresh ONCE (bypassing the Keychain TTL cache) and retry with
-        // whatever is in the store now.
+        // A rejected token, OR ANY failure while the stored token is already
+        // known-expired, is an auth problem. A 429 / timeout on a VALID token
+        // stays transient so the shared usage cache can serve last-known usage
+        // rather than dropping to the not-logged-in state.
+        if (e.message !== 'TOKEN_REJECTED' && !tok.expired) throw e;
+
+        // Claude Code may have just rotated the token -- read fresh ONCE
+        // (bypassing the Keychain TTL) and retry with whatever is stored now.
+        // For an expired FILE token this also picks up a valid KEYCHAIN token
+        // (issue #50: the native install writes the Keychain, and a stale npm
+        // ~/.claude/.credentials.json was shadowing it).
         const fresh = readToken({ fresh: true });
-        if (fresh.ok && fresh.token !== tok.token) {
+        if (fresh.ok && !fresh.expired && fresh.token !== tok.token) {
             return fetchWithToken(fresh);
         }
-        // Same token still refused (or none left): genuinely stale. The user
-        // hasn't run Claude Code for the token's lifetime -> re-auth needed.
+        // Genuinely stale -> surface a clear re-login signal, NOT a raw
+        // API_ERROR_429 (issue #50 reported an expired token shown as a rate
+        // limit, which sent users down a dead end).
         const err = new Error('NO_OAUTH_TOKEN');
-        err.detail = 'token rejected';
+        err.detail = tok.expired ? 'token expired' : 'token rejected';
+        err.bypassCache = true;
         throw err;
     }
 }

@@ -109,28 +109,10 @@ function readFromKeychain(forceFresh = false) {
     return blob;
 }
 
-// Token read. File source is always fresh; the Keychain source carries a 2s
-// TTL (pass { fresh: true } to bypass it -- the 401 re-read does). Returns:
-//   { ok: true, token, expiresAt, scopes, subscriptionType, rateLimitTier,
-//     source: 'file'|'keychain', expired: bool }
-//   { ok: false, reason: 'ENV_OVERRIDE'|'NO_TOKEN', detail }
-function readToken(opts = {}) {
-    const override = detectAuthOverride();
-    if (override) {
-        return { ok: false, reason: 'ENV_OVERRIDE', detail: override };
-    }
-
-    // File first (authoritative when present on any platform), then Keychain.
-    let source = 'file';
-    let blob = readFromFile();
-    if (!blob) {
-        blob = readFromKeychain(opts.fresh === true);
-        source = 'keychain';
-    }
-    if (!blob || !blob.accessToken) {
-        return { ok: false, reason: 'NO_TOKEN', detail: getConfigDir() };
-    }
-
+// Build the token result from a raw oauth blob, or null when it carries no
+// usable access token.
+function buildToken(blob, source) {
+    if (!blob || !blob.accessToken) return null;
     const expiresAt = typeof blob.expiresAt === 'number' ? blob.expiresAt : null;
     return {
         ok: true,
@@ -142,9 +124,44 @@ function readToken(opts = {}) {
         source,
         // Advisory only -- the server is the authority on validity. A false
         // here doesn't guarantee the token works (Claude Code may have
-        // rotated), and expired:true is why we still try then re-read on 401.
+        // rotated), and expired:true is why we fall through / re-read on 401.
         expired: expiresAt != null ? expiresAt <= Date.now() : false,
     };
+}
+
+// Choose between the file token and the Keychain token. macOS can carry TWO
+// stores that disagree: the NATIVE Claude Code install keeps the live token in
+// the Keychain, while the old NPM CLI wrote ~/.claude/.credentials.json. After
+// the npm->native migration the file is frozen and goes stale, so it must NOT
+// shadow a valid Keychain token (issue #50). Precedence:
+//   1. a non-expired Keychain token wins (the native install's live store);
+//   2. else a non-expired file token (Linux/Windows, or macOS opted out of the
+//      Keychain, where there is no Keychain token at all);
+//   3. else whichever token exists - Keychain first - so the caller can still
+//      try it, 401, and prompt re-login.
+function chooseToken(fileTok, kcTok) {
+    if (kcTok && !kcTok.expired) return kcTok;
+    if (fileTok && !fileTok.expired) return fileTok;
+    return kcTok || fileTok || null;
+}
+
+// Token read. Reads BOTH stores and picks the live/valid one (see chooseToken).
+// The file read is cheap and uncached; the Keychain read is null off macOS and
+// 2s-TTL-cached on macOS (pass { fresh: true } to bypass the TTL -- the 401
+// re-read does). Returns:
+//   { ok: true, token, expiresAt, scopes, subscriptionType, rateLimitTier,
+//     source: 'file'|'keychain', expired: bool }
+//   { ok: false, reason: 'ENV_OVERRIDE'|'NO_TOKEN', detail }
+function readToken(opts = {}) {
+    const override = detectAuthOverride();
+    if (override) {
+        return { ok: false, reason: 'ENV_OVERRIDE', detail: override };
+    }
+
+    const fileTok = buildToken(readFromFile(), 'file');
+    const kcTok = buildToken(readFromKeychain(opts.fresh === true), 'keychain');
+    return chooseToken(fileTok, kcTok)
+        || { ok: false, reason: 'NO_TOKEN', detail: getConfigDir() };
 }
 
 // Watch the credential FILE for changes and invoke onChange (debounced).
@@ -192,6 +209,7 @@ function watchToken(onChange) {
 
 module.exports = {
     readToken,
+    chooseToken,
     watchToken,
     detectAuthOverride,
     getConfigDir,
