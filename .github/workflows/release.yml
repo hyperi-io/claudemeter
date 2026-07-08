@@ -81,9 +81,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          # Match VS Code's bundled Node -- Electron 37/38 -> Node 22.x as of
-          # 2026, Node 24 not until Electron 40.
-          node-version: '22'
+          # Match the extension-host Node for our engines.vscode floor; keep in
+          # step with .nvmrc + engines.node. Bump only when the floor is raised
+          # - see CONTRIBUTING.md / assets/src/deps_node_guard.py.
+          node-version: '24'
 
       - name: Install dependencies
         run: npm ci
@@ -124,9 +125,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          # Match VS Code's bundled Node -- Electron 37/38 -> Node 22.x as of
-          # 2026, Node 24 not until Electron 40.
-          node-version: '22'
+          # Match the extension-host Node for our engines.vscode floor; keep in
+          # step with .nvmrc + engines.node. Bump only when the floor is raised
+          # - see CONTRIBUTING.md / assets/src/deps_node_guard.py.
+          node-version: '24'
 
       - name: Install dependencies
         run: npm ci

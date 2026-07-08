@@ -6,10 +6,10 @@
   "dependencyDashboard": false,
   "packageRules": [
     {
-      "description": "Stay on Node 22 to match VS Code's extension-host runtime (Electron 37/38 -> Node 22.x as of 2026). Node 24 does not reach the host until VS Code adopts Electron 40. Lift this cap and raise engines + .nvmrc to 24 when that happens.",
+      "description": "Cap Renovate Node updates to the extension-host Node for our engines.vscode floor. A newer Node line reaches the host only when VS Code ships it; lift this cap together with engines.node, .nvmrc and the workflow node-version, and only when engines.vscode is raised. See CONTRIBUTING.md and assets/src/deps_node_guard.py.",
       "matchDatasources": ["node-version"],
       "matchPackageNames": ["node"],
-      "allowedVersions": "<23"
+      "allowedVersions": "<25"
     }
   ]
 }

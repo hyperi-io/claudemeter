@@ -66,9 +66,10 @@ function getTooltipLogoHeader() {
     return uri ? `![claudemeter](${uri})  \n` : '';
 }
 
-// Tiny tertiary HyperI hound for the footer brand link (assets/hyperi-hound.png).
+// Tiny tertiary HyperI lockup (wordmark + hound, no data trail) for the footer
+// brand link (assets/hyperi-brand.png).
 function getBrandIconDataUri() {
-    return assetDataUri('hyperi-hound.png');
+    return assetDataUri('hyperi-brand.png');
 }
 
 // Build a MarkdownString for an error / not-logged-in tooltip, carrying the
