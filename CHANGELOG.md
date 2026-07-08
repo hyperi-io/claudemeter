@@ -1,3 +1,10 @@
+## [2.5.3](https://github.com/hyperi-io/claudemeter/compare/v2.5.2...v2.5.3) (2026-07-08)
+
+
+### Bug Fixes
+
+* order tooltip Current context above Session ([17d9358](https://github.com/hyperi-io/claudemeter/commit/17d9358fe5cfdfb49410186dc62d039b3671ad03))
+
 ## [2.5.2](https://github.com/hyperi-io/claudemeter/compare/v2.5.1...v2.5.2) (2026-07-08)
 
 
