@@ -325,7 +325,7 @@ describe('composeTooltip - Session / Current context / Weekly section split (pos
         weeklyPrecisionThreshold: 75,
     };
 
-    it('emits three distinct headings in order: Session -> Current context -> Weekly', () => {
+    it('emits three distinct headings in order: Current context -> Session -> Weekly', () => {
         const out = composeTooltip({
             usageData: {
                 usagePercent: 50,
@@ -346,8 +346,8 @@ describe('composeTooltip - Session / Current context / Weekly section split (pos
         expect(sessionIdx).toBeGreaterThan(-1);
         expect(contextIdx).toBeGreaterThan(-1);
         expect(weeklyIdx).toBeGreaterThan(-1);
-        expect(sessionIdx).toBeLessThan(contextIdx);
-        expect(contextIdx).toBeLessThan(weeklyIdx);
+        expect(contextIdx).toBeLessThan(sessionIdx);
+        expect(sessionIdx).toBeLessThan(weeklyIdx);
     });
 
     it('Tokens row appears under Current context, NOT under Session', () => {
@@ -361,8 +361,10 @@ describe('composeTooltip - Session / Current context / Weekly section split (pos
         const sessionIdx = out.indexOf('**Session');
         const contextIdx = out.indexOf('**Current context');
         const tokensIdx  = out.indexOf('Tokens ');
+        // Tokens sits inside the Current context block: after its heading and
+        // before the Session block that now follows it.
         expect(tokensIdx).toBeGreaterThan(contextIdx);
-        expect(tokensIdx).toBeGreaterThan(sessionIdx);
+        expect(tokensIdx).toBeLessThan(sessionIdx);
     });
 });
 

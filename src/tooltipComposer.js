@@ -75,9 +75,11 @@ function composeTooltip(state) {
 
     add(renderAccountIdentity);
     add(renderPlanAndContext);
-    add(renderSpacerAfterIdentity);
-    add(renderSessionBlock);
+    // Current context (the per-workspace Tk gauge) leads - it's the number a
+    // coder acts on most - then the account-global Session and Weekly. Each
+    // block self-separates with a leading blank, so order is free to change.
     add(renderCurrentContextBlock);
+    add(renderSessionBlock);
     add(renderWeeklyBlock);
     add(renderCreditsBlock);
     add(renderHappyHourRow);
@@ -167,26 +169,17 @@ function renderPlanAndContext(state) {
     return lines;
 }
 
-function renderSpacerAfterIdentity(state) {
-    // Blank line if we rendered any identity content.
-    const hasIdentity = !!(state.usageData?.accountInfo?.name
-        || state.usageData?.accountInfo?.email
-        || state.credentialsInfo);
-    return hasIdentity ? [''] : [];
-}
-
 function renderSessionBlock(state) {
     const { usageData, config } = state;
-    const lines = [];
+    if (!usageData) return [];
 
-    if (usageData) {
-        const sessionPercent = usageData.usagePercent;
-        const resetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTime);
-        lines.push(`**Session - ${sessionPercent}%**`);
-        lines.push(`Resets ${resetTimeExpanded}`);
-        if (config?.tokenLimitOverride > 0) {
-            lines.push(`⚙ Context window override ${formatCompact(config.tokenLimitOverride)}`);
-        }
+    const lines = [''];  // leading blank line for visual separation
+    const sessionPercent = usageData.usagePercent;
+    const resetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTime);
+    lines.push(`**Session - ${sessionPercent}%**`);
+    lines.push(`Resets ${resetTimeExpanded}`);
+    if (config?.tokenLimitOverride > 0) {
+        lines.push(`⚙ Context window override ${formatCompact(config.tokenLimitOverride)}`);
     }
 
     return lines;
