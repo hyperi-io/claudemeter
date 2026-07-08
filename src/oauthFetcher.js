@@ -172,6 +172,10 @@ async function fetchUsageData() {
     if (!tok.ok) {
         const err = new Error(tok.reason === 'ENV_OVERRIDE' ? 'AUTH_OVERRIDE' : 'NO_OAUTH_TOKEN');
         err.detail = tok.detail;
+        // Auth-absence, not a transient failure: the usage cache must NOT
+        // serve stale subscription numbers over this - the user is logged
+        // out / on an API key and should see that, not yesterday's usage.
+        err.bypassCache = true;
         throw err;
     }
 

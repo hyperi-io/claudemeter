@@ -76,6 +76,11 @@ async function cachedFetchUsage(fetchFn, maxAgeMs) {
             await atomicWriteJson(CACHE_FILE, { usageData, fetchedAt: Date.now() });
             return { usageData, fromCache: false };
         } catch (err) {
+            // Auth-absence (token gone / API-key override) must NOT be masked
+            // by stale usage - the user is logged out and should see that, not
+            // yesterday's numbers. The fetch layer marks those errors; re-throw
+            // so the caller shows the not-logged-in state.
+            if (err && err.bypassCache) throw err;
             // 429 / timeout / network: serve the last-known value if we have one
             // so the gauges don't blank. Only surface the error when there's
             // nothing cached at all.

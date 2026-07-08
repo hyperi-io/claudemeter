@@ -71,6 +71,17 @@ function getBrandIconDataUri() {
     return assetDataUri('hyperi-hound.png');
 }
 
+// Build a MarkdownString for an error / not-logged-in tooltip, carrying the
+// same slim logo header as the main tooltip. isTrusted so the header's data-URI
+// image renders (the error copy itself has no command links); supportThemeIcons
+// for parity with the main tooltip.
+function makeErrorTooltip(errorLines) {
+    const md = new vscode.MarkdownString(getTooltipLogoHeader() + errorLines.join('  \n'));
+    md.isTrusted = true;
+    md.supportThemeIcons = true;
+    return md;
+}
+
 /**
  * Return colorMode, consulting the simulator override first.
  * @returns {'color'|'basic'}
@@ -1076,6 +1087,11 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         .replace(/^git\+/, '')
         .replace(/\.git$/, '')
         .replace(/#.*$/, '');
+    // Marketplace review deep-link, built from the manifest publisher.name
+    // (no hardcoded item id). The anchor jumps straight to the review tab.
+    const marketplaceUrl = (extPackageJson?.publisher && extPackageJson?.name)
+        ? `https://marketplace.visualstudio.com/items?itemName=${extPackageJson.publisher}.${extPackageJson.name}&ssr=false#review-details`
+        : '';
     const platformTooltipLines = getServiceStatusTooltipLines();
 
     const markdownBody = composeTooltip({
@@ -1088,6 +1104,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         happyHourState: resolveHappyHourState(),
         extensionVersion: extVersion,
         repositoryUrl,
+        marketplaceUrl,
         brandIconDataUri: getBrandIconDataUri(),
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
         tokensInfo,
@@ -1160,7 +1177,7 @@ function stopSpinner(webError = null, tokenError = null) {
             '• Click to retry',
             '• Run "Claudemeter: Show Debug Output" for details',
         ];
-        const errorTooltip = new vscode.MarkdownString(errorLines.join('  \n'));
+        const errorTooltip = makeErrorTooltip(errorLines);
 
         setAllTooltips(errorTooltip);
 
@@ -1210,7 +1227,7 @@ function stopSpinner(webError = null, tokenError = null) {
                 '• Run "Claudemeter: Show Debug Output" for details',
             ];
         }
-        const errorTooltip = new vscode.MarkdownString(errorLines.join('  \n'));
+        const errorTooltip = makeErrorTooltip(errorLines);
 
         setAllTooltips(errorTooltip);
 

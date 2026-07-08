@@ -26,7 +26,7 @@ const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refresh
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
-const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, getDefaultDebugLogPath } = require('./src/utils');
+const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, scrubHome, getDefaultDebugLogPath } = require('./src/utils');
 const {
     CREDENTIALS_PATH,
     readCredentials,
@@ -80,7 +80,10 @@ function getTokenDiagnosticChannel() {
 
 function debugLog(message) {
     if (isDebugEnabled()) {
-        getTokenDiagnosticChannel().appendLine(message);
+        // Scrub the home dir (username) from the channel line too - this is the
+        // "Token Monitor" output the README points bug-reporters at. fileLog
+        // scrubs the file copy itself.
+        getTokenDiagnosticChannel().appendLine(scrubHome(message));
         // Mirror to the rolling debug.log file so JSONL/token-monitoring
         // diagnostics (init, watcher events, session updates) are visible
         // post-hoc - the Output channel is in-memory only.
@@ -911,7 +914,11 @@ async function activate(context) {
             debugChannel.appendLine('Usage Data State:');
             if (usageData) {
                 debugChannel.appendLine(`  Last Updated: ${usageData.timestamp}`);
-                debugChannel.appendLine(`  Account: ${usageData.accountInfo?.name || 'unknown'}`);
+                // Presence + org type only - NEVER the account name/email. This
+                // dump is meant to be pasteable into a public bug report, and
+                // the name is PII (see README Privacy - "redacted bug reports").
+                const ai = usageData.accountInfo;
+                debugChannel.appendLine(`  Account: ${ai ? `present (${ai.orgType || 'Personal'})` : 'unknown'}`);
                 debugChannel.appendLine(`  Session Usage: ${usageData.usagePercent}%`);
                 debugChannel.appendLine(`  Weekly Usage: ${usageData.usagePercentWeek}%`);
                 debugChannel.appendLine(`  Has Monthly Credits: ${!!usageData.monthlyCredits}`);

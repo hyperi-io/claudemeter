@@ -93,3 +93,29 @@ fires:
   the **Dump State** report never include the token — only its
   presence, source, scopes, and expiry. If you find a log that leaks a
   token, please report per the section above.
+
+## Logging and bug reports — designed to be shareable
+
+The debug log and the **Dump State** report are designed to be pasteable
+into a public GitHub issue. Redaction is automated, so *by design* they
+contain:
+
+- **No token or credentials** — only token presence, source, scopes,
+  expiry.
+- **No account name and no email** — the state dump reports account
+  *presence* plus org type (e.g. `Personal`), nothing identifying.
+  (`src/oauthFetcher.js`'s CLI smoke-test also redacts name/email.)
+- **No username in paths** — every logged line is passed through
+  `scrubHome()` (`src/utils.js`), which replaces the home directory with
+  `~`, so absolute paths don't expose the OS username.
+
+What *may* appear, and is intended: plan/tier strings, usage
+percentages, token counts, timestamps, and your own **project folder
+names** — the gauge is project-scoped, so a folder name is often needed
+to diagnose a "wrong project" report.
+
+We automate this redaction so the output should be safe to share as-is,
+but we do not warrant every environment — **please review the output and
+remove anything you would rather not post before attaching it.** On our
+side it is a maintained invariant: a change that adds identifying data to
+a log or the state dump is treated as a defect — please report it.

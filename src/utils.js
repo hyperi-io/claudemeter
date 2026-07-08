@@ -60,6 +60,17 @@ const { FALLBACK_LIMIT: DEFAULT_TOKEN_LIMIT } = require('./modelContextWindows')
 // Each instance identified by short hash + project name for easy differentiation
 let fileLoggerInstance = null;
 
+// Strip the user's home directory from a log line so a shared log can't leak the
+// OS username (and, by extension, absolute local paths). Best-effort PII guard,
+// applied centrally to every line the file logger and diagnostic channels emit.
+// Project folder names may still appear (a project-scoped tool needs them to
+// diagnose "wrong project" issues) - but never the username. See SECURITY.md.
+function scrubHome(message) {
+    if (typeof message !== 'string') return message;
+    const home = os.homedir();
+    return home ? message.split(home).join('~') : message;
+}
+
 class FileLogger {
     constructor(workspacePath = null) {
         this.workspacePath = workspacePath;
@@ -140,7 +151,7 @@ class FileLogger {
             this.trimIfNeeded();
 
             const timestamp = new Date().toISOString();
-            const line = `${timestamp} ${this.instanceId} ${message}\n`;
+            const line = `${timestamp} ${this.instanceId} ${scrubHome(message)}\n`;
             fs.appendFileSync(this.logFile, line);
         } catch (e) {
             // Silently ignore write errors to avoid blocking
@@ -444,6 +455,7 @@ module.exports = {
     initFileLogger,
     getFileLogger,
     fileLog,
+    scrubHome,
     getDefaultDebugLogPath,
     splitLines,
 };

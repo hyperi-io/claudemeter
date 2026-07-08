@@ -30,6 +30,10 @@
 
 ![Status Bar All Warnings](assets/status-bar-all-warnings.png)
 
+## Like Claudemeter?
+
+If it saves you the odd surprise limit or context-rot faceplant, a moment to [star it on GitHub](https://github.com/hyperi-io/claudemeter) or leave a [rating on the Marketplace](https://marketplace.visualstudio.com/items?itemName=hypersec.claudemeter&ssr=false#review-details) would be genuinely appreciated. It helps other Claude Code users find it, and it is the clearest signal that the work is worth carrying on. No pressure, and thank you either way.
+
 ## Claudemeter Browser Login No Longer Required
 
 Claude Code changed - its CLI token can now reach the usage API, which it couldn't before. "It just works" now. Install and it works. So as of v2.5+ claudemeter reads that token directly and drops the browser entirely. This also fixes the Google SSO "browser not secure" block, since there's no automated login window any more ([#49](https://github.com/hyperi-io/claudemeter/issues/49)).
@@ -559,12 +563,23 @@ Claudemeter tracks whichever account Claude Code is on. If it looks wrong, check
 - Run **Claudemeter: Fetch Claude Usage Now** from the Command Palette.
 - Run **Claudemeter: Dump State (for bug reports)** and [report an issue](https://github.com/hyperi-io/claudemeter/issues) with the output attached.
 
+### Reporting a bug with a log
+
+If the steps above don't sort it, a log makes diagnosis far quicker:
+
+1. **Turn logging on** - set `claudemeter.debug` to `true` in Settings (optionally set `claudemeter.debugLogFile` to a file path).
+2. **Reproduce** the problem.
+3. **Grab the log** - run **Claudemeter: Dump State (for bug reports)** for a concise redacted snapshot, and/or **Claudemeter: Show Debug Output** for the fuller diagnostic channel.
+4. **[Open an issue](https://github.com/hyperi-io/claudemeter/issues)** and attach it, with your VS Code and extension versions. The log genuinely helps - please include it.
+
+**Designed to be safe to share.** Claudemeter automatically redacts its logs - no token or credentials, no email or account name, and your home directory (username) is stripped from file paths (only your own project folder names may remain, as the gauge is project-scoped). That should make the output safe to post as-is, but you know your setup best: please give it a quick read and remove anything you would rather not share before attaching it. See Privacy & Security below.
+
 ## Privacy & Security
 
 - **No credentials stored**: Claudemeter reads Claude Code's existing OAuth token and never stores, copies, or transmits it anywhere except as the `Authorization` header to `api.anthropic.com`. It never writes to Claude Code's credential store.
 - **No data transmission**: Usage data stays on your machine.
 - **Zero runtime dependencies**: The extension bundles no third-party runtime packages - no browser, no Chromium, no scraping stack.
-- **Redacted bug reports**: **Dump State** reports only token presence, source, scopes, and expiry - never the token itself.
+- **Shareable logs by design**: **Dump State** and the debug log are built to be pasteable into a public issue - they carry only token *presence*/source/scopes/expiry (never the token), plan/tier, usage percentages, counts and timestamps, with the account name and email omitted and the home directory (username) stripped from logged paths (your own project folder names may remain, as the gauge is project-scoped). Redaction is automated, but the final check is yours - skim the output before you post it.
 - **Open source**: All code is available for review.
 
 ## Feedback & Issues
@@ -591,7 +606,7 @@ Paying it forward by the hoopy froods at HyperI (formerly HyperSec)
 
 MIT License - See LICENSE file for details.
 
-Originally inspired and based on [claude-usage-monitor](https://github.com/Gronsten/claude-usage-monitor) by Mark Campbell.
+Originally inspired by [claude-usage-monitor](https://github.com/Gronsten/claude-usage-monitor) from Mark Campbell.
 
 ---
 

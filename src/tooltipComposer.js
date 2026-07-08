@@ -21,6 +21,7 @@
 //     happyHourState,              // { active, icon, endsAt } from happyHour resolver
 //     extensionVersion,            // from vscode.extensions.getExtension(...)
 //     repositoryUrl,               // manifest repo URL, footer version links to it
+//     marketplaceUrl,              // marketplace review deep-link, footer "rate it"
 //     brandIconDataUri,            // tiny HyperI hound data URI, footer brand link
 //     claudeCodeSelectedModel,     // from workspace config
 //     tokensInfo,                  // { current, limit, knownLimit, recommendation }
@@ -324,13 +325,20 @@ function renderPlatformBlock(state) {
 const HYPERI_URL = 'https://hyperi.io';
 
 function renderFooter(state) {
-    const { usageData, extensionVersion, repositoryUrl, brandIconDataUri, config } = state;
+    const { usageData, extensionVersion, repositoryUrl, marketplaceUrl, brandIconDataUri, config } = state;
     const lines = [''];
     if (usageData?.timestamp) {
         const ts = usageData.timestamp instanceof Date ? usageData.timestamp : new Date(usageData.timestamp);
         lines.push(`Updated ${ts.toLocaleTimeString(undefined, { hour12: !config?.use24HourTime })}`);
     }
     if (extensionVersion) {
+        // Gentle support nudge above the version line. Each link appears only
+        // when its URL is known. The star glyph is functional UI output.
+        const nudges = [];
+        if (repositoryUrl) nudges.push(`[star](${repositoryUrl})`);
+        if (marketplaceUrl) nudges.push(`[rate](${marketplaceUrl})`);
+        if (nudges.length) lines.push(`Is this useful for you? ⭐ Please ${nudges.join(' or ')} it`);
+
         const label = `Claudemeter v${extensionVersion}`;
         // Version text links to the source repo when we have a URL; plain
         // text otherwise.

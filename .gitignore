@@ -47,3 +47,8 @@ test-*.js
 check-*.js
 examine-*.js
 RELEASE_NOTES_*.md
+
+# Python tooling caches (assets/src)
+__pycache__/
+*.pyc
+.ruff_cache/

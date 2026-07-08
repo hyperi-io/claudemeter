@@ -269,6 +269,25 @@ describe('composeTooltip - footer', () => {
         expect(out).toMatch(/\[Claudemeter v0\.0\.0-test\]\(https:\/\/github\.com\/hyperi-io\/claudemeter\)/);
     });
 
+    it('shows a star/rate nudge above the version when URLs are provided', () => {
+        const out = composeTooltip({
+            config: baseConfig,
+            extensionVersion: '0.0.0-test',
+            repositoryUrl: 'https://github.com/hyperi-io/claudemeter',
+            marketplaceUrl: 'https://marketplace.visualstudio.com/items?itemName=hypersec.claudemeter&ssr=false#review-details',
+        });
+        expect(out).toMatch(/Is this useful for you\?/);
+        expect(out).toMatch(/\[star\]\(https:\/\/github\.com\/hyperi-io\/claudemeter\)/);
+        expect(out).toMatch(/\[rate\]\(https:\/\/marketplace\.visualstudio\.com/);
+        // nudge sits ABOVE the version line
+        expect(out.indexOf('Is this useful for you?')).toBeLessThan(out.indexOf('Claudemeter v0.0.0-test'));
+    });
+
+    it('omits the nudge entirely when no repo/marketplace URL is known', () => {
+        const out = composeTooltip({ config: baseConfig, extensionVersion: '0.0.0-test' });
+        expect(out).not.toMatch(/Is this useful for you\?/);
+    });
+
     it('does not include the removed resync-account link', () => {
         // The browserless OAuth switch deleted claudemeter.resyncAccount; the
         // footer must not render a dead command link. Login is offered via the
