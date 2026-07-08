@@ -2,7 +2,7 @@
   "name": "claudemeter",
   "displayName": "Claudemeter - Claude AI Usage Monitor",
   "description": "Monitor your Claude Code usage as you go. Session, weekly and context usage live in your status bar, so you pace yourself instead of simply reacting. Context-rot and happy-hour awareness across every Claude plan.",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "publisher": "hypersec",
   "author": {
     "name": "HyperI",

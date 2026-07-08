@@ -1,3 +1,10 @@
+## [2.5.1](https://github.com/hyperi-io/claudemeter/compare/v2.5.0...v2.5.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* tooltip nudge, log privacy, logout cache ([1a5b46d](https://github.com/hyperi-io/claudemeter/commit/1a5b46de58b873a5ebbb43919e39fe7f42c914fe))
+
 # [2.5.0](https://github.com/hyperi-io/claudemeter/compare/v2.4.13...v2.5.0) (2026-07-07)
 
 
