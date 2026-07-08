@@ -1,3 +1,10 @@
+## [2.5.4](https://github.com/hyperi-io/claudemeter/compare/v2.5.3...v2.5.4) (2026-07-08)
+
+
+### Bug Fixes
+
+* valid Keychain token over stale file ([#50](https://github.com/hyperi-io/claudemeter/issues/50)) ([ee3b17f](https://github.com/hyperi-io/claudemeter/commit/ee3b17f9e62bf6d95e0666e604c0b1623876faec))
+
 ## [2.5.3](https://github.com/hyperi-io/claudemeter/compare/v2.5.2...v2.5.3) (2026-07-08)
 
 
