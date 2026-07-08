@@ -1,3 +1,10 @@
+## [2.5.2](https://github.com/hyperi-io/claudemeter/compare/v2.5.1...v2.5.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* require VS Code 1.125+ / Node 24; HyperI mark ([b6f56e3](https://github.com/hyperi-io/claudemeter/commit/b6f56e39c3352e6ae8a870ddcbe01b61fa5d60c5))
+
 ## [2.5.1](https://github.com/hyperi-io/claudemeter/compare/v2.5.0...v2.5.1) (2026-07-08)
 
 
