@@ -37,5 +37,5 @@ Needs `rsvg-convert` for the SVG->PNG step (`brew install librsvg`).
 - `fonts/Nunito.ttf` - SIL Open Font License (`fonts/OFL.txt`).
 - `icons/*.svg` - Lucide, ISC License (`icons/LICENSE`).
 
-Both are permissive and redistributable; bundled so the logo is reproducible
+Both are permissive and redistributable. Bundled so the logo is reproducible
 without network access.

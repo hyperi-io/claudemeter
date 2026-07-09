@@ -32,7 +32,7 @@
 
 ## Like Claudemeter?
 
-If it saves you the odd surprise limit or context-rot faceplant, a moment to [star it on GitHub](https://github.com/hyperi-io/claudemeter) or leave a [rating on the Marketplace](https://marketplace.visualstudio.com/items?itemName=hypersec.claudemeter&ssr=false#review-details) would be genuinely appreciated. It helps other Claude Code users find it, and it is the clearest signal that the work is worth carrying on. No pressure, and thank you either way.
+If it saves you a surprise limit or a context-rot faceplant, a moment to [star it on GitHub](https://github.com/hyperi-io/claudemeter) or leave a [rating on the Marketplace](https://marketplace.visualstudio.com/items?itemName=hypersec.claudemeter&ssr=false#review-details) would be genuinely appreciated. It helps other Claude Code users find it, and it tells us the work is worth carrying on. No pressure either way.
 
 ## Claudemeter Browser Login No Longer Required
 
@@ -73,7 +73,7 @@ The rule table is future-proof via numeric `minVersion` comparison - when Anthro
 > before the auto-compact trigger fires, and because the *meaning* of
 > "X% used" changes dramatically with window size.
 
-### Current calibration - Opus 4.8 (checked 7 Jul 2026)
+### Update - Opus 4.8  - Jul 2026
 
 The blue tiers track the *current* model. On Opus 4.8 they sit at **~400K
 (light) / ~650K (dark)** on a 1M window - later than the 4.7-era 300K/500K,
@@ -85,22 +85,37 @@ record, anchor numbers, and the re-check log live in
 [docs/context-rot.md](docs/context-rot.md) - first researched 30 May 2026,
 re-checked 7 Jul 2026.
 
-### What sparked this - Opus 4.7 (point-in-time snapshot, 2026-05)
+The apples-to-apples progression. GraphWalks BFS F1 is the only metric
+published for all three versions. Higher is better.
+
+| Model    | BFS 256K | BFS 1M | keeps at 1M |
+|----------|----------|--------|-------------|
+| Opus 4.6 | 61.1%    | 16.3%  | ~27%        |
+| Opus 4.7 | 76.9%    | 40.3%  | ~52%        |
+| Opus 4.8 | 85.9%    | 68.1%  | ~79%        |
+
+### What sparked this - Opus 4.7 - May 2026
 
 > **Snapshot framing.** Claudemeter shipped the rot meter in direct
 > response to the Opus 4.7 multi-needle regression. The *specific
 > numbers below* will shift as model implementations improve, degrade,
 > or change - the meter itself stays useful because the *phenomenon*
 > (long-context quality degradation) is durable. Treat this section as
-> the spark and the historical reason, not as live spec.
+> the spark and the historical reason, not a live spec.
 
 From Anthropic's own Opus 4.7 model card, MRCR v2 8-needle retrieval
-*at the time of this enhancement (May 2026)*:
+*at the time of this enhancement (May 2026)*. Different metric to the
+GraphWalks table above - the numbers do not compare. It stops at 4.7 because
+the 4.8 card dropped MRCR.
 
-| Context size | 4.6   | 4.7   |
-|--------------|-------|-------|
-| 256K         | 91.9% | 59.2% |
-| 1M           | 78.3% | 32.2% |
+| Context size | 4.6 (MRCR) | 4.7 (MRCR) |
+|--------------|------------|------------|
+| 256K         | 91.9%      | 59.2%      |
+| 1M           | 78.3%      | 32.2%      |
+
+I wrote articles on how great the Opus 4.6 1m achievement was for 4.6 on 1m
+with so little rot... only to have on egg on my face the very next release with
+ such a huge decline. I expect the costs were not acceptable for Anthropic. 
 
 Multi-needle recall - the realistic case when you're juggling several
 rules / files / constraints in one session - collapsed to roughly
@@ -219,7 +234,7 @@ Claudemeter lights up a dedicated status-bar panel when you're in that off-peak 
 Claude ✨ 4h 17m  Se ●●○○○ ⌚ 1h 28m  Wk ●●○○○ ⌚ 4d 17h  Tk ●○○○○ 1m
 ```
 
-Default icon is VS Code's monochrome `$(sparkle)` codicon - it inherits the status-bar text colour so it doesn't stand out. Shown as `✨` above because GitHub-rendered markdown can't display VS Code codicons directly; the real panel renders as a small monochrome four-point star, not an emoji. You can swap it for a full-colour emoji (`🍺`, `🍹`, `☕`, etc.) via [`claudemeter.happyHour.icon`](#claudemeterhappyhouricon).
+Default icon is VS Code's monochrome `$(sparkle)` codicon - it inherits the status-bar text colour so it doesn't stand out. Shown as `✨` above because GitHub-rendered markdown can't display VS Code codicons directly. The real panel renders a small monochrome four-point star, not an emoji. You can swap it for a full-colour emoji (`🍺`, `🍹`, `☕`, etc.) via [`claudemeter.happyHour.icon`](#claudemeterhappyhouricon).
 
 The panel disappears entirely during peak - no empty slot. The countdown respects [`claudemeter.statusBar.timeFormat`](#claudemeterstatusbartimeformat) (default `countdown` -> `4h 17m`, or `12hour` / `24hour` for a clock time).
 
@@ -233,7 +248,7 @@ The token lives in the shared Claude Code store: the macOS Keychain (`Claude Cod
 
 Two independent streams feed the status bar. **Web usage** (session / weekly / opus / sonnet / credits) is account-global and shows in any window. The **Tk context gauge** is per-workspace - read live from the current project's Claude Code session - so an empty window (no project) shows the account gauges but no Tk. Multiple VS Code windows share a single web-usage fetch per [`claudemeter.usageRefreshSeconds`](#claudemeterusagerefreshseconds) interval, so N windows don't each hit the API and trip its rate limit.
 
-> **Why not a browser?** An earlier build tried this same OAuth approach first, but back then the Claude Code token wasn't authorised for the usage/account API - so the only option was a `sessionKey` cookie from a real browser login, which meant shipping browser automation and hitting Google's anti-automation SSO block. Anthropic has since granted the token that access, so browserless works now. The browser, the cookie, and `playwright-core` are gone; the extension ships with zero runtime dependencies.
+> **Why not a browser?** An earlier build tried this same OAuth approach first, but back then the Claude Code token wasn't authorised for the usage/account API - so the only option was a `sessionKey` cookie from a real browser login, which meant shipping browser automation and hitting Google's anti-automation SSO block. Anthropic has since granted the token that access, so browserless works now. The browser, the cookie, and `playwright-core` are gone. The extension ships with zero runtime dependencies.
 
 ## Installation
 
@@ -372,7 +387,7 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
 
 - **Type**: Object
 - **Default**: `{ "days": [1,2,3,4,5], "start": "05:00", "end": "23:00", "tz": "America/Los_Angeles" }`
-- **Description**: Anthropic's peak-throttling window. Happy hour appears **outside** this window. `days` are `0` (Sunday) through `6` (Saturday); `start` / `end` are `HH:MM` 24-hour format in the given IANA `tz`. Override if Anthropic changes the policy before a claudemeter release ships. Malformed fields fall back to defaults individually (e.g. a bad `tz` still keeps your custom `start` / `end`).
+- **Description**: Anthropic's peak-throttling window. Happy hour appears **outside** this window. `days` are `0` (Sunday) through `6` (Saturday). `start` / `end` are `HH:MM` 24-hour format in the given IANA `tz`. Override if Anthropic changes the policy before a claudemeter release ships. Malformed fields fall back to defaults individually (e.g. a bad `tz` still keeps your custom `start` / `end`).
 
 ### `claudemeter.statusBar.timeFormat`
 
@@ -407,11 +422,11 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
   - **bar**: progress bar / percentage only - `Tk ●●○○○`
   - **value**: bar + current consumption - `Tk ●●○○○ 518k`
   - **extended**: bar + current/max - `Tk ●●○○○ 518k/1m` (same rendering as the pre-2.3.3 `both` default)
-  - **limit** _(default)_: bar + max, shown only when greater than the 200K standard context window - `Tk ●●○○○ 1m` on a 1M session; just the bar on a 200K session
+  - **limit** _(default)_: bar + max, shown only when greater than the 200K standard context window - `Tk ●●○○○ 1m` on a 1M session, just the bar on a 200K session
   - **count**: token count only, no bar - `Tk 518k/1m`
 - The max is suppressed when the context window limit is inferred rather than authoritative, so the display doesn't misrepresent an uncertain value.
 - The existing `claudemeter.statusBar.usageFormat` setting still controls the bar/percent half.
-- **Migration**: existing configs with `tokensDisplay: both` are auto-rewritten to `extended` on startup; no visible change for those users.
+- **Migration**: existing configs with `tokensDisplay: both` are auto-rewritten to `extended` on startup. No visible change for those users.
 
 ### `claudemeter.statusBar.alignment`
 
@@ -481,7 +496,7 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 - **Options**: `color`, `basic`
 - **Description**: Status-bar decoration mode.
   - **color** (default): full palette - gauge tiers (rotLight, rotDeep, warning, error), Se/Wk warning icons, happy-hour green, and the colour-coded `●` prefix in the tooltip.
-  - **basic**: every gauge renders in default foreground; no icons; no tier tints; no tooltip prefix dots; no rot recommendation sub-lines. Tooltip section structure is preserved either way.
+  - **basic**: every gauge renders in default foreground - no icons, no tier tints, no tooltip prefix dots, no rot recommendation sub-lines. Tooltip section structure is preserved either way.
 
 ### `claudemeter.thresholds.tokens.profileOverride`
 
@@ -493,7 +508,7 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 
 - **Type**: Object
 - **Default**: `{}`
-- **Description**: Per-profile threshold overrides (deep-merge semantics - leaf fields merge over the built-in profile; unset fields inherit from the built-in). Example overriding only the warning runway for `max-20x`:
+- **Description**: Per-profile threshold overrides (deep-merge semantics - leaf fields merge over the built-in profile, unset fields inherit from the built-in). Example overriding only the warning runway for `max-20x`:
 
   ```json
   "claudemeter.thresholds.tokens.profiles": {
@@ -565,21 +580,21 @@ Claudemeter tracks whichever account Claude Code is on. If it looks wrong, check
 
 ### Reporting a bug with a log
 
-If the steps above don't sort it, a log makes diagnosis far quicker:
+If the steps above don't sort it, a log makes diagnosis much quicker:
 
 1. **Turn logging on** - set `claudemeter.debug` to `true` in Settings (optionally set `claudemeter.debugLogFile` to a file path).
 2. **Reproduce** the problem.
-3. **Grab the log** - run **Claudemeter: Dump State (for bug reports)** for a concise redacted snapshot, and/or **Claudemeter: Show Debug Output** for the fuller diagnostic channel.
-4. **[Open an issue](https://github.com/hyperi-io/claudemeter/issues)** and attach it, with your VS Code and extension versions. The log genuinely helps - please include it.
+3. **Grab the log** - run **Claudemeter: Dump State (for bug reports)** for a short redacted snapshot, and **Claudemeter: Show Debug Output** for the fuller channel.
+4. **[Open an issue](https://github.com/hyperi-io/claudemeter/issues)** and attach it, with your VS Code and extension versions. The log helps a lot. Include it.
 
-**Designed to be safe to share.** Claudemeter automatically redacts its logs - no token or credentials, no email or account name, and your home directory (username) is stripped from file paths (only your own project folder names may remain, as the gauge is project-scoped). That should make the output safe to post as-is, but you know your setup best: please give it a quick read and remove anything you would rather not share before attaching it. See Privacy & Security below.
+**Safe to share by design.** Claudemeter redacts its logs automatically - no token, no credentials, no email, no account name, and your home directory (username) is stripped from paths. Only your own project folder names remain. Read it before you attach it and cut anything you would rather not share. See Privacy & Security below.
 
 ## Privacy & Security
 
 - **No credentials stored**: Claudemeter reads Claude Code's existing OAuth token and never stores, copies, or transmits it anywhere except as the `Authorization` header to `api.anthropic.com`. It never writes to Claude Code's credential store.
 - **No data transmission**: Usage data stays on your machine.
 - **Zero runtime dependencies**: The extension bundles no third-party runtime packages - no browser, no Chromium, no scraping stack.
-- **Shareable logs by design**: **Dump State** and the debug log are built to be pasteable into a public issue - they carry only token *presence*/source/scopes/expiry (never the token), plan/tier, usage percentages, counts and timestamps, with the account name and email omitted and the home directory (username) stripped from logged paths (your own project folder names may remain, as the gauge is project-scoped). Redaction is automated, but the final check is yours - skim the output before you post it.
+- **Shareable logs by design**: **Dump State** and the debug log carry only token *presence*/source/scopes/expiry (never the token), plan/tier, usage percentages, counts and timestamps. No account name, no email, and the home directory (username) is stripped from paths. Your own project folder names remain. Redaction is automatic, the final check is yours - skim it before you post.
 - **Open source**: All code is available for review.
 
 ## Feedback & Issues

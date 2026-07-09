@@ -7,13 +7,12 @@ people up most.
 ## Development setup
 
 Prerequisites: the Node.js version pinned in `.nvmrc` (see "Node version"
-below), and a VS Code new enough to satisfy `engines.vscode`, for testing the
-extension.
+below), and a VS Code new enough to satisfy `engines.vscode`.
 
 ```
 npm install          # dev deps only - the extension ships zero runtime deps
 npm run build        # bundle src/ + extension.js -> dist/extension.js (esbuild)
-npm run watch        # rebuild on change; pair with F5 (Run Extension) in VS Code
+npm run watch        # rebuild on change, pair with F5 (Run Extension) in VS Code
 npm test             # vitest
 npm run lint         # eslint
 npm run package      # build a .vsix locally
@@ -70,10 +69,10 @@ table.
 - **Renovate** manages updates as PRs (`renovate.json` extends
   `github>hyperi-io/renovate-config`). Nothing auto-merges - a human reviews
   every update.
-- External deps observe a **7-day release-age cooldown**; security fixes may
+- External deps observe a **7-day release-age cooldown**. Security fixes may
   bypass it. GitHub Actions are **pinned to a commit SHA** (`@<sha> # vN`) -
   keep them that way.
-- The extension has **zero runtime dependencies**; everything in
+- The extension has **zero runtime dependencies**. Everything in
   `package.json` is dev-only (esbuild, vsce, eslint, vitest). Keep it that way.
 
 ## For agentic coders
@@ -82,8 +81,8 @@ Common ways an AI gets this repo wrong:
 
 | Don't | Do | Why |
 |---|---|---|
-| Bump Node (or merge a Renovate Node PR) | Keep Node at the guard's target; run `deps_node_guard.py` | CI must match the extension-host Node for the `engines.vscode` floor |
-| Edit `package.json` `version` or `CHANGELOG.md` | Land `fix:`/`feat:` commits; let semantic-release version | Semantic-release owns versioning |
+| Bump Node (or merge a Renovate Node PR) | Keep Node at the guard's target, run `deps_node_guard.py` | CI must match the extension-host Node for the `engines.vscode` floor |
+| Edit `package.json` `version` or `CHANGELOG.md` | Land `fix:`/`feat:` commits, let semantic-release version | Semantic-release owns versioning |
 | `chore:`-tag a code change, or `fix:`-tag a CI-only change | Match the type to what's affected | Wrong type = wrong (or missing) release |
 | Edit `dist/` or the generated `assets/*.png` | Edit `src/`/`assets/src/` and rebuild/regenerate | `dist` and image outputs are build artefacts |
 | Push to `main` to "just ship it" | Open a PR | A push to `main` publishes to the Marketplace |
