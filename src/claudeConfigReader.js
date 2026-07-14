@@ -64,6 +64,8 @@ function readClaudeConfig() {
 //     displayName,
 //     organizationName,
 //     organizationRole,
+//     organizationType,          // verbatim plan token, e.g. "claude_max" (#51)
+//     organizationRateLimitTier, // verbatim tier, e.g. "default_claude_max_20x" (#51)
 //     billingType,
 //     hasAvailableSubscription,
 //     hasOpusPlanDefault,
@@ -82,6 +84,12 @@ function getOAuthAccount() {
         displayName: oauth.displayName || null,
         organizationName: oauth.organizationName || null,
         organizationRole: oauth.organizationRole || null,
+        // Current Claude Code builds write the plan capability token and rate
+        // limit tier here verbatim - the ONLY local plan signal on macOS,
+        // where .credentials.json does not exist (tokens live in the
+        // Keychain) and s1mAccessCache is no longer written (#51).
+        organizationType: oauth.organizationType || null,
+        organizationRateLimitTier: oauth.organizationRateLimitTier || null,
         billingType: oauth.billingType || null,
         hasAvailableSubscription: config.hasAvailableSubscription === true,
         hasOpusPlanDefault: config.hasOpusPlanDefault === true,

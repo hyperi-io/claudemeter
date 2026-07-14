@@ -81,6 +81,8 @@ describe('claudeConfigReader.getOAuthAccount', () => {
                 displayName: 'User',
                 organizationName: "User's Organization",
                 organizationRole: 'owner',
+                organizationType: 'claude_max',
+                organizationRateLimitTier: 'default_claude_max_20x',
                 billingType: 'personal',
             },
         });
@@ -93,6 +95,8 @@ describe('claudeConfigReader.getOAuthAccount', () => {
             displayName: 'User',
             organizationName: "User's Organization",
             organizationRole: 'owner',
+            organizationType: 'claude_max',
+            organizationRateLimitTier: 'default_claude_max_20x',
             billingType: 'personal',
             hasAvailableSubscription: true,
             hasOpusPlanDefault: true,
@@ -234,6 +238,43 @@ describe('credentialsReader.readCredentials (merged view)', () => {
         // went from null → non-null. That's acceptable — it forces a
         // fresh fetch after the upgrade, which is desired.
         expect(credentials2.identityChanged(beforeKey, afterKey)).toBe(true);
+    });
+
+    it('macOS current builds (#51): plan fields from .claude.json only', () => {
+        // No .credentials.json at all (tokens live in the Keychain) -
+        // organizationType comes through verbatim and rateLimitTier falls
+        // back to organizationRateLimitTier.
+        writeClaudeConfig({
+            oauthAccount: {
+                accountUuid: 'acc-mac',
+                organizationUuid: 'org-mac',
+                emailAddress: 'mac@example.com',
+                organizationType: 'claude_max',
+                organizationRateLimitTier: 'default_claude_max_20x',
+            },
+        });
+        const { credentials } = loadReaders();
+        const c = credentials.readCredentials();
+        expect(c.organizationType).toBe('claude_max');
+        expect(c.rateLimitTier).toBe('default_claude_max_20x');
+        expect(c.subscriptionType).toBeNull(); // legacy field genuinely absent
+    });
+
+    it('legacy rateLimitTier wins over organizationRateLimitTier when both exist', () => {
+        writeClaudeConfig({
+            oauthAccount: {
+                organizationUuid: 'org-both',
+                organizationRateLimitTier: 'default_claude_max_20x',
+            },
+        });
+        writeCredentials({
+            claudeAiOauth: {
+                accessToken: 'tok',
+                rateLimitTier: 'default_claude_max_5x',
+            },
+        });
+        const { credentials } = loadReaders();
+        expect(credentials.readCredentials().rateLimitTier).toBe('default_claude_max_5x');
     });
 
     it('returns partial when only .claude.json present (no credentials file yet)', () => {

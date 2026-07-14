@@ -39,8 +39,12 @@
 // Free shows `["chat"]`, presumably Pro/Team/Enterprise show their
 // own `claude_*` tokens. When capabilities aren't available (e.g.
 // tokenOnlyMode, first fetch hasn't completed, offline), the
-// resolver falls back to the local `subscriptionType` field from
-// ~/.claude/.credentials.json which Claude Code still populates.
+// resolver falls back to local plan signals: `organizationType`
+// from ~/.claude.json oauthAccount (current builds write the
+// capability token verbatim, e.g. "claude_max" - the only local
+// signal on macOS where .credentials.json does not exist, #51),
+// then the legacy `subscriptionType` field from
+// ~/.claude/.credentials.json for older builds.
 
 const STANDARD_LIMIT = 200000;
 
@@ -214,7 +218,8 @@ function subscriptionTypeToCapability(subscriptionType) {
 //   2. aliasDeclaredLimit     -> authoritative (explicit [1m] alias)
 //   3. jsonlDeclaredLimit     -> authoritative (model ID with suffix)
 //   4. rule table (live API)  -> inferred (capabilities + modelIds)
-//   5. rule table (local)     -> inferred (subscriptionType + modelIds)
+//   5. rule table (local)     -> inferred (organizationType, then
+//                                subscriptionType, + modelIds)
 //   6. s1mHasAccess === true  -> configured (Claude Code's own cache)
 //   7. observedFloor snap     -> inferred (fallback with explicit label)
 //   8. STANDARD_LIMIT         -> unknown
@@ -224,7 +229,9 @@ function subscriptionTypeToCapability(subscriptionType) {
 //   aliasDeclaredLimit - from parseModelAlias(claudeCode.selectedModel); 0 = none
 //   jsonlDeclaredLimit - from getHighestDeclaredLimit(modelIds); 0 = none
 //   capabilities       - live /api/bootstrap org capabilities array; null if unavailable
-//   subscriptionType   - local .credentials.json subscriptionType; null if unavailable
+//   organizationType   - local ~/.claude.json oauthAccount.organizationType,
+//                        a verbatim capability token ("claude_max"); null if unavailable
+//   subscriptionType   - local .credentials.json subscriptionType (legacy builds); null if unavailable
 //   s1mHasAccess       - Claude Code's s1mAccessCache[org].hasAccess; bool or null
 //   modelIds           - JSONL model IDs detected in the active session
 //   observedFloor      - max cache_read_input_tokens observed in session
@@ -236,6 +243,7 @@ function resolveContextWindow(input = {}) {
         aliasDeclaredLimit = 0,
         jsonlDeclaredLimit = 0,
         capabilities = null,
+        organizationType = null,
         subscriptionType = null,
         s1mHasAccess = null,
         modelIds = null,
@@ -280,13 +288,25 @@ function resolveContextWindow(input = {}) {
         };
     }
 
-    // 5. Rule table match using local subscriptionType as a
-    // synthesised capability. Useful in tokenOnlyMode where the
-    // /api/bootstrap fetch never runs, or before the first fetch
-    // completes on startup.
-    const localCap = subscriptionTypeToCapability(subscriptionType);
-    if (localCap) {
-        const localRule = matchRuleTable([localCap], modelIds);
+    // 5. Rule table match using local plan signals. Useful in
+    // tokenOnlyMode where the /api/bootstrap fetch never runs, or
+    // before the first fetch completes on startup.
+    //
+    // oauthAccount.organizationType is tried first: current builds
+    // write the capability token verbatim ("claude_max"), and on
+    // macOS it is the ONLY local plan signal (.credentials.json does
+    // not exist there - #51). The legacy subscriptionType synthesis
+    // remains as the fallback for older builds.
+    const localCaps = [];
+    if (organizationType && typeof organizationType === 'string') {
+        localCaps.push(organizationType);
+    }
+    const legacyCap = subscriptionTypeToCapability(subscriptionType);
+    if (legacyCap && !localCaps.includes(legacyCap)) {
+        localCaps.push(legacyCap);
+    }
+    if (localCaps.length > 0) {
+        const localRule = matchRuleTable(localCaps, modelIds);
         if (localRule) {
             return {
                 limit: localRule.limit,

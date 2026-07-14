@@ -55,9 +55,10 @@ function readCredentialsRaw() {
 // Identity fields (orgId, email, accountUuid, displayName, organizationName,
 // organizationRole, billingType, hasAvailableSubscription) come from
 // ~/.claude.json oauthAccount (the new source of truth). Token fields
-// (accessToken, refreshToken, subscriptionType, rateLimitTier) come from
-// .credentials.json for backwards compatibility - older Claude Code builds
-// still populate them there, newer builds leave them null.
+// (accessToken, refreshToken, subscriptionType) come from .credentials.json
+// for backwards compatibility - older Claude Code builds still populate them
+// there, newer builds leave them null. Plan fields prefer .credentials.json
+// then fall back to the oauthAccount equivalents current builds write (#51).
 //
 // Returns null if BOTH files are missing or unreadable. Returns a partial
 // object (with some null fields) if only one source is available, so callers
@@ -83,9 +84,16 @@ function readCredentials() {
         billingType: oauthAccount?.billingType || null,
         hasAvailableSubscription: oauthAccount?.hasAvailableSubscription === true,
 
-        // Plan details - only .credentials.json ever had these, may now be null
+        // Plan details. subscriptionType only ever lived in
+        // .credentials.json, which does not exist on macOS (tokens are in
+        // the Keychain) - may be null there. organizationType is the
+        // current builds' verbatim plan token ("claude_max") from
+        // ~/.claude.json, and organizationRateLimitTier there has the same
+        // verbatim shape as the legacy rateLimitTier, so it serves as the
+        // fallback (#51).
         subscriptionType: oauth.subscriptionType || null,
-        rateLimitTier: oauth.rateLimitTier || null,
+        organizationType: oauthAccount?.organizationType || null,
+        rateLimitTier: oauth.rateLimitTier || oauthAccount?.organizationRateLimitTier || null,
 
         // OAuth tokens - only .credentials.json has these
         accessToken: oauth.accessToken || null,

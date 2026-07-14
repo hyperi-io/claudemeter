@@ -319,6 +319,42 @@ describe('resolveContextWindow — primary bug regression', () => {
         expect(result.limit).toBe(1000000);
     });
 
+    it('macOS current builds (#51): organizationType alone resolves Max', () => {
+        // The environment issue #51 describes: no .credentials.json (tokens
+        // in the Keychain, so subscriptionType is null), no s1mAccessCache,
+        // no live capabilities yet - only oauthAccount.organizationType.
+        const result = resolveContextWindow({
+            capabilities: null,
+            organizationType: 'claude_max',
+            subscriptionType: null,
+            s1mHasAccess: null,
+            modelIds: ['claude-fable-5'],
+            observedFloor: 0,
+        });
+        expect(result.limit).toBe(1000000);
+        expect(result.source).toBe('rule:max-fable-5+-local');
+        expect(result.confidence).toBe('inferred');
+    });
+
+    it('organizationType matches even when legacy subscriptionType is a non-token', () => {
+        const result = resolveContextWindow({
+            organizationType: 'claude_max',
+            subscriptionType: 'free',
+            modelIds: ['claude-opus-4-6'],
+        });
+        expect(result.limit).toBe(1000000);
+    });
+
+    it('unrecognised organizationType token falls through harmlessly', () => {
+        const result = resolveContextWindow({
+            organizationType: 'claude_free_tier_of_the_future',
+            subscriptionType: null,
+            modelIds: ['claude-opus-4-6'],
+        });
+        expect(result.limit).toBe(STANDARD_LIMIT);
+        expect(result.source).toBe('standard');
+    });
+
     it('fable detection: Max + fable-5 + observed < 200K -> 1M', () => {
         // The reported bug: a single-version model id (claude-fable-5) failed
         // to parse, so the rule never matched and the gauge fell back to 200K.

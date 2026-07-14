@@ -232,6 +232,8 @@ function sleep(ms) {
 //                      is currently always null and the resolver leans on
 //                      subscriptionType + the s1m-access cache instead. Kept
 //                      in the signature in case a future signal supplies it.
+//   organizationType - verbatim plan token ('claude_max') from
+//                      ~/.claude.json oauthAccount, when a caller has one
 //   subscriptionType - subscriptionType ('max'/'pro') from the token/profile
 //
 // Signals not passed in ctx are resolved here from VS Code settings /
@@ -267,8 +269,20 @@ function resolveTokenLimit(ctx = {}) {
         s1mHasAccess = null;
     }
 
-    // Local subscription fallback (used when live capabilities aren't
+    // Local plan fallbacks (used when live capabilities aren't
     // available - tokenOnlyMode, pre-first-fetch, offline).
+    // organizationType from ~/.claude.json oauthAccount is the primary
+    // local signal - on macOS .credentials.json does not exist, so the
+    // legacy subscriptionType below is never readable there (#51).
+    let organizationType = ctx.organizationType || null;
+    if (!organizationType) {
+        try {
+            const { getOAuthAccount } = require('./claudeConfigReader');
+            organizationType = getOAuthAccount()?.organizationType || null;
+        } catch {
+            organizationType = null;
+        }
+    }
     let subscriptionType = ctx.subscriptionType || null;
     if (!subscriptionType) {
         try {
@@ -285,6 +299,7 @@ function resolveTokenLimit(ctx = {}) {
         aliasDeclaredLimit,
         jsonlDeclaredLimit,
         capabilities: ctx.capabilities || null,
+        organizationType,
         subscriptionType,
         s1mHasAccess,
         modelIds: ctx.modelIds || null,
