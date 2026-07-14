@@ -1,3 +1,10 @@
+## [2.5.5](https://github.com/hyperi-io/claudemeter/compare/v2.5.4...v2.5.5) (2026-07-14)
+
+
+### Bug Fixes
+
+* local plan detection via organizationType ([c62bdc8](https://github.com/hyperi-io/claudemeter/commit/c62bdc8d81f43c687fbede283152f3093e6b1b42)), closes [#51](https://github.com/hyperi-io/claudemeter/issues/51)
+
 ## [2.5.4](https://github.com/hyperi-io/claudemeter/compare/v2.5.3...v2.5.4) (2026-07-08)
 
 
