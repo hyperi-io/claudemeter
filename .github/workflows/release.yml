@@ -5,6 +5,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Default the token to read-only - the release/publish jobs declare
+# their own write scopes (and do their writes via the App token anyway)
+permissions:
+  contents: read
+
 jobs:
   # Security gate - must pass before release
   security:

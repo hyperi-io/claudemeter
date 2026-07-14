@@ -8,6 +8,10 @@ on:
     paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
   workflow_dispatch:
 
+# CI only reads the repo - no job needs the default write token
+permissions:
+  contents: read
+
 jobs:
   security:
     name: Security
