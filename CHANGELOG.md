@@ -1,3 +1,10 @@
+## [2.5.6](https://github.com/hyperi-io/claudemeter/compare/v2.5.5...v2.5.6) (2026-07-20)
+
+
+### Bug Fixes
+
+* Tk context accounting and project-directory resolution ([0f30815](https://github.com/hyperi-io/claudemeter/commit/0f308156ced21e0b07f8204f4bcb41025cd0c5bc)), closes [#54](https://github.com/hyperi-io/claudemeter/issues/54) [#52](https://github.com/hyperi-io/claudemeter/issues/52) [#53](https://github.com/hyperi-io/claudemeter/issues/53)
+
 ## [2.5.5](https://github.com/hyperi-io/claudemeter/compare/v2.5.4...v2.5.5) (2026-07-14)
 
 
