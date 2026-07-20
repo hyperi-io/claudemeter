@@ -10,8 +10,21 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const { getTokenLimit, splitLines } = require('./utils');
+const {
+    projectDirName,
+    normaliseUnicode,
+    canonicalisePath,
+    pathsEqual,
+    firstRecordedCwd,
+    resolveProjectDir,
+} = require('./projectDir');
 
-// Active session = the largest live session - max cache_read across the main
+// How long a "no project directory for this workspace" answer stays cached.
+// Long enough to keep the refresh timer off the full scan, short enough that a
+// first-ever Claude Code session in the workspace lights the gauge up promptly.
+const DIR_MISS_TTL_MS = 60 * 1000;
+
+// Active session = the largest live session - max context across the main
 // transcripts modified inside the recency window. Newest-wins understated
 // sub-agent / multi-session work (it showed a small concurrent sub-task, not
 // the heavy orchestrator). A /clear can't be told apart from a concurrent
@@ -21,9 +34,9 @@ function selectActiveSession(sessions) {
     let active = null;
     let activeSessionCount = 0;
     for (const s of sessions || []) {
-        if (s && s.cacheRead > 0) {
+        if (s && s.contextTotal > 0) {
             activeSessionCount++;
-            if (active === null || s.cacheRead > active.cacheRead) {
+            if (active === null || s.contextTotal > active.contextTotal) {
                 active = s;
             }
         }
@@ -31,9 +44,15 @@ function selectActiveSession(sessions) {
     return { active, activeSessionCount };
 }
 
-// Parse a transcript's latest assistant cache_read into a session summary, or
+// Parse a transcript's latest assistant prompt size into a session summary, or
 // null if it has no usage yet. Module-level so both the live scan and the
 // aged-out fallback reuse it.
+//
+// The prompt is the SUM of the three input fields: input + cache_creation +
+// cache_read. cache_read alone is only what was already cached before the
+// turn, so it lags by one turn and collapses on a cache miss - ingest a large
+// file and all of it lands in cache_creation. Measured 32K against a real
+// 233K prompt in a live session (#54).
 async function readSessionUsage(filePath, log) {
     try {
         const content = await fs.readFile(filePath, 'utf-8');
@@ -41,16 +60,45 @@ async function readSessionUsage(filePath, log) {
         for (let i = lines.length - 1; i >= 0; i--) {
             try {
                 const entry = JSON.parse(lines[i]);
+                // Same shapes isValidUsageRecord() rejects. These carry a
+                // token count without being a real prompt, and one would
+                // become the session's whole reported context.
+                if (entry.isApiErrorMessage || entry.message?.model === '<synthetic>') {
+                    continue;
+                }
                 if (entry.type === 'assistant' && entry.message?.usage) {
-                    const cacheRead = entry.message.usage.cache_read_input_tokens || 0;
-                    if (cacheRead > 0) {
+                    const usage = entry.message.usage;
+                    if (typeof usage.input_tokens !== 'number'
+                        || typeof usage.output_tokens !== 'number') {
+                        continue;
+                    }
+                    const input = usage.input_tokens || 0;
+                    const cacheCreation = usage.cache_creation_input_tokens || 0;
+                    const cacheRead = usage.cache_read_input_tokens || 0;
+                    const contextTotal = input + cacheCreation + cacheRead;
+                    // "Had a prompt", not "hit the cache". The first turn
+                    // after a miss reports cache_read 0 with a full-size
+                    // cache_creation, and gating on cache_read hid those
+                    // sessions entirely.
+                    if (contextTotal > 0) {
                         const model = entry.message?.model;
                         return {
                             file: path.basename(filePath),
+                            contextTotal,
+                            input,
                             cacheRead,
-                            cacheCreation: entry.message.usage.cache_creation_input_tokens || 0,
+                            cacheCreation,
                             messageCount: lines.length,
-                            model: (model && model !== '<synthetic>') ? model : null,
+                            model: model || null,
+                            // Where the session STARTED, which is the project
+                            // it belongs to. `cwd` is a per-entry field and it
+                            // moves - a Bash `cd`, a worktree, an
+                            // added-directory turn all rewrite it (measured
+                            // 2026-07-20: 28% of 141 transcripts recorded more
+                            // than one, one recorded 24). The last turn's cwd
+                            // would misattribute a long session to whatever it
+                            // touched last. See makeSessionFilter().
+                            cwd: firstRecordedCwd(lines),
                         };
                     }
                 }
@@ -76,33 +124,24 @@ class ClaudeDataLoader {
         }
     }
 
-    // Claude replaces path separators with dashes in directory names.
-    // Works for both Unix (/) and Windows (\) paths.
-    //
-    // Windows note: Claude Code converts the drive-letter colon to a dash
-    // rather than dropping it, so `c:\Projects\foo` becomes
-    // `c--Projects-foo` - one dash from the colon, one from the first
-    // backslash. Earlier versions dropped the colon and produced
-    // `c-Projects-foo`, which caused the project-dir lookup to silently
-    // miss whenever a workspace was open and forced the status bar to
-    // render `Tk -` (no active session) for the entire VS Code window.
+    // Best-effort name for logging and the "is a workspace open" guard.
+    // Synchronous, so it normalises Unicode but cannot resolve symlinks. The
+    // authoritative name comes from getProjectDataDirectory(). See
+    // src/projectDir.js.
     convertPathToClaudeDir(workspacePath) {
-        return workspacePath
-            .replace(/\\/g, '-')  // Windows backslashes
-            .replace(/\//g, '-')  // Unix forward slashes
-            .replace(/:/g, '-')   // Windows drive-letter colon
-            .replace(/ /g, '-');  // spaces - Claude Code dashes these too, #43
+        return projectDirName(normaliseUnicode(workspacePath));
     }
 
     setWorkspacePath(workspacePath) {
         this.workspacePath = workspacePath;
+        this.dirMiss = null;
         this.projectDirName = workspacePath ? this.convertPathToClaudeDir(workspacePath) : null;
         this.log(`ClaudeDataLoader workspace set to: ${workspacePath}`);
         this.log(`   Project dir name: ${this.projectDirName}`);
     }
 
     async getProjectDataDirectory() {
-        if (!this.projectDirName) {
+        if (!this.workspacePath) {
             this.log('No workspace path set - no project directory');
             return null;
         }
@@ -112,18 +151,29 @@ class ClaudeDataLoader {
             return null;
         }
 
-        const projectDir = path.join(baseDir, this.projectDirName);
-        try {
-            const stat = await fs.stat(projectDir);
-            if (stat.isDirectory()) {
-                this.log(`Found project-specific directory: ${projectDir}`);
-                return projectDir;
-            }
-        } catch (error) {
-            this.log(`Project directory not found: ${projectDir}`);
+        // Throttle the fallback scan, not the lookup. The derived stats still
+        // run every time, so a workspace's first session lights the gauge
+        // straight away. Only the walk over every project directory is
+        // rate-limited - this runs on the refresh timer and on every debounced
+        // JSONL event.
+        const missKey = `${baseDir}|${this.workspacePath}`;
+        const scannedRecently = this.dirMiss?.key === missKey
+            && Date.now() - this.dirMiss.at < DIR_MISS_TTL_MS;
+
+        const resolved = await resolveProjectDir(baseDir, this.workspacePath, (m) => this.log(m), !scannedRecently);
+        if (!resolved) {
+            if (!scannedRecently) this.dirMiss = { key: missKey, at: Date.now() };
+            this.log(`Project directory not found for workspace: ${this.workspacePath}`);
+            return null;
         }
 
-        return null;
+        this.log(`Found project-specific directory (${resolved.method}): ${resolved.dir}`);
+        if (resolved.method === 'recorded-cwd') {
+            // Naming rule missed and the transcripts settled it. The rule has
+            // drifted - re-check src/projectDir.js against the current CLI.
+            this.log('   Naming rule did not match - resolved from the recorded cwd instead');
+        }
+        return resolved.dir;
     }
 
     getClaudeConfigPaths() {
@@ -177,7 +227,9 @@ class ClaudeDataLoader {
         return null;
     }
 
-    async findJsonlFiles(dirPath) {
+    // `seen` carries resolved transcript paths down the recursion so a
+    // symlinked transcript is not returned twice.
+    async findJsonlFiles(dirPath, seen = new Set()) {
         const jsonlFiles = [];
 
         try {
@@ -186,10 +238,48 @@ class ClaudeDataLoader {
             for (const entry of entries) {
                 const fullPath = path.join(dirPath, entry.name); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- entry.name from fs.readdir is a bare filename (OS forbids separators); dirPath is an internal Claude data dir.
 
-                if (entry.isDirectory()) {
-                    const subFiles = await this.findJsonlFiles(fullPath);
+                // Symlinked FILES are followed, symlinked DIRECTORIES are not.
+                //
+                // People do symlink transcripts (shared session storage, GNU
+                // Stow dotfiles) and Claude Code stopped following those in
+                // 2.1.104 (claude-code#51488, #46342), so a linked .jsonl is
+                // worth picking up. Recursing through a linked DIRECTORY is
+                // not: this walk has no cycle detection, and project dirs
+                // already carry links pointing outside the Claude tree (a
+                // `memory` link is common). Two links resolving to an ancestor
+                // spin until the kernel's symlink limit and hang the refresh.
+                // A link to an ancestor also yields the same transcript once
+                // per level, which inflates the live-session count.
+                //
+                // Symlinked project directories are handled a level up, in
+                // projectDir.findDirByRecordedCwd, which stats them without
+                // recursing.
+                let isDir = entry.isDirectory();
+                let isFile = entry.isFile();
+                if (entry.isSymbolicLink()) {
+                    try {
+                        isFile = (await fs.stat(fullPath)).isFile();
+                    } catch (linkError) {
+                        continue;  // dangling link
+                    }
+                }
+
+                if (isDir) {
+                    const subFiles = await this.findJsonlFiles(fullPath, seen);
                     jsonlFiles.push(...subFiles);
-                } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+                } else if (isFile && entry.name.endsWith('.jsonl')) {
+                    // Deduplicate on the resolved path. A link pointing at a
+                    // transcript we already have would otherwise count as a
+                    // second live session. One realpath per transcript is
+                    // nothing next to reading the file, which we do anyway.
+                    let realPath;
+                    try {
+                        realPath = await fs.realpath(fullPath);
+                    } catch (linkError) {
+                        continue;
+                    }
+                    if (seen.has(realPath)) continue;
+                    seen.add(realPath);
                     jsonlFiles.push(fullPath);
                 }
             }
@@ -316,7 +406,34 @@ class ClaudeDataLoader {
         };
     }
 
-    // Extract cache_read from most recent assistant message as session context size
+    // Did this session run in OUR workspace?
+    //
+    // The directory is not a per-project guarantee. The name is a lossy
+    // encoding - `/work/my-api`, `/work/my/api`, `/work/my_api` and
+    // `/work-my/api` all collapse to one folder (claude-code#19972) - so a
+    // directory can hold several unrelated projects, silently merged.
+    //
+    // Matches the ORIGIN cwd, same field findDirByRecordedCwd uses. The last
+    // turn's cwd would drop any session that ended in a subdirectory, a
+    // worktree or another repo - measured 2026-07-20, 4% of 141 transcripts,
+    // and the biggest ones at that.
+    //
+    // Permissive: dropped only when it HAS a cwd and that cwd is elsewhere. A
+    // transcript with none is kept, since blanking the gauge over a parsing
+    // gap is worse than the rare over-inclusion.
+    async makeSessionFilter() {
+        if (!this.workspacePath) return async () => true;
+        const canonical = await canonicalisePath(this.workspacePath);
+        return async (session) => {
+            if (!session.cwd) return true;
+            if (pathsEqual(await canonicalisePath(session.cwd), canonical)) return true;
+            this.log(`   Skipping ${session.file}: ran in ${session.cwd}, not this workspace`);
+            return false;
+        };
+    }
+
+    // Extract the prompt size of the most recent assistant message as the
+    // session context size (input + cache_creation + cache_read).
     // Only searches project-specific directory when workspace is set to avoid cross-project data
     async getCurrentSessionUsage() {
         this.log('getCurrentSessionUsage() - extracting cache size from most recent message');
@@ -437,10 +554,12 @@ class ClaudeDataLoader {
             const liveFiles = relevantFiles.filter(f => f.modified >= liveCutoff);
             this.log(`${liveFiles.length} live (${Math.round(windowMs / 60000)}min) of ${relevantFiles.length} in-deck, ${allFiles.length} total`);
 
+            const ours = await this.makeSessionFilter();
+
             const liveSessions = [];
             for (const f of liveFiles) {
                 const s = await readSessionUsage(f.path, (m) => this.log(m));
-                if (s) liveSessions.push(s);
+                if (s && await ours(s)) liveSessions.push(s);
             }
 
             let { active, activeSessionCount } = selectActiveSession(liveSessions);
@@ -451,7 +570,7 @@ class ClaudeDataLoader {
                 // still inside the hard deck - last-known context, not a blank.
                 for (const f of relevantFiles) {
                     const s = await readSessionUsage(f.path, (m) => this.log(m));
-                    if (s) {
+                    if (s && await ours(s)) {
                         active = s;
                         activeSessionCount = 1;
                         agedOut = true;
@@ -463,17 +582,18 @@ class ClaudeDataLoader {
             const modelIds = active && active.model ? [active.model] : [];
 
             if (active) {
-                const resolvedLimit = getTokenLimit(modelIds, active.cacheRead);
-                const pct = ((active.cacheRead / resolvedLimit) * 100).toFixed(2);
+                const resolvedLimit = getTokenLimit(modelIds, active.contextTotal);
+                const pct = ((active.contextTotal / resolvedLimit) * 100).toFixed(2);
                 this.log(`Showing ${agedOut ? 'latest aged-out' : 'largest live'} session: ${active.file}`);
-                this.log(`   Models: ${modelIds.join(', ') || 'none'} | Window: ${resolvedLimit.toLocaleString()} | cache_read: ${active.cacheRead.toLocaleString()} (${pct}%)`);
+                this.log(`   Models: ${modelIds.join(', ') || 'none'} | Window: ${resolvedLimit.toLocaleString()} | context: ${active.contextTotal.toLocaleString()} (${pct}%)`);
+                this.log(`   input: ${active.input.toLocaleString()} + cache_creation: ${active.cacheCreation.toLocaleString()} + cache_read: ${active.cacheRead.toLocaleString()}`);
             } else {
                 this.log('No session with usage - inactive');
             }
 
             return {
-                totalTokens: active ? active.cacheRead : 0,
-                inputTokens: 0,
+                totalTokens: active ? active.contextTotal : 0,
+                inputTokens: active ? active.input : 0,
                 outputTokens: 0,
                 cacheCreationTokens: active ? active.cacheCreation : 0,
                 cacheReadTokens: active ? active.cacheRead : 0,
@@ -505,4 +625,4 @@ class ClaudeDataLoader {
     }
 }
 
-module.exports = { ClaudeDataLoader, selectActiveSession };
+module.exports = { ClaudeDataLoader, selectActiveSession, readSessionUsage };

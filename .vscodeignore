@@ -49,6 +49,10 @@ archive/**
 # AI tooling (local dev only)
 ai/**
 hyperi-ai/**
+# Dotted form is a symlink to a directory - without this the packager's secret
+# scan tries to read it as a file and dies with EISDIR.
+.hyperi-ai
+.hyperi-ai/**
 .gitmodules
 CLAUDE.md
 .cursorrules
