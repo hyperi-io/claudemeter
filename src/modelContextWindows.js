@@ -26,9 +26,10 @@
 // It no longer decides the session limit itself - that lives in
 // contextWindowResolver.resolveContextWindow, which runs the ordered priority
 // chain over every signal (user override, alias, JSONL suffix, rule table,
-// s1mAccessCache, observed floor). The old Math.max strategy that lived here
-// caused the 2026-04 ratchet bug, so resolveSessionContextWindow below is now
-// just a thin delegator kept for back-compat.
+// s1mAccessCache, observed floor). Maximising over those signals lets the
+// observed floor become the answer whenever every other one is absent, which
+// ratchets the reported limit upward with usage, so resolveSessionContextWindow
+// below is now just a thin delegator kept for back-compat.
 
 const STANDARD_LIMIT = 200000;
 const FALLBACK_LIMIT = STANDARD_LIMIT;
@@ -109,11 +110,9 @@ function getModelContextWindow(modelId) {
 
 // Given observed session state, return the resolved context window in tokens.
 //
-// DEPRECATED: this function was the entry point for the old
-// Math.max-based resolver, which treated `maxObservedTokens` as a
-// definitive limit when it exceeded 200K. That caused the 2026-04
-// ratchet bug where the stored session limit would creep up to
-// match the raw observed usage, producing a permanent ~100% Tk%.
+// DEPRECATED: treating `maxObservedTokens` as a definitive limit
+// once it exceeds 200K lets the reported limit creep up to match
+// raw observed usage, producing a permanent ~100% Tk%.
 //
 // It is kept only as a thin delegator to contextWindowResolver so
 // any remaining callers (inside or outside the repo) transparently

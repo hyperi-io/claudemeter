@@ -49,11 +49,10 @@ Because Claude Code strips the `[1m]` suffix from model IDs before writing them 
 1. **User override** - `claudemeter.tokenLimit` setting, if set (authoritative)
 2. **Explicit alias suffix** - `claudeCode.selectedModel: "opus[1m]"` (authoritative)
 3. **JSONL suffix** - a model ID with `[Nm]` in session logs (authoritative, rare in practice)
-4. **Live plan + model rule table** - `subscriptionType` from the OAuth `/profile` response + model family from session logs matched against a data-driven rule table (e.g. Max + `opus-4.6+` or `fable-5` -> 1M)
-5. **Local plan + model rule table** - same table, but plan comes from the token blob's `subscriptionType` (used before the first fetch or when web usage is off, e.g. `tokenOnlyMode`)
-6. **Claude Code's `s1mAccessCache`** - used only as a last-resort corroborating signal, never as a negative
-7. **Observed usage snap-to-tier** - if all authoritative signals fail but observed tokens exceed 200K, snap up to the next known tier (200K -> 1M -> 2M) and label the result as `(inferred)`
-8. **Standard fallback** - 200K
+4. **Plan + model rule table** - plan from `organizationType` in `~/.claude.json`, else the token blob's `subscriptionType`, matched with the model family from session logs against a data-driven rule table (e.g. Max + `opus-4.6+` or `fable-5` -> 1M)
+5. **Claude Code's `s1mAccessCache`** - used only as a last-resort corroborating signal, never as a negative
+6. **Observed usage snap-to-tier** - if all authoritative signals fail but observed tokens exceed 200K, snap up to the next known tier (200K -> 1M -> 2M) and label the result as `(inferred)`
+7. **Standard fallback** - 200K
 
 The tooltip shows the source:
 

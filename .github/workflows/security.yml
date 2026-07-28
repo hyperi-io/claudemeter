@@ -38,7 +38,27 @@ jobs:
             [ -n "$leaked" ] || continue
             echo "::error::$leaked is tracked - local AI file leaked into the repo"
             FAILED=true
-          done < <(git ls-files -- '*CLAUDE.md' '*STATE.md' '*TODO.md' '*AGENTS.md' '.claude/*')
+          done < <(git ls-files -- ':(icase)*CLAUDE.md' ':(icase)*STATE.md' ':(icase)*TODO.md' ':(icase)*AGENTS.md' ':(icase).claude/*')
+
+          # Submodule guard: every entry in .gitmodules must remain a gitlink
+          # (`commit` type in the tree) and its working-tree directory must
+          # stay empty. Private submodule contents must never ride along with
+          # this public repo's artifacts. Inert while no submodule exists, and
+          # kept for the day one returns.
+          if [ -f .gitmodules ]; then
+            while IFS= read -r sub; do
+              [ -n "$sub" ] || continue
+              entry=$(git ls-tree HEAD "$sub" 2>/dev/null | awk '{print $2}')
+              if [ "$entry" != "commit" ]; then
+                echo "::error::Submodule $sub is no longer a gitlink - its contents may have been committed to this public repo"
+                FAILED=true
+              fi
+              if [ -d "$sub" ] && [ -n "$(ls -A "$sub" 2>/dev/null)" ]; then
+                echo "::error::$sub/ has contents - submodule should not be checked out here"
+                FAILED=true
+              fi
+            done < <(git config -f .gitmodules --get-regexp 'submodule\..*\.path' | awk '{print $2}')
+          fi
 
           # Symlinks pointing at private AI content would drag it into the
           # package.

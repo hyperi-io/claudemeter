@@ -65,17 +65,44 @@ function selectActiveSession(sessions) {
 //
 // So each transcript is read ONCE, and after that only the bytes appended
 // since. `readAt` is the byte offset just past the last complete line already
-// folded into `summary`; `size`/`mtimeMs` identify the file state that produced
-// it. Unchanged file -> one stat and no read at all.
+// folded into `summary`, and `size` plus the edge hashes identify the file
+// state that produced it. mtime is deliberately not part of that: filesystem
+// timestamp granularity varies and a same-size rewrite can land inside one
+// tick, so it cannot answer whether anything changed.
 //
-// Keyed by path. Entries are small (a summary object and a short array), and a
-// transcript that stops changing simply stops being consulted.
+// Keyed by path, most-recently-read last, and bounded: an extension host runs
+// for days and would otherwise hold one entry per transcript ever read. Entries
+// are small, so the cap is about never growing without limit rather than about
+// saving bytes - evicting one only costs that transcript a re-read.
 const transcriptCache = new Map();
+const TRANSCRIPT_CACHE_MAX = 64;
+
+// In-flight reads, keyed by path. The refresh timer and the debounced
+// file-watcher both reach readSessionUsage() with nothing between them, so two
+// reads of one transcript can overlap. Whichever finished last would write back
+// its `readAt`, and if that were the one that saw the SMALLER file the offset
+// regresses and the overlap is folded in twice - inflating messageCount and
+// double-counting any compaction in that range, which then skews the median
+// compact point. Sharing one promise per path removes the interleaving.
+const inFlightReads = new Map();
+
+function rememberTranscript(filePath, entry) {
+    // delete-then-set moves the key to the end: Map.set on an existing key
+    // keeps its original insertion position, so without this the eviction
+    // below would drop whatever was read FIRST rather than least recently.
+    transcriptCache.delete(filePath);
+    transcriptCache.set(filePath, entry);
+    while (transcriptCache.size > TRANSCRIPT_CACHE_MAX) {
+        const oldest = transcriptCache.keys().next().value;
+        transcriptCache.delete(oldest);
+    }
+}
 
 // Discard cached tail state. Only needed by tests, which write several
 // different files to the same path faster than mtime can distinguish them.
 function resetTranscriptCache() {
     transcriptCache.clear();
+    inFlightReads.clear();
 }
 
 // Pre-filter for the compact-boundary scan on the FIRST read of a transcript,
@@ -270,6 +297,21 @@ function identityOf(stats, headHash) {
 // these files are append-only and reach 162MB, while the gauge refreshes on a
 // timer and on every debounced write. An unchanged file costs one stat.
 async function readSessionUsage(filePath, log) {
+    const pending = inFlightReads.get(filePath);
+    if (pending) {
+        const summary = await pending;
+        return summary ? { ...summary } : null;
+    }
+    const read = readTranscript(filePath, log);
+    inFlightReads.set(filePath, read);
+    try {
+        return await read;
+    } finally {
+        inFlightReads.delete(filePath);
+    }
+}
+
+async function readTranscript(filePath, log) {
     let handle = null;
     try {
         const stats = await fs.stat(filePath);
@@ -304,10 +346,9 @@ async function readSessionUsage(filePath, log) {
             // Touched but no COMPLETE new line yet (a write caught mid-flight).
             await handle.close();
             handle = null;
-            transcriptCache.set(filePath, {
+            rememberTranscript(filePath, {
                 ...cached,
                 size: stats.size,
-                mtimeMs: stats.mtimeMs,
                 tail: edges.tail,
             });
             return cached.summary ? { ...cached.summary } : null;
@@ -351,13 +392,12 @@ async function readSessionUsage(filePath, log) {
                 autoCompacts: [...state.autoCompacts],
             } : null;
 
-            transcriptCache.set(filePath, {
+            rememberTranscript(filePath, {
                 identity,
                 tail: edges.tail,
                 dev: stats.dev || 0,
                 ino: stats.ino || 0,
                 size: stats.size,
-                mtimeMs: stats.mtimeMs,
                 // Only what was consumed: a partial trailing line is re-read
                 // next time, whole.
                 readAt: cached.readAt + Buffer.byteLength(text.slice(0, complete), 'utf-8'),
@@ -411,13 +451,12 @@ async function readSessionUsage(filePath, log) {
             autoCompacts: [...state.autoCompacts],
         } : null;
 
-        transcriptCache.set(filePath, {
+        rememberTranscript(filePath, {
             identity,
             tail: edges.tail,
             dev: stats.dev || 0,
             ino: stats.ino || 0,
             size: stats.size,
-            mtimeMs: stats.mtimeMs,
             readAt: Buffer.byteLength(consumed, 'utf-8'),
             messageCount,
             cwd,

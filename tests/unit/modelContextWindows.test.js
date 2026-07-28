@@ -247,7 +247,8 @@ describe('resolveSessionContextWindow', () => {
     });
 
     it('snaps to 1M for empty model list with high observed tokens', () => {
-        // Old behaviour returned the raw 300000. New: snap to 1M tier.
+        // Snaps to the next known tier because 300,000 is not itself a valid
+        // context window size.
         expect(resolveSessionContextWindow([], 300000)).toBe(1000000);
     });
 
@@ -260,10 +261,9 @@ describe('resolveSessionContextWindow', () => {
         expect(resolveSessionContextWindow(undefined, 0)).toBe(STANDARD_LIMIT);
     });
 
-    // Eligibility signal — Bug 1: s1mAccessCache says the account
-    // qualifies for 1M context even though no observed token has
-    // confirmed it yet. In the new resolver this is the `cc-eligibility`
-    // path at priority 6.
+    // s1mAccessCache says the account qualifies for 1M context even
+    // though no observed token has confirmed it yet - the cc-eligibility
+    // path (priority 6) trusts that signal alone.
     it('returns 1M from eligibility signal alone', () => {
         expect(resolveSessionContextWindow(['claude-opus-4-6'], 0, 0, 1000000)).toBe(1000000);
     });
@@ -273,9 +273,9 @@ describe('resolveSessionContextWindow', () => {
     });
 
     it('eligibility wins over observed even with observed above eligibility', () => {
-        // Old behaviour preferred observed (1500000). New: eligibility
-        // says 1M authoritatively, so the limit stays at 1M. Observed
-        // is treated as a lower bound that can't exceed a known tier.
+        // Eligibility is authoritative over a higher observed count, so the
+        // limit stays at 1M - observed is a lower bound, not itself a valid
+        // context window size.
         expect(resolveSessionContextWindow(['claude-opus-4-6'], 1500000, 0, 1000000)).toBe(1000000);
     });
 

@@ -33,8 +33,6 @@
 //                profile's explicit values or these defaults.
 //
 //                Pure JS — no vscode dependency, no I/O, fully testable.
-//                See STATE.md "Claude Code auto-compact trigger" for the
-//                research that motivates the reserve-based model.
 //
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED

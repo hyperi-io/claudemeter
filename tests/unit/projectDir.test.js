@@ -73,8 +73,8 @@ describe('projectDirName - separators', () => {
 });
 
 describe('projectDirName - punctuation', () => {
-    // Each of these was, or would have been, its own bug report under the old
-    // enumerate-the-characters approach.
+    // Each punctuation shape needs its own case: an enumerate-the-characters
+    // approach silently drops any character not explicitly listed.
     it('maps spaces (#43)', () => {
         expect(projectDirName('c:\\My Projects\\thing')).toBe('c--My-Projects-thing');
     });

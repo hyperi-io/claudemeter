@@ -36,8 +36,8 @@ describe('isHappyHour — default window, PDT', () => {
     });
 
     it('returns false during LA afternoon peak (Wed 16:00 LA = 23:00 UTC)', () => {
-        // Regression: with the old 11:00 end, 4 PM LA was wrongly shown as
-        // happy hour. Peak now runs 05:00-23:00, so afternoon is peak.
+        // Peak runs 05:00-23:00 LA time, so 4 PM LA sits inside peak, not
+        // happy hour.
         expect(isHappyHour(utc('2026-04-15T23:00:00Z'), DEFAULT_PEAK_WINDOW)).toBe(false);
     });
 

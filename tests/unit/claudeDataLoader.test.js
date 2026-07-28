@@ -415,18 +415,30 @@ describe('readSessionUsage - incremental tail reads', () => {
         expect((await readSessionUsage(file)).cwd).toBe('/origin/repo');
     });
 
-    it('handles multi-byte characters split across an append', async () => {
+    it('reads multi-byte content written one byte at a time', async () => {
+        // The delta is decoded as UTF-8, so a read boundary landing mid
+        // character would corrupt the line. Written byte by byte with reads
+        // interleaved, so the reader genuinely sees partial characters rather
+        // than one clean append that never splits anything.
         const file = fresh([turn(40000)]);
         await readSessionUsage(file);
-        append(file, [JSON.stringify({
+
+        const line = JSON.stringify({
             type: 'assistant',
             cwd: '/some/project',
             message: {
                 model: 'claude-opus-4-8',
                 usage: { input_tokens: 2, cache_read_input_tokens: 55000, output_tokens: 5 },
-                content: 'ok',
+                content: 'ok éè中文 \u{1F600}',
             },
-        })]);
+        }) + '\n';
+
+        const bytes = Buffer.from(line, 'utf-8');
+        expect(bytes.length).toBeGreaterThan(line.length);   // genuinely multi-byte
+        for (const byte of bytes) {
+            fs.appendFileSync(file, Buffer.from([byte]));
+            await readSessionUsage(file);
+        }
         expect((await readSessionUsage(file)).contextTotal).toBe(55002);
     });
 
@@ -446,13 +458,15 @@ describe('readSessionUsage - incremental tail reads', () => {
         expect((await readSessionUsage(file)).autoCompacts).toEqual([]);
     });
 
-    // Identity is device + inode + a hash of the first 1024 bytes, the scheme
-    // Filebeat, Vector, the OTel filelog receiver and FastForward converge on.
-    // Inode alone gets reused; a head hash alone collides across files that
-    // start the same. Any change means the cached byte offset points into a
-    // file that no longer exists, so the only safe move is to read it again
-    // whole - and then remember the NEW identity, which is what stops it
-    // repeating.
+    // Identity is device + inode + a hash of the FIRST LINE, found within a
+    // 1024-byte search window. Log tailers converge on a fingerprint of the
+    // head for this - Vector over leading lines, Filebeat over leading bytes -
+    // because inodes get reused and a hash alone collides across files that
+    // start the same. A line rather than a byte window so that appending to a
+    // short file cannot change it. Any change means the cached byte offset
+    // points into a file that no longer exists, so the only safe move is to
+    // read it again whole, then remember the NEW identity, which is what stops
+    // it repeating.
     describe('resync when the file changes underneath us', () => {
         it('recovers from a truncate-and-rewrite that lands on the SAME size', async () => {
             // Size and mtime can both look plausible across this, so only the
@@ -609,6 +623,44 @@ describe('readSessionUsage - incremental tail reads', () => {
 
             fs.writeFileSync(file, turn(12000) + '\n', 'utf-8');
             expect((await readSessionUsage(file)).contextTotal).toBe(12002);
+        });
+
+        it('serialises overlapping reads of one transcript', async () => {
+            // The refresh timer and the debounced watcher both reach here with
+            // nothing between them. Two interleaved reads that wrote back
+            // independently could regress the byte offset and fold the overlap
+            // in twice, inflating messageCount and double-counting a
+            // compaction into the median compact point.
+            const file = fresh([boundary(167974, 'b1'), turn(10000)]);
+            const [a, b, c] = await Promise.all([
+                readSessionUsage(file),
+                readSessionUsage(file),
+                readSessionUsage(file),
+            ]);
+            expect(a).toEqual(b);
+            expect(b).toEqual(c);
+            expect(a.messageCount).toBe(2);
+            expect(a.autoCompacts).toEqual([167974]);
+
+            // Each caller gets its own object, so one mutating it cannot
+            // corrupt another's copy or the cache.
+            expect(a).not.toBe(b);
+            a.contextTotal = -1;
+            expect((await readSessionUsage(file)).contextTotal).toBe(10002);
+        });
+
+        it('bounds the cache instead of growing forever', async () => {
+            // An extension host runs for days. Evicting only costs a re-read,
+            // so correctness must not depend on an entry still being cached.
+            const first = fresh([turn(4242)]);
+            expect((await readSessionUsage(first)).contextTotal).toBe(4244);
+
+            for (let i = 0; i < 70; i++) {
+                await readSessionUsage(fresh([turn(1000 + i)]));
+            }
+
+            // Evicted by now, and still correct - re-read from scratch.
+            expect((await readSessionUsage(first)).contextTotal).toBe(4244);
         });
 
         it('returns null and does not throw when the file disappears', async () => {

@@ -26,17 +26,17 @@
 //
 // Plan detection:
 //
-// The resolver accepts `capabilities` (live from /api/bootstrap)
-// as the authoritative plan signal. Max shows `["claude_max", "chat"]`,
-// Free shows `["chat"]`, presumably Pro/Team/Enterprise show their
-// own `claude_*` tokens. When capabilities aren't available (e.g.
-// tokenOnlyMode, first fetch hasn't completed, offline), the
-// resolver falls back to local plan signals: `organizationType`
-// from ~/.claude.json oauthAccount (current builds write the
-// capability token verbatim, e.g. "claude_max" - the only local
-// signal on macOS where .credentials.json does not exist, #51),
-// then the legacy `subscriptionType` field from
-// ~/.claude/.credentials.json for older builds.
+// In practice the plan comes from LOCAL signals: `organizationType` from
+// ~/.claude.json oauthAccount (current builds write the capability token
+// verbatim, e.g. "claude_max" - the only local signal on macOS, where
+// .credentials.json does not exist, #51), then the legacy `subscriptionType`
+// field from ~/.claude/.credentials.json for older builds.
+//
+// `capabilities` is kept as an input but no caller supplies one: it came from
+// /api/bootstrap, which the OAuth-token fetch path does not use, so the live
+// rule-table step never fires today. It stays because the shape is the plan
+// signal we would want if an endpoint offers it again, and because removing it
+// would collapse two differently-labelled sources into one.
 
 const STANDARD_LIMIT = 200000;
 
@@ -219,7 +219,7 @@ function subscriptionTypeToCapability(subscriptionType) {
 //   userOverride       - from claudemeter.tokenLimit setting; 0 = none
 //   aliasDeclaredLimit - from parseModelAlias(claudeCode.selectedModel); 0 = none
 //   jsonlDeclaredLimit - from getHighestDeclaredLimit(modelIds); 0 = none
-//   capabilities       - live /api/bootstrap org capabilities array; null if unavailable
+//   capabilities       - live org capabilities array; always null today
 //   organizationType   - local ~/.claude.json oauthAccount.organizationType,
 //                        a verbatim capability token ("claude_max"); null if unavailable
 //   subscriptionType   - local .credentials.json subscriptionType (legacy builds); null if unavailable
@@ -269,7 +269,8 @@ function resolveContextWindow(input = {}) {
         };
     }
 
-    // 4. Rule table match using live /api/bootstrap capabilities
+    // 4. Rule table match using live capabilities. Nothing supplies these
+    // today (see the header), so this falls through to the local match below.
     const liveRule = matchRuleTable(capabilities, modelIds);
     if (liveRule) {
         return {

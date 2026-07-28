@@ -15,8 +15,8 @@ issues.
 The marketplace artifact `dist/extension.js` is built from `extension.js`
 via `node esbuild.js --production`.
 
-Claudemeter has **zero runtime dependencies** (`package.json`
-`dependencies` is empty). It ships no browser, no Chromium, and no
+Claudemeter has **zero runtime dependencies** (`package.json` has no
+`dependencies` key at all). It ships no browser, no Chromium, and no
 scraping stack - usage is fetched with the platform `fetch` from the
 first-party `api.anthropic.com` OAuth endpoints. The only third-party
 packages are dev-only (`esbuild`, `@vscode/vsce`, `eslint`, `vitest`),

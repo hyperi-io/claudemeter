@@ -266,25 +266,21 @@ describe('matchRuleTable', () => {
     });
 });
 
-describe('resolveContextWindow — primary bug regression', () => {
-    // This is the regression test for the 2026-04 ratchet bug. Your
-    // session was on claude-opus-4-6[1m] (per Claude Code's internal
-    // default for Max plans post-March-2026-GA), the JSONL had the
-    // suffix stripped, s1mAccessCache said hasAccess:false (stale),
-    // VS Code selectedModel was "default", and claudemeter ratcheted
-    // the stored limit up to the raw observed token count (557675).
-    //
-    // With the new resolver, the rule table match on
-    // (claude_max + opus-4-6) fires first and returns 1M regardless
-    // of observed usage.
-    it('ratchet bug regression: Max + opus-4-6 + observed 557675 → 1M', () => {
+describe('resolveContextWindow — rule table overrides a high observed floor', () => {
+    // A session on claude-opus-4-6[1m] whose JSONL has the suffix stripped,
+    // whose s1mAccessCache reports hasAccess:false (stale), and whose VS Code
+    // selectedModel is "default" has no authoritative signal at all - only the
+    // rule table and a high observed floor. The rule table match on
+    // (claude_max + opus-4-6) must fire first and return 1M regardless of how
+    // high observed usage climbs, or the reported limit ratchets up with it.
+    it('rule table beats a high observed floor: Max + opus-4-6 + observed 557675 → 1M', () => {
         const result = resolveContextWindow({
             userOverride: 0,
             aliasDeclaredLimit: 0,
             jsonlDeclaredLimit: 0,
             capabilities: ['claude_max', 'chat'],
             subscriptionType: 'max',
-            s1mHasAccess: false, // stale cache like in the real bug
+            s1mHasAccess: false, // stale: corroborates nothing, must not block the rule table
             modelIds: ['claude-opus-4-6', 'claude-sonnet-4-6'],
             observedFloor: 557675,
         });
