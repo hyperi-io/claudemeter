@@ -960,7 +960,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     let tokenStatus = { icon: '', color: undefined, level: 'normal' };
     let tokensInfo = null;
 
-    // Profile-driven Tk threshold resolution (post-2026-05-08).
+    // Profile-driven Tk threshold resolution.
     // Reads detection signals from the credentials/usage stack, applies
     // the user's profileOverride if set, then resolves to a profile.
     // getTkLevel maps absolute tokens used -> 5-tier level. Bar fill is

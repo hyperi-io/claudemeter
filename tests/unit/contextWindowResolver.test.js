@@ -1,13 +1,11 @@
-// Tests for the new context window resolver — the replacement for the
-// old Math.max-based resolveSessionContextWindow. The new resolver
-// treats observedFloor as a LOWER BOUND (not a true limit), uses a
-// rule table driven by subscription capabilities from /api/bootstrap,
-// and returns a {limit, source, confidence} tuple so callers can
-// render an honest source label in the tooltip.
+// Tests for the context window resolver. It treats observedFloor as a LOWER
+// BOUND (not a true limit), uses a rule table driven by subscription
+// capabilities from /api/bootstrap, and returns a {limit, source, confidence}
+// tuple so callers can render an honest source label in the tooltip.
 //
-// Primary regression target: the 2026-04 ratchet bug where session
-// limit was stored as the raw observed cache_read value (e.g. 557675)
-// because Math.max was treating observedFloor as authoritative.
+// The ordering matters most where every other signal is absent: maximising
+// over observedFloor there makes the reported limit follow usage upward and
+// pin the gauge at ~100%.
 
 import { describe, it, expect } from 'vitest';
 const {
@@ -356,8 +354,9 @@ describe('resolveContextWindow — primary bug regression', () => {
     });
 
     it('fable detection: Max + fable-5 + observed < 200K -> 1M', () => {
-        // The reported bug: a single-version model id (claude-fable-5) failed
-        // to parse, so the rule never matched and the gauge fell back to 200K.
+        // A single-version model id (claude-fable-5) has no minor to parse, so
+        // a parser that requires one drops the rule match and falls back to
+        // 200K.
         const result = resolveContextWindow({
             capabilities: ['claude_max', 'chat'],
             subscriptionType: 'max',

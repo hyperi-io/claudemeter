@@ -9,27 +9,19 @@
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 //
-// Background (the 2026-04 ratchet bug):
+// Why a priority chain and not a Math.max over the signals:
 //
-// The prior implementation in modelContextWindows.resolveSessionContextWindow
-// took the Math.max across user override, alias-declared limit,
-// JSONL-declared limit, eligibility limit from s1mAccessCache, and
-// `observedFloor` (set to maxObservedTokens when observed > 200K).
+// `observedFloor` is a LOWER BOUND - it says "the limit is at least X", not
+// what the limit IS. Maximising over it lets it become the answer whenever
+// every other signal is absent, which is the normal state for a Max Personal
+// account whose VS Code setting is `"default"`, whose JSONL model suffix
+// Claude Code has stripped, and whose s1mAccessCache is stale. The reported
+// limit then ratchets upward with usage and the gauge pins at ~100% forever.
 //
-// The problem was that observedFloor is a LOWER BOUND - it tells
-// you "the limit is at least X" - but the old code treated it as
-// a definitive limit. For accounts where every other positive
-// signal was 0 (e.g. Max Personal users whose VS Code setting is
-// `"default"`, whose JSONL model suffix has been stripped by
-// Claude Code, and whose s1mAccessCache is stale), the observed
-// value became the stored limit. As usage grew, the "limit"
-// ratcheted up with it, producing a permanent ~100% Tk% display.
-//
-// The new resolver uses a strictly ordered priority chain. Each
-// step either returns a concrete {limit, source, confidence} or
-// falls through. `observedFloor` is ONLY consulted as the final
-// fallback, and when it is, the result is snapped to the next
-// known tier (200K -> 1M -> 2M) rather than returned raw. The
+// So the signals are strictly ordered instead. Each step either returns a
+// concrete {limit, source, confidence} or falls through, `observedFloor` is
+// consulted ONLY as the final fallback, and when it is the result is snapped
+// to the next known tier (200K -> 1M -> 2M) rather than returned raw. That
 // result is always labelled `inferred` so the UI can say so.
 //
 // Plan detection:
@@ -74,8 +66,7 @@ const CONTEXT_WINDOW_RULES = [
     // Max / Team / Enterprise default to 1M on current-generation
     // Opus (4.6 and later). Confirmed by observing claude-opus-4-6[1m]
     // as the runtime model on a Max Personal account with no explicit
-    // [1m] suffix configured. Source: Anthropic March 2026 GA
-    // announcement + live verification on 2026-04-12.
+    // [1m] suffix configured. Source: Anthropic March 2026 GA announcement.
     {
         plans: ['claude_max', 'claude_team', 'claude_enterprise'],
         family: 'opus',

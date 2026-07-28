@@ -123,12 +123,12 @@ async function canonicalisePath(workspacePath) {
 // Layer 2: resolution
 // ---------------------------------------------------------------------------
 
-// Probe window for finding a transcript's `cwd`. Sized from a measured store
-// (141 transcripts, 2026-07-20): the first cwd-bearing entry sat at a median
-// of ~1.9KB, a p90 of ~19KB and a max of ~217KB, because the first entry
-// carries the whole system prompt and any always-loaded project context. A
-// 16KB window missed 21% of them. The window has to clear the tail, not the
-// median. Re-measure before shrinking it.
+// Probe window for finding a transcript's `cwd`. Sized from a store of 141
+// transcripts, where the first cwd-bearing entry sat at a median of ~1.9KB, a
+// p90 of ~19KB and a max of ~217KB, because the first entry carries the whole
+// system prompt and any always-loaded project context. A 16KB window missed
+// 21% of them. The window has to clear the tail, not the median. Re-measure
+// before shrinking it.
 const CWD_PROBE_BYTES = 262144;
 
 // Transcripts to open per candidate directory. Bounds the work of the scan:

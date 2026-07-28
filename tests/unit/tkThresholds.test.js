@@ -105,12 +105,10 @@ describe('getTkLevel — 500K window (Enterprise profile)', () => {
     });
 });
 
-// The reported bug: a Max session on a 1M window, sitting at 167K, showing no
-// colour at all - while Claude Code auto-compacted it sixteen times, every
-// time somewhere near 168K. Tiers derived from the window put yellow at 947K
-// and red at 962K, so they could not fire before a compaction that happens at
-// a sixth of that. The session's own compaction history is the only thing that
-// knows where the cliff is.
+// A session can auto-compact at a small fraction of its window - around 168K
+// on a 1M window. Tiers derived from the window put yellow at 947K and red at
+// 962K, so they cannot fire before a compaction that happens at a sixth of
+// that. Only the session's own compaction history knows where the cliff is.
 describe('getTkLevel — observed compact point overrides the reserve model', () => {
     const profile = PROFILES['max-20x'];
     const window = 1_000_000;

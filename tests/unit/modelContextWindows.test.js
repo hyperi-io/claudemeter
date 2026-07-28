@@ -227,8 +227,8 @@ describe('resolveSessionContextWindow', () => {
 
     it('observed > alias: snap to next tier above the highest signal', () => {
         const models = ['claude-opus-4-6'];
-        // Old behaviour returned the raw observed value (1500000). New
-        // behaviour: alias wins as authoritative, so we get 1M.
+        // The alias is authoritative, so it wins over a higher observed count -
+        // 1,500,000 is not a context window size, it is just usage.
         expect(resolveSessionContextWindow(models, 1500000, 1000000)).toBe(1000000);
     });
 
@@ -237,9 +237,8 @@ describe('resolveSessionContextWindow', () => {
     });
 
     it('snaps to 1M when observed is just over 200K', () => {
-        // Old behaviour returned the raw 200001. New behaviour snaps
-        // to the next known tier (1M) because 200001 is not itself a
-        // valid context window size.
+        // Snaps to the next known tier because 200001 is not itself a valid
+        // context window size.
         expect(resolveSessionContextWindow(['claude-opus-4-6'], 200001)).toBe(1000000);
     });
 

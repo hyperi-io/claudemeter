@@ -352,7 +352,7 @@ describe('composeTooltip - section error containment', () => {
     });
 });
 
-describe('composeTooltip - Session / Current context / Weekly section split (post-2026-05-08)', () => {
+describe('composeTooltip - Session / Current context / Weekly section split', () => {
     const baseConfig = {
         tokenLimitOverride: 0,
         use24HourTime: false,
