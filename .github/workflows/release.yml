@@ -11,58 +11,17 @@ permissions:
   contents: read
 
 jobs:
-  # Security gate - must pass before release
+  # Security gate - must pass before release. Same definition CI calls.
   security:
     name: Security Gate
-    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-
-      - name: Check for AI artifact leakage
-        run: |
-          FAILED=false
-          # Block local-only AI assistant files
-          for file in STATE.md TODO.md CLAUDE.md; do
-            [ -f "$file" ] && echo "::error::$file detected - local AI file leaked" && FAILED=true
-          done
-          # Submodule guard: every entry in .gitmodules must remain a
-          # gitlink (`commit` type in the tree), and its working-tree
-          # directory must be empty in CI. The publish artifact is the
-          # public extension — private submodule contents must never
-          # ride along.
-          if [ -f .gitmodules ]; then
-            for sub in $(git config -f .gitmodules --get-regexp 'submodule\..*\.path' | awk '{print $2}'); do
-              type=$(git ls-tree HEAD "$sub" 2>/dev/null | awk '{print $2}')
-              if [ "$type" != "commit" ]; then
-                echo "::error::Submodule $sub is no longer a gitlink - its contents may have been committed to this public repo"
-                FAILED=true
-              fi
-              if [ -d "$sub" ] && [ "$(ls -A "$sub" 2>/dev/null)" ]; then
-                echo "::error::$sub/ has contents - submodule should not be checked out in the release pipeline"
-                FAILED=true
-              fi
-            done
-          fi
-          [ "$FAILED" = true ] && exit 1
-          echo "✓ Security check passed"
-
-      - name: Install Gitleaks
-        run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar xz
-          chmod +x gitleaks
-
-      - name: Run Gitleaks
-        run: ./gitleaks detect --source . --verbose
+    uses: ./.github/workflows/security.yml
 
   # Quality gate - must pass before release.
   #
-  # Release and CI are separate workflows triggered by the same push, so CI
-  # going red never stopped a publish: v2.5.7 reached the Marketplace with two
-  # failing tests. The tests only mean something if they can block the thing
-  # they are testing, so the release chain now runs them itself rather than
-  # hoping the other workflow went green. Same definition CI uses.
+  # CI and Release are separate workflows on the same push, so a red CI does not
+  # by itself stop a publish. Tests only mean something if they can block what
+  # they test, so the release chain runs them itself rather than assuming the
+  # other workflow went green. Same definition CI calls.
   quality:
     name: Quality Gate
     uses: ./.github/workflows/quality.yml
@@ -149,22 +108,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build extension
-        run: npm run build
-
       - name: Package VSIX
-        # No --no-dependencies: playwright-core is external (not bundled
-        # by esbuild) and must ship as a real package directory so its
-        # runtime require(packageRoot/browsers.json) resolves. The
-        # .vscodeignore re-includes only node_modules/playwright-core/.
-        run: npx @vscode/vsce package
+        # `npm run package`, NOT a bare build: it is the only path that runs
+        # esbuild with --production and strips dist/*.map before packaging.
+        # `.vscodeignore` cannot exclude the sourcemap on its own - `!dist/**`
+        # re-includes it and vsce does not re-exclude afterwards - so a bare
+        # build ships an unminified bundle and its sourcemap.
+        run: npm run package
 
       - name: Get VSIX filename
         id: vsix
         run: |
           VSIX_FILE=$(ls *.vsix | head -1)
-          echo "filename=$VSIX_FILE" >> $GITHUB_OUTPUT
+          echo "filename=$VSIX_FILE" >> "$GITHUB_OUTPUT"
           echo "Built: $VSIX_FILE"
+
+      - name: Verify the package ships no sourcemap
+        env:
+          VSIX_FILE: ${{ steps.vsix.outputs.filename }}
+        run: |
+          if unzip -l "$VSIX_FILE" | grep -q '\.map$'; then
+            echo "::error::$VSIX_FILE contains a sourcemap"
+            exit 1
+          fi
+          echo "✓ no sourcemap in $VSIX_FILE"
 
       - name: Upload VSIX to Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
@@ -176,15 +143,25 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Publish to VS Code Marketplace
-        run: npx @vscode/vsce publish --packagePath ${{ steps.vsix.outputs.filename }}
+        # Publishes the SAME artefact uploaded to the release above, rather
+        # than rebuilding one. Values reach the shell through env, never
+        # interpolated into the script.
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VSIX_FILE: ${{ steps.vsix.outputs.filename }}
+        run: npx @vscode/vsce publish --packagePath "$VSIX_FILE"
 
       - name: Summary
+        env:
+          VERSION: ${{ needs.release.outputs.new_release_version }}
+          VSIX_FILE: ${{ steps.vsix.outputs.filename }}
+          REPO: ${{ github.repository }}
         run: |
-          echo "## Release Published" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** v${{ needs.release.outputs.new_release_version }}" >> $GITHUB_STEP_SUMMARY
-          echo "**VSIX:** ${{ steps.vsix.outputs.filename }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "[View Release](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.release.outputs.new_release_version }})" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Release Published"
+            echo ""
+            echo "**Version:** v$VERSION"
+            echo "**VSIX:** $VSIX_FILE"
+            echo ""
+            echo "[View Release](https://github.com/$REPO/releases/tag/v$VERSION)"
+          } >> "$GITHUB_STEP_SUMMARY"

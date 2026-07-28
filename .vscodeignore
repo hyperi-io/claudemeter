@@ -36,7 +36,10 @@ renovate.json
 # runtime dependencies to ship, so node_modules is fully excluded.
 node_modules/**
 
-# Keep bundled output
+# Keep bundled output. This re-include cannot be narrowed again afterwards -
+# vsce does not re-exclude a path once `!` has pulled it back in - so the
+# sourcemap is kept out by not existing at package time. See the `package`
+# script, which strips it after a production build.
 !dist/**
 
 # Project management

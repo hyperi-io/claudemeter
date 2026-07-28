@@ -2,11 +2,11 @@ name: Quality
 
 # Lint, test and build, defined ONCE and called by both CI and Release.
 #
-# Release used to have no quality gate at all. It and CI are separate workflows
-# on the same push, so a red CI never stopped a publish - v2.5.7 went to the
-# Marketplace with two failing tests. Copying the steps into Release would have
-# fixed that and left two definitions free to drift, which is exactly what has
-# already happened to the two `security` jobs. One definition, two callers.
+# CI and Release are separate workflows triggered by the same push, so CI going
+# red does not by itself stop a publish - Release has to run this gate itself.
+# It calls this definition rather than holding a copy, so the gate that guards
+# the Marketplace is the same one that guards a pull request, and the two
+# cannot drift apart.
 
 on:
   workflow_call:
@@ -20,6 +20,10 @@ jobs:
     runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Tags are needed to check the committed version against the last
+          # release.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -62,3 +66,21 @@ jobs:
             }
             console.log('✓ package.json valid');
           "
+
+      - name: Verify the committed version matches the last release
+        # semantic-release owns this field: it bumps, tags and commits it as
+        # one step, so the committed value equals the newest tag until the next
+        # release moves both. A hand-edited version is the only way they drift,
+        # and it makes the packaged VSIX claim a version that was never cut.
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            echo "No tags yet - nothing to compare"
+            exit 0
+          fi
+          COMMITTED=$(node -p "require('./package.json').version")
+          if [ "v$COMMITTED" != "$LAST_TAG" ]; then
+            echo "::error::package.json is $COMMITTED but the last tag is $LAST_TAG - only semantic-release may change this field"
+            exit 1
+          fi
+          echo "✓ version $COMMITTED matches $LAST_TAG"

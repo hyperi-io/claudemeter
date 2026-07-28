@@ -7,9 +7,17 @@ useDefault = true
 [allowlist]
 description = "Claudemeter false positives"
 
-# Paths to ignore
+# Paths to ignore.
+#
+# Scoped to the specific documents that carry placeholder credentials, NOT all
+# markdown: a blanket `\.md$` exempts every doc in the repo, so a real
+# credential pasted into one is permanently invisible to the scanner. The
+# placeholder regexes below already cover the shapes those documents use, and
+# they apply everywhere rather than to a file extension.
 paths = [
-    '''\.md$''',
+    '''^README\.md$''',
+    '''^CHANGELOG\.md$''',
+    '''^docs/.*\.md$''',
     '''package-lock\.json''',
 ]
 

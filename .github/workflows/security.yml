@@ -1,0 +1,88 @@
+name: Security
+
+# Secret and artefact-leakage checks, defined ONCE and called by both CI and
+# Release.
+#
+# One definition, so which leaks are detected does not depend on which workflow
+# happens to be looking. A copy per workflow drifts, and the drift is invisible
+# until something ships that one copy would have caught.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    name: Security
+    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for AI artifact leakage
+        run: |
+          echo "Checking for AI artifact leakage..."
+          FAILED=false
+
+          # Local-only AI assistant files. These are git-excluded by intent and
+          # a TRACKED one means the exclusion has failed.
+          #
+          # Asks git, not the filesystem, and matches at any depth. A working
+          # tree always has some of these present and untracked, so `[ -f ]` at
+          # the repo root both misses docs/CLAUDE.md and says nothing about
+          # whether the file is actually committed.
+          while IFS= read -r leaked; do
+            [ -n "$leaked" ] || continue
+            echo "::error::$leaked is tracked - local AI file leaked into the repo"
+            FAILED=true
+          done < <(git ls-files -- '*CLAUDE.md' '*STATE.md' '*TODO.md' '*AGENTS.md' '.claude/*')
+
+          # Symlinks pointing at private AI content would drag it into the
+          # package.
+          #
+          # Fed by process substitution, NOT a pipe: a `while` on the right of a
+          # pipe runs in a subshell, so FAILED=true would be discarded when the
+          # loop exits and the check could print an error and still exit 0.
+          #
+          # The globs match the directory as a whole path segment AND as a
+          # prefix. `ln -s ../ai ai` produces a target ending at the directory
+          # name, so a pattern requiring a trailing slash never fires on the
+          # most natural way to write the link.
+          while IFS= read -r link; do
+            [ -n "$link" ] || continue
+            target=$(readlink "$link" 2>/dev/null || echo "")
+            case "$target" in
+              */ai|*/ai/*|ai|ai/*|*hyperi-ai|*hyperi-ai/*)
+                echo "::error::$link symlinks into private AI content ($target)"
+                FAILED=true
+                ;;
+            esac
+          done < <(find . -type l -not -path './.git/*' 2>/dev/null)
+
+          # References to private hyperi-io repos in tracked config.
+          if grep -rE "hyperi-io/(ai|hs-ai|standards|hyperi-ai)" \
+             --include="*.yml" --include="*.yaml" --include="*.json" \
+             . 2>/dev/null | grep -v "^\./\.git/" | grep -v ".gitmodules"; then
+            echo "::error::Found references to private hyperi-io repos in tracked YAML/JSON"
+            FAILED=true
+          fi
+
+          if [ "$FAILED" = true ]; then
+            echo "=========================================="
+            echo "SECURITY CHECK FAILED"
+            echo "=========================================="
+            exit 1
+          fi
+
+          echo "✓ AI artifact check passed"
+
+      - name: Install Gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar xz
+          chmod +x gitleaks
+
+      - name: Run Gitleaks
+        run: ./gitleaks detect --source . --verbose
