@@ -1,3 +1,10 @@
+## [2.5.7](https://github.com/hyperi-io/claudemeter/compare/v2.5.6...v2.5.7) (2026-07-28)
+
+
+### Bug Fixes
+
+* **tk:** warn against where the session actually auto-compacts ([cbe5412](https://github.com/hyperi-io/claudemeter/commit/cbe5412aa84119443732fd48d25ccf0d43c9bdf7))
+
 ## [2.5.6](https://github.com/hyperi-io/claudemeter/compare/v2.5.5...v2.5.6) (2026-07-20)
 
 
