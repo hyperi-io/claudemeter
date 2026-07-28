@@ -1,3 +1,11 @@
+## [2.5.9](https://github.com/hyperi-io/claudemeter/compare/v2.5.8...v2.5.9) (2026-07-28)
+
+
+### Bug Fixes
+
+* DT complete review ([7cfd2b1](https://github.com/hyperi-io/claudemeter/commit/7cfd2b1e8b490ba7fae747c093e30c175a0f2549))
+* **tk:** key transcript identity off the first line, not a byte window ([418bd7d](https://github.com/hyperi-io/claudemeter/commit/418bd7d3803e553b3eb9b5a04858d111720e105e))
+
 ## [2.5.8](https://github.com/hyperi-io/claudemeter/compare/v2.5.7...v2.5.8) (2026-07-28)
 
 
