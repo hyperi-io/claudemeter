@@ -455,8 +455,8 @@ describe('readSessionUsage - incremental tail reads', () => {
     // repeating.
     describe('resync when the file changes underneath us', () => {
         it('recovers from a truncate-and-rewrite that lands on the SAME size', async () => {
-            // The nastiest case: size and mtime can both look plausible, so
-            // only the content hash catches it.
+            // Size and mtime can both look plausible across this, so only the
+            // content hash distinguishes it.
             const file = fresh([turn(11111), turn(22222)]);
             expect((await readSessionUsage(file)).contextTotal).toBe(22224);
 
@@ -465,11 +465,10 @@ describe('readSessionUsage - incremental tail reads', () => {
         });
 
         it('recovers even when size, mtime, device and inode ALL match', async () => {
-            // Reproduces what a CI runner produced by accident: a same-size
-            // rewrite inside one filesystem timestamp tick, so every piece of
-            // stat metadata is identical and the file looks untouched. APFS
-            // resolves the two writes apart, ext4 did not - so pin the
-            // timestamp back rather than depending on the host's granularity.
+            // A same-size rewrite inside one filesystem timestamp tick: every
+            // piece of stat metadata is identical and the file looks untouched.
+            // Whether a host produces this depends on its timestamp
+            // granularity, so pin the timestamp rather than depend on it.
             // A whole second, so the utimes round-trip is exact on any
             // filesystem and the two stats are identical by construction
             // rather than by luck.
@@ -491,6 +490,46 @@ describe('readSessionUsage - incremental tail reads', () => {
 
             // Nothing in the metadata says this changed. The content does.
             expect((await readSessionUsage(file)).contextTotal).toBe(44446);
+        });
+
+        it('does not resync on every append while a transcript is still small', async () => {
+            // A fixed-width head window covers the WHOLE of a sub-1KB file, so
+            // appending to one changes the "identity" and forces a full
+            // re-read every single turn - a resync loop for the first few
+            // turns of every new session, and forever for one that stays
+            // small. Identity has to key off something an append cannot move.
+            const file = path.join(dir, `small${seq++}.jsonl`);
+            fs.writeFileSync(file, JSON.stringify({ type: 'user', cwd: '/some/project' }) + '\n', 'utf-8');
+            await readSessionUsage(file);
+            expect(fs.statSync(file).size).toBeLessThan(1024);
+
+            const logged = [];
+            const log = (m) => logged.push(m);
+            for (const cacheRead of [1000, 2000, 3000]) {
+                fs.appendFileSync(file, turn(cacheRead) + '\n', 'utf-8');
+                expect((await readSessionUsage(file, log)).contextTotal).toBe(cacheRead + 2);
+            }
+
+            expect(logged.filter(m => m.includes('resync'))).toHaveLength(0);
+        });
+
+        it('still spots a real replacement of a small file', async () => {
+            // The other half: keying identity off something stable must not
+            // blind us to a small file genuinely being swapped out.
+            const file = path.join(dir, `smallswap${seq++}.jsonl`);
+            fs.writeFileSync(file, [
+                JSON.stringify({ type: 'user', cwd: '/first/repo' }),
+                turn(1000),
+            ].join('\n') + '\n', 'utf-8');
+            expect((await readSessionUsage(file)).cwd).toBe('/first/repo');
+
+            fs.writeFileSync(file, [
+                JSON.stringify({ type: 'user', cwd: '/second/repo' }),
+                turn(9000),
+            ].join('\n') + '\n', 'utf-8');
+            const after = await readSessionUsage(file);
+            expect(after.cwd).toBe('/second/repo');
+            expect(after.contextTotal).toBe(9002);
         });
 
         it('does not re-read a genuinely untouched file', async () => {

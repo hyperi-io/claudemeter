@@ -58,10 +58,10 @@ function selectActiveSession(sessions) {
     return { active, activeSessionCount };
 }
 
-// Transcripts are append-only, so re-reading one whole is wasted work. The
-// biggest on the machine this was written on is 162MB / 49,733 lines, and the
-// gauge refreshes on a timer and on every debounced write - reading that per
-// tick dwarfs everything else the extension does.
+// Transcripts are append-only, so re-reading one whole is wasted work. They
+// reach hundreds of megabytes and tens of thousands of lines while the gauge
+// refreshes on a timer and on every debounced write, so a full read per tick
+// dwarfs everything else the extension does.
 //
 // So each transcript is read ONCE, and after that only the bytes appended
 // since. `readAt` is the byte offset just past the last complete line already
@@ -80,10 +80,10 @@ function resetTranscriptCache() {
 
 // Pre-filter for the compact-boundary scan on the FIRST read of a transcript,
 // where the whole file has to be looked at once. JSON.parse on every line of a
-// 49,733-line file is the expensive part, so a line is only parsed if it
+// large transcript is the expensive part, so a line is only parsed if it
 // already contains the marker. Prose mentioning `compact_boundary` matches too
-// - a session about Claude Code internals costs a handful of wasted parses -
-// but the shape check in autoCompactPreTokensOf() means a false match can never
+// - a session discussing Claude Code internals costs a few wasted parses - but
+// the shape check in autoCompactPreTokensOf() means a false match can never
 // become a number. Appended lines are parsed unconditionally: there are only
 // ever a handful of them.
 const COMPACT_BOUNDARY_MARKER = 'compact_boundary';
@@ -117,12 +117,10 @@ function autoCompactPreTokensOf(entry) {
 // turn, so it lags by one turn and collapses on a cache miss - ingest a large
 // file and all of it lands in cache_creation. Measured 32K against a real
 // 233K prompt in a live session (#54).
-// Record an auto compaction, once. Claude Code rewrites earlier lines when a
-// session is resumed, so the same boundary can appear more than once -
-// measured 18 records for 16 real compactions in one transcript. Counting a
-// duplicate twice would weight it double in the median. The uuid is the
-// record's identity; without one, fall back to the value so an exact repeat
-// still folds.
+// Record an auto compaction, once. Resuming a session rewrites earlier lines,
+// so the same boundary can appear more than once, and counting a duplicate
+// twice weights it double in the median downstream. The uuid is the record's
+// identity; without one, fall back to the value so an exact repeat still folds.
 function foldBoundary(entry, state) {
     const preTokens = autoCompactPreTokensOf(entry);
     if (!preTokens) return;
@@ -141,9 +139,8 @@ function foldRecord(entry, state) {
     if (entry.isApiErrorMessage || entry.message?.model === '<synthetic>') return;
     // A subagent's turn describes the subagent's context, not this session's.
     // Claude Code keeps them in agent-*.jsonl, which the caller already filters
-    // out, and no main transcript on the machine this was written on carries
-    // one - but the flag is free to honour and a filename convention is not a
-    // contract.
+    // out by name, but a filename convention is not a contract and the flag is
+    // free to honour.
     if (entry.isSidechain) return;
     if (entry.type !== 'assistant' || !entry.message?.usage) return;
 
@@ -208,52 +205,61 @@ function recordLines(text) {
     return splitLines(text).filter(line => line.trim());
 }
 
-// Bytes hashed to tell "the same file, longer" from "a different file at the
-// same path". 1024 is what Filebeat and FastForward use; a Claude Code
-// transcript's first record is far shorter than that, so the window covers the
-// whole of it plus room to spare.
+// How far in to look for the first line, and how much of the tail to hash.
+// 1024 is the window Filebeat and FastForward fingerprint over, and a Claude
+// Code transcript's first record sits well inside it.
 const FINGERPRINT_BYTES = 1024;
 
-// File identity, the way log tailers do it: device + inode + a hash of the
-// head. Inode alone is not enough - inodes get reused, which is why Vector
-// defaults to a content checksum instead - and a head hash alone collides
-// across files that begin identically. Together they catch every way a
-// transcript can stop being the file we were reading:
+// Two hashes, answering two different questions.
 //
-//   truncated in place  -> size drops below what we already consumed
-//   replaced at path    -> device/inode change
-//   rewritten from 0    -> head hash changes
+// `head` answers "is this still the same file", so it must cover something an
+// APPEND CANNOT MOVE. A fixed byte window does not: on a file shorter than the
+// window it covers the whole file, so every append rewrites the identity and
+// forces a full re-read - on every turn of a new session, and forever for one
+// that never grows past the window. So the identity is the first LINE, which a
+// transcript writes once and never revisits. Vector fingerprints on leading
+// LINES for the same reason.
 //
-// Any of those means the cached byte offset points into a file that no longer
-// exists, so the answer is to forget it and read the whole thing again.
-// Head AND tail. The head answers "is this the same file"; the tail answers
-// "has anything changed", which size and mtime cannot be trusted to do. A
-// same-size rewrite inside one mtime tick leaves size, mtime, device and inode
-// all identical - it looks untouched and is not. Filesystem timestamp
-// granularity varies (APFS resolves it, ext4 on a CI runner did not), so the
-// only honest answer is to look at the bytes.
+// `tail` answers "has anything changed", which size and mtime cannot be trusted
+// to do: a same-size rewrite inside one filesystem timestamp tick leaves size,
+// mtime, device and inode all identical. Timestamp granularity is a property of
+// the filesystem and some resolve two such writes apart while others do not, so
+// the only portable answer is to look at the bytes.
+//
+// A head of null means "no stable identity yet": the first line has not been
+// terminated, so there is nothing an append could not change. Callers treat
+// that as unknown rather than as a mismatch, so it never reads as a resync.
 async function readEdgeHashes(handle, size) {
-    const length = Math.min(FINGERPRINT_BYTES, size);
-    if (length <= 0) return { head: 'empty', tail: 'empty' };
-    const head = Buffer.alloc(length);
-    await handle.read(head, 0, length, 0);
-    if (size <= FINGERPRINT_BYTES) {
-        // The window covers the whole file, so one hash says everything.
-        const digest = createHash('sha1').update(head).digest('hex');
-        return { head: digest, tail: digest };
-    }
-    const tail = Buffer.alloc(length);
-    await handle.read(tail, 0, length, size - length);
-    return {
-        head: createHash('sha1').update(head).digest('hex'),
-        tail: createHash('sha1').update(tail).digest('hex'),
-    };
+    if (size <= 0) return { head: null, tail: 'empty' };
+
+    const window = Math.min(FINGERPRINT_BYTES, size);
+    const front = Buffer.alloc(window);
+    await handle.read(front, 0, window, 0);
+    const firstNewline = front.indexOf(0x0a);
+    const head = firstNewline === -1
+        ? null
+        : createHash('sha1').update(front.subarray(0, firstNewline)).digest('hex');
+
+    const tail = createHash('sha1')
+        .update(size <= window ? front : await readAt(handle, size - window, window))
+        .digest('hex');
+
+    return { head, tail };
+}
+
+async function readAt(handle, position, length) {
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, position);
+    return buffer;
 }
 
 // Windows can report ino/dev as 0 on some filesystems, in which case they
-// carry no information and the head hash does the work on its own.
-function identityOf(stats, fingerprint) {
-    return `${stats.dev || 0}:${stats.ino || 0}:${fingerprint}`;
+// carry no information and the first-line hash does the work on its own.
+// Null when the first line is not terminated yet - there is no identity to
+// compare, which is different from comparing and finding a mismatch.
+function identityOf(stats, headHash) {
+    if (!headHash) return null;
+    return `${stats.dev || 0}:${stats.ino || 0}:${headHash}`;
 }
 
 // Parse a transcript's latest assistant prompt size into a session summary, or
@@ -274,7 +280,9 @@ async function readSessionUsage(filePath, log) {
         const identity = identityOf(stats, edges.head);
 
         // Same file. Only then does the cached byte offset mean anything.
-        const sameFile = cached && cached.identity === identity;
+        // Both sides must actually HAVE an identity - two nulls are two
+        // unknowns, not a match.
+        const sameFile = Boolean(cached && identity && cached.identity === identity);
 
         // Same file, same length, same last bytes: genuinely nothing new. This
         // is the common case by a wide margin and costs a stat plus 2KB of
@@ -365,17 +373,19 @@ async function readSessionUsage(filePath, log) {
         await handle.close();
         handle = null;
 
-        // Full read. Either the first sight of this transcript, or its identity
-        // changed underneath us.
+        // Full read: either the first sight of this transcript, or its identity
+        // changed underneath us. A resync cannot repeat on a settled file
+        // because the NEW identity is stored below and the next tick compares
+        // equal to it; a file whose identity genuinely changes every tick
+        // degrades to a full read per tick, never to a hang or a wrong answer.
         //
-        // A resync can only repeat if the identity keeps changing, because the
-        // NEW identity is stored below and the next tick compares equal to it.
-        // If Claude Code ever did rewrite a transcript on every write, this
-        // would settle into a full read per tick - which is exactly what this
-        // code replaced, so the worst case is the old cost, not a hang or a
-        // wrong number. The counter makes that visible instead of silent.
-        const resyncs = cached ? cached.resyncs + 1 : 0;
-        if (cached && log) {
+        // Only a genuine identity CHANGE counts as a resync. Reaching here with
+        // no identity on one side means there is nothing to compare yet, and
+        // counting that would report a resync for every new transcript.
+        const changedIdentity = Boolean(cached && cached.identity && identity
+            && cached.identity !== identity);
+        const resyncs = changedIdentity ? cached.resyncs + 1 : (cached ? cached.resyncs : 0);
+        if (changedIdentity && log) {
             log(`${path.basename(filePath)} changed identity (${cached.identity} -> ${identity})`
                 + ` - re-reading in full (resync #${resyncs})`);
         }
@@ -387,9 +397,9 @@ async function readSessionUsage(filePath, log) {
         const state = scanWholeTranscript(lines);
         // Where the session STARTED, which is the project it belongs to. `cwd`
         // is a per-entry field and it moves - a Bash `cd`, a worktree, an
-        // added-directory turn all rewrite it (measured 2026-07-20: 28% of 141
-        // transcripts recorded more than one, one recorded 24). The last turn's
-        // cwd would misattribute a long session to whatever it touched last.
+        // added-directory turn all rewrite it (28% of a 141-transcript store
+        // recorded more than one, one recorded 24). The last turn's cwd would
+        // misattribute a long session to whatever it touched last.
         // It cannot change once recorded, so it is resolved once and cached.
         const cwd = firstRecordedCwd(lines);
         const messageCount = lines.length;
@@ -728,8 +738,8 @@ class ClaudeDataLoader {
     //
     // Matches the ORIGIN cwd, same field findDirByRecordedCwd uses. The last
     // turn's cwd would drop any session that ended in a subdirectory, a
-    // worktree or another repo - measured 2026-07-20, 4% of 141 transcripts,
-    // and the biggest ones at that.
+    // worktree or another repo - 4% of a 141-transcript store, and the biggest
+    // ones at that.
     //
     // Permissive: dropped only when it HAS a cwd and that cwd is elsewhere. A
     // transcript with none is kept, since blanking the gauge over a parsing
