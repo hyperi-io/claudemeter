@@ -5,12 +5,18 @@
 // dash). These tests pin the exact mapping so the same regression can't
 // silently come back the next time someone touches that function.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const os = require('os');
-const { ClaudeDataLoader, selectActiveSession, readSessionUsage } = require('../../src/claudeDataLoader');
+const {
+    ClaudeDataLoader,
+    selectActiveSession,
+    readSessionUsage,
+    autoCompactPreTokensOf,
+    resetTranscriptCache,
+} = require('../../src/claudeDataLoader');
 
 describe('ClaudeDataLoader.convertPathToClaudeDir', () => {
     // Use a single instance - the method is pure with respect to its
@@ -246,6 +252,290 @@ describe('readSessionUsage - context accounting (#54)', () => {
         const onlyNoise = path.join(dir, 'onlynoise.jsonl');
         await fsp.writeFile(onlyNoise, [synthetic, apiError].join('\n') + '\n', 'utf-8');
         expect(await readSessionUsage(onlyNoise)).toBeNull();
+    });
+});
+
+// Claude Code writes a compact_boundary record on every compaction, and a
+// trigger:"auto" one records the size compaction actually fires at. That is
+// the only per-session evidence of where the cliff is, because it is not
+// derivable from the window - one 1M session compacted sixteen times between
+// 166,984 and 608,197.
+describe('autoCompactPreTokensOf', () => {
+    const boundary = (trigger, preTokens) => ({
+        type: 'system',
+        subtype: 'compact_boundary',
+        compactMetadata: { trigger, preTokens, postTokens: 15235 },
+    });
+
+    it('reads preTokens off an auto boundary', () => {
+        expect(autoCompactPreTokensOf(boundary('auto', 167974))).toBe(167974);
+    });
+
+    it('ignores a manual boundary - the user can /compact at any size', () => {
+        expect(autoCompactPreTokensOf(boundary('manual', 420353))).toBe(0);
+    });
+
+    it('ignores anything that is not a compact boundary', () => {
+        expect(autoCompactPreTokensOf({ type: 'assistant', message: {} })).toBe(0);
+        expect(autoCompactPreTokensOf({ type: 'system', subtype: 'other' })).toBe(0);
+        expect(autoCompactPreTokensOf(null)).toBe(0);
+        expect(autoCompactPreTokensOf(undefined)).toBe(0);
+    });
+
+    it('ignores a boundary with an unusable preTokens', () => {
+        expect(autoCompactPreTokensOf(boundary('auto', undefined))).toBe(0);
+        expect(autoCompactPreTokensOf(boundary('auto', 0))).toBe(0);
+        expect(autoCompactPreTokensOf(boundary('auto', -5))).toBe(0);
+        expect(autoCompactPreTokensOf(boundary('auto', Infinity))).toBe(0);
+        expect(autoCompactPreTokensOf(boundary('auto', '167974'))).toBe(0);
+        expect(autoCompactPreTokensOf({ type: 'system', subtype: 'compact_boundary' })).toBe(0);
+    });
+});
+
+// Transcripts are append-only and reach 162MB, while the gauge re-reads on a
+// 15s timer and on every debounced write. Reading one whole per tick cost
+// ~280ms of synchronous work on the extension host; reading only what was
+// appended costs one stat when nothing changed.
+describe('readSessionUsage - incremental tail reads', () => {
+    let dir;
+    let seq = 0;
+
+    const boundary = (preTokens, uuid, trigger = 'auto') => JSON.stringify({
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid,
+        compactMetadata: { trigger, preTokens, postTokens: 15235 },
+    });
+
+    const turn = (cacheRead, extra = {}) => JSON.stringify({
+        type: 'assistant',
+        cwd: '/some/project',
+        message: {
+            model: 'claude-opus-4-8',
+            usage: { input_tokens: 2, cache_read_input_tokens: cacheRead, output_tokens: 5 },
+        },
+        ...extra,
+    });
+
+    // A fresh path per case: the cache keys on path + size + mtime, and mtime
+    // resolution is coarse enough that two writes to one path can collide.
+    const fresh = (lines) => {
+        const file = path.join(dir, `t${seq++}.jsonl`);
+        fs.writeFileSync(file, lines.join('\n') + '\n', 'utf-8');
+        return file;
+    };
+
+    const append = (file, lines) => fs.appendFileSync(file, lines.join('\n') + '\n', 'utf-8');
+
+    beforeAll(async () => {
+        dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claudemeter-incr-'));
+    });
+
+    afterAll(async () => {
+        if (dir) await fsp.rm(dir, { recursive: true, force: true });
+    });
+
+    beforeEach(() => resetTranscriptCache());
+
+    it('picks up a turn appended after the first read', async () => {
+        const file = fresh([turn(40000)]);
+        expect((await readSessionUsage(file)).contextTotal).toBe(40002);
+
+        append(file, [turn(90000)]);
+        const after = await readSessionUsage(file);
+        expect(after.contextTotal).toBe(90002);
+        expect(after.messageCount).toBe(2);
+    });
+
+    it('returns the same answer when nothing was appended', async () => {
+        const file = fresh([boundary(167974, 'b1'), turn(40000)]);
+        const first = await readSessionUsage(file);
+        const second = await readSessionUsage(file);
+        expect(second).toEqual(first);
+    });
+
+    it('accumulates boundaries across reads, oldest first', async () => {
+        const file = fresh([boundary(166984, 'b1'), turn(30000)]);
+        expect((await readSessionUsage(file)).autoCompacts).toEqual([166984]);
+
+        append(file, [boundary(167974, 'b2'), turn(20000)]);
+        append(file, [boundary(169446, 'b3'), turn(10000)]);
+        const after = await readSessionUsage(file);
+        expect(after.autoCompacts).toEqual([166984, 167974, 169446]);
+        expect(after.contextTotal).toBe(10002);
+    });
+
+    it('counts a boundary once even when a resume rewrites it', async () => {
+        // Measured: one transcript held 18 boundary records for 16 real
+        // compactions. A duplicate counted twice would weight it double in the
+        // median that becomes the compact point.
+        const file = fresh([boundary(166984, 'b1'), boundary(166984, 'b1'), turn(30000)]);
+        expect((await readSessionUsage(file)).autoCompacts).toEqual([166984]);
+
+        append(file, [boundary(166984, 'b1'), turn(31000)]);
+        expect((await readSessionUsage(file)).autoCompacts).toEqual([166984]);
+    });
+
+    it('waits for a partial trailing line to be completed', async () => {
+        const file = fresh([turn(40000)]);
+        await readSessionUsage(file);
+
+        // A write caught mid-flight: no trailing newline yet.
+        fs.appendFileSync(file, turn(90000).slice(0, 40), 'utf-8');
+        expect((await readSessionUsage(file)).contextTotal).toBe(40002);
+
+        // The rest of that same line lands.
+        fs.appendFileSync(file, turn(90000).slice(40) + '\n', 'utf-8');
+        const after = await readSessionUsage(file);
+        expect(after.contextTotal).toBe(90002);
+        expect(after.messageCount).toBe(2);
+    });
+
+    it('re-reads from scratch when the file shrinks', async () => {
+        const file = fresh([turn(40000), turn(50000), turn(60000)]);
+        expect((await readSessionUsage(file)).contextTotal).toBe(60002);
+
+        // Replaced, not appended - the cached offsets describe a file that no
+        // longer exists.
+        fs.writeFileSync(file, turn(7000) + '\n', 'utf-8');
+        const after = await readSessionUsage(file);
+        expect(after.contextTotal).toBe(7002);
+        expect(after.messageCount).toBe(1);
+    });
+
+    it('keeps the origin cwd across incremental reads', async () => {
+        const file = fresh([
+            JSON.stringify({ type: 'user', cwd: '/origin/repo' }),
+            turn(40000),
+        ]);
+        expect((await readSessionUsage(file)).cwd).toBe('/origin/repo');
+
+        // A later turn in another directory must not re-home the session.
+        append(file, [turn(50000, { cwd: '/somewhere/else' })]);
+        expect((await readSessionUsage(file)).cwd).toBe('/origin/repo');
+    });
+
+    it('handles multi-byte characters split across an append', async () => {
+        const file = fresh([turn(40000)]);
+        await readSessionUsage(file);
+        append(file, [JSON.stringify({
+            type: 'assistant',
+            cwd: '/some/project',
+            message: {
+                model: 'claude-opus-4-8',
+                usage: { input_tokens: 2, cache_read_input_tokens: 55000, output_tokens: 5 },
+                content: 'ok',
+            },
+        })]);
+        expect((await readSessionUsage(file)).contextTotal).toBe(55002);
+    });
+
+    it('ignores a subagent turn that landed in a main transcript', async () => {
+        // Subagents live in agent-*.jsonl, which getCurrentSessionUsage filters
+        // out by name - but a filename convention is not a contract, and a
+        // subagent's prompt is not this session's context.
+        const file = fresh([turn(120000), turn(9000, { isSidechain: true })]);
+        expect((await readSessionUsage(file)).contextTotal).toBe(120002);
+
+        append(file, [turn(8000, { isSidechain: true })]);
+        expect((await readSessionUsage(file)).contextTotal).toBe(120002);
+    });
+
+    it('reports no boundaries for a session that has only compacted manually', async () => {
+        const file = fresh([boundary(420353, 'm1', 'manual'), turn(30000)]);
+        expect((await readSessionUsage(file)).autoCompacts).toEqual([]);
+    });
+
+    // Identity is device + inode + a hash of the first 1024 bytes, the scheme
+    // Filebeat, Vector, the OTel filelog receiver and FastForward converge on.
+    // Inode alone gets reused; a head hash alone collides across files that
+    // start the same. Any change means the cached byte offset points into a
+    // file that no longer exists, so the only safe move is to read it again
+    // whole - and then remember the NEW identity, which is what stops it
+    // repeating.
+    describe('resync when the file changes underneath us', () => {
+        it('recovers from a truncate-and-rewrite that lands on the SAME size', async () => {
+            // The nastiest case: size and mtime can both look plausible, so
+            // only the content hash catches it.
+            const file = fresh([turn(11111), turn(22222)]);
+            expect((await readSessionUsage(file)).contextTotal).toBe(22224);
+
+            fs.writeFileSync(file, [turn(33333), turn(44444)].join('\n') + '\n', 'utf-8');
+            expect((await readSessionUsage(file)).contextTotal).toBe(44446);
+        });
+
+        it('recovers from a truncation to a shorter file', async () => {
+            const file = fresh([turn(10000), turn(20000), turn(30000)]);
+            expect((await readSessionUsage(file)).messageCount).toBe(3);
+
+            fs.writeFileSync(file, turn(5000) + '\n', 'utf-8');
+            const after = await readSessionUsage(file);
+            expect(after.contextTotal).toBe(5002);
+            expect(after.messageCount).toBe(1);
+        });
+
+        it('recovers when the path is replaced by a different file', async () => {
+            const file = fresh([turn(10000), boundary(167974, 'b1'), turn(20000)]);
+            expect((await readSessionUsage(file)).autoCompacts).toEqual([167974]);
+
+            // Unlink + recreate: new inode, and history that never had that
+            // boundary in it.
+            fs.unlinkSync(file);
+            fs.writeFileSync(file, turn(60000) + '\n', 'utf-8');
+            const after = await readSessionUsage(file);
+            expect(after.contextTotal).toBe(60002);
+            expect(after.autoCompacts).toEqual([]);
+        });
+
+        it('does NOT resync in a loop - a settled file resyncs once and then stops', async () => {
+            // The bug worth guarding: re-reading everything on every tick
+            // forever. After one resync the new identity is cached, so the
+            // cheap path takes over again.
+            const file = fresh([turn(10000)]);
+            await readSessionUsage(file);
+
+            const logged = [];
+            const log = (m) => logged.push(m);
+
+            fs.writeFileSync(file, [turn(70000), turn(80000)].join('\n') + '\n', 'utf-8');
+            expect((await readSessionUsage(file, log)).contextTotal).toBe(80002);
+            expect(logged.filter(m => m.includes('resync'))).toHaveLength(1);
+
+            // Nothing changed since; no further resyncs however often we look.
+            for (let i = 0; i < 5; i++) {
+                expect((await readSessionUsage(file, log)).contextTotal).toBe(80002);
+            }
+            expect(logged.filter(m => m.includes('resync'))).toHaveLength(1);
+        });
+
+        it('keeps serving the right answer while a file resyncs repeatedly', async () => {
+            // If Claude Code ever rewrote a transcript on every write, this
+            // degrades to a full read per tick - the cost before any of this
+            // existed. It must stay CORRECT while doing so.
+            const file = fresh([turn(1000)]);
+            for (const cacheRead of [2000, 3000, 4000]) {
+                fs.writeFileSync(file, turn(cacheRead) + '\n', 'utf-8');
+                expect((await readSessionUsage(file)).contextTotal).toBe(cacheRead + 2);
+            }
+        });
+
+        it('treats an emptied file as having no usage, then recovers', async () => {
+            const file = fresh([turn(10000)]);
+            expect((await readSessionUsage(file)).contextTotal).toBe(10002);
+
+            fs.writeFileSync(file, '', 'utf-8');
+            expect(await readSessionUsage(file)).toBeNull();
+
+            fs.writeFileSync(file, turn(12000) + '\n', 'utf-8');
+            expect((await readSessionUsage(file)).contextTotal).toBe(12002);
+        });
+
+        it('returns null and does not throw when the file disappears', async () => {
+            const file = fresh([turn(10000)]);
+            expect((await readSessionUsage(file)).contextTotal).toBe(10002);
+            fs.unlinkSync(file);
+            expect(await readSessionUsage(file)).toBeNull();
+        });
     });
 });
 

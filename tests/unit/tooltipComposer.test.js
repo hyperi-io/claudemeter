@@ -97,6 +97,40 @@ describe('composeTooltip - plan + context', () => {
         expect(out).toMatch(/Context:/);
     });
 
+    it('names the point the session actually auto-compacts at, and the runway', () => {
+        // The percentage alone is not actionable when compaction fires nowhere
+        // near the window: 167K of 1M reads as 17% while Claude Code is about
+        // to throw the context away.
+        const out = composeTooltip({
+            config: baseConfig,
+            sessionData: {
+                tokenUsage: { current: 150_000, limit: 1_000_000, compactPoint: 167_974 },
+            },
+        });
+        expect(out).toMatch(/Auto-compacts near 168\.0K/);
+        expect(out).toMatch(/18\.0K to go/);
+    });
+
+    it('says compaction is due when usage has passed the observed point', () => {
+        const out = composeTooltip({
+            config: baseConfig,
+            sessionData: {
+                tokenUsage: { current: 170_000, limit: 1_000_000, compactPoint: 167_974 },
+            },
+        });
+        expect(out).toMatch(/due now/);
+    });
+
+    it('says nothing about compaction for a session that has never compacted', () => {
+        const out = composeTooltip({
+            config: baseConfig,
+            sessionData: {
+                tokenUsage: { current: 150_000, limit: 1_000_000, compactPoint: null },
+            },
+        });
+        expect(out).not.toMatch(/Auto-compacts/);
+    });
+
     it('marks inferred context', () => {
         const out = composeTooltip({
             config: baseConfig,

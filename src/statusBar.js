@@ -1005,11 +1005,18 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         const simUsed = simulator.getTokenUsed();
         const effectiveUsed = simUsed !== null ? simUsed : sessionData.tokenUsage.current;
 
+        // Where this session actually compacts, measured from its own history.
+        // The bar and the max label stay keyed to `limit`; only the tiers key
+        // to this, because on some Claude Code versions compaction fires
+        // nowhere near the window (~168K on 1M, measured) and tiers derived
+        // from the window never fire before it.
+        const compactPoint = sessionData.tokenUsage.compactPoint ?? null;
+
         tokenLevel = simLevel !== null
             ? simLevel
             : (getColorMode() === 'basic'
                 ? 'normal'
-                : getTkLevel(effectiveUsed, tokenProfile, limit));
+                : getTkLevel(effectiveUsed, tokenProfile, limit, compactPoint));
         tokenStatus = tokenStatusFromLevel(tokenLevel);
 
         // The simulator's "used" override drives the whole gauge - bar fill
@@ -1025,7 +1032,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         // the rot zone rotGradientT returns null and the discrete
         // normal/warning/error colour from tokenStatusFromLevel stands.
         if (simLevel === null && getColorMode() === 'color') {
-            const t = rotGradientT(effectiveUsed, tokenProfile, limit);
+            const t = rotGradientT(effectiveUsed, tokenProfile, limit, compactPoint);
             if (t !== null) {
                 tokenStatus = {
                     ...tokenStatus,
@@ -1044,6 +1051,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             level: tokenLevel,
             profile: tokenProfile.name,
             recommendation: TIER_RECOMMENDATIONS[tokenLevel] || null,
+            compactPoint,
         };
     }
 
