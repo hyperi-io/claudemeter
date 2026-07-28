@@ -8,17 +8,11 @@
 //                in tokens (not percent) keeps the model consistent with
 //                Claude Code's reserve-based auto-compact trigger.
 //
-//                Yellow / red thresholds are runway to the point auto-compact
-//                actually fires:
+//                Yellow / red thresholds are computed from the profile's
+//                runway tokens relative to the auto-compact reserve:
+//                  compactPoint = contextWindow - compactReserveTokens
 //                  red  fires when used >= compactPoint - errorRunwayTokens
 //                  yellow fires when used >= compactPoint - warningRunwayTokens
-//
-//                compactPoint comes from the session's OWN compaction history
-//                when it has one (src/tk/compactPoint.js), because on some
-//                Claude Code versions auto-compact fires nowhere near the
-//                window - measured at ~168K on a 1M window. Only when a
-//                session has never auto-compacted does it fall back to the
-//                reserve model, `contextWindow - compactReserveTokens`.
 //
 //                Rot tiers fire on absolute used, gated by a >200K window -
 //                NOT the account profile (unreliable - e.g. macOS keeps
@@ -42,40 +36,20 @@ const DEFAULT_ROT_LIGHT_TOKENS = 400_000;
 const DEFAULT_ROT_DEEP_TOKENS = 650_000;
 
 /**
- * Where auto-compact is expected to fire for this session.
- *
- * The session's own measured compact point wins outright. It is the only one
- * of the two that survives Claude Code changing when it compacts, and it is
- * an observation rather than a model. The reserve model is the fallback for a
- * session that has not compacted yet and so has nothing to measure.
- *
- * @param {object} thresholds - profile.thresholds
- * @param {number} contextWindow - context window size in tokens
- * @param {number|null} observedCompactPoint - from src/tk/compactPoint.js
- * @returns {number} tokens at which compaction is expected
- */
-function resolveCompactPoint(thresholds, contextWindow, observedCompactPoint = null) {
-    if (Number.isFinite(observedCompactPoint) && observedCompactPoint > 0) {
-        return observedCompactPoint;
-    }
-    return contextWindow - thresholds.compactReserveTokens;
-}
-
-/**
  * Resolve the Tk tier for a given (used, profile, contextWindow) tuple.
  *
  * @param {number} used - tokens used in the current context (>= 0)
  * @param {object} profile - profile object from src/tk/profiles.js (with .thresholds)
  * @param {number} contextWindow - context window size in tokens (e.g. 200_000, 1_000_000)
- * @param {number|null} observedCompactPoint - the session's measured compact
- *        point, when it has compacted before; null falls back to the reserve model
  * @returns {'normal'|'rotLight'|'rotDeep'|'warning'|'error'}
  */
-function getTkLevel(used, profile, contextWindow, observedCompactPoint = null) {
+function getTkLevel(used, profile, contextWindow) {
     if (!profile || !profile.thresholds) return 'normal';
     const T = profile.thresholds;
 
-    const compactPoint = resolveCompactPoint(T, contextWindow, observedCompactPoint);
+    // Yellow / red: computed against the auto-compact reserve so the
+    // visible threshold scales with window size automatically.
+    const compactPoint = contextWindow - T.compactReserveTokens;
     if (used >= compactPoint - T.errorRunwayTokens)   return 'error';
     if (used >= compactPoint - T.warningRunwayTokens) return 'warning';
 
@@ -106,17 +80,14 @@ function getTkLevel(used, profile, contextWindow, observedCompactPoint = null) {
  * @param {number} used - tokens used in the current context (>= 0)
  * @param {object} profile - profile object from src/tk/profiles.js
  * @param {number} contextWindow - context window size in tokens
- * @param {number|null} observedCompactPoint - the session's measured compact point
  * @returns {number|null} t in [0,1), or null when not in the rot zone
  */
-function rotGradientT(used, profile, contextWindow, observedCompactPoint = null) {
+function rotGradientT(used, profile, contextWindow) {
     if (!profile || !profile.thresholds) return null;
     if (contextWindow <= STANDARD_LIMIT) return null;
     const T = profile.thresholds;
 
-    // Same compact point the tiers use, so the gradient always stops exactly
-    // where yellow starts rather than drifting away from it.
-    const compactPoint = resolveCompactPoint(T, contextWindow, observedCompactPoint);
+    const compactPoint = contextWindow - T.compactReserveTokens;
     const yellowThreshold = compactPoint - T.warningRunwayTokens;
 
     const floor = T.rotLightTokens ?? DEFAULT_ROT_LIGHT_TOKENS;
@@ -127,4 +98,4 @@ function rotGradientT(used, profile, contextWindow, observedCompactPoint = null)
     return (used - floor) / (yellowThreshold - floor);
 }
 
-module.exports = { getTkLevel, rotGradientT, resolveCompactPoint };
+module.exports = { getTkLevel, rotGradientT };

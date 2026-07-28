@@ -200,18 +200,6 @@ function renderCurrentContextBlock(state) {
         + `${formatCompact(sessionData.tokenUsage.limit)}`,
     ];
 
-    // Auto-compact does not necessarily fire near the window - measured at
-    // ~168K on a 1M window on some Claude Code versions. When this session has
-    // compacted before, say where it actually happens and how much room is
-    // left, because that number and not the percentage above is what decides
-    // whether the context is about to be thrown away.
-    const compactPoint = sessionData.tokenUsage.compactPoint ?? null;
-    if (Number.isFinite(compactPoint) && compactPoint > 0) {
-        const runway = compactPoint - sessionData.tokenUsage.current;
-        lines.push(runway > 0
-            ? `Auto-compacts near ${formatCompact(compactPoint)} - ${formatCompact(runway)} to go`
-            : `Auto-compacts near ${formatCompact(compactPoint)} - due now`);
-    }
 
     if (tokensInfo?.recommendation) {
         // Recommendations are pre-split into short segments separated

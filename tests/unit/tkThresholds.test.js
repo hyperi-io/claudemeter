@@ -105,62 +105,6 @@ describe('getTkLevel — 500K window (Enterprise profile)', () => {
     });
 });
 
-// A session can auto-compact at a small fraction of its window - around 168K
-// on a 1M window. Tiers derived from the window put yellow at 947K and red at
-// 962K, so they cannot fire before a compaction that happens at a sixth of
-// that. Only the session's own compaction history knows where the cliff is.
-describe('getTkLevel — observed compact point overrides the reserve model', () => {
-    const profile = PROFILES['max-20x'];
-    const window = 1_000_000;
-    const compactPoint = 167_974;   // median of that session's last five
-
-    it('goes red just under the point the session actually compacts at', () => {
-        // errorRunwayTokens is 5K, so red from 162,974.
-        expect(getTkLevel(162_974, profile, window, compactPoint)).toBe('error');
-        expect(getTkLevel(167_000, profile, window, compactPoint)).toBe('error');
-    });
-
-    it('goes yellow 20K out, where the reserve model still says normal', () => {
-        // warningRunwayTokens is 20K, so yellow from 147,974.
-        expect(getTkLevel(147_974, profile, window, compactPoint)).toBe('warning');
-        expect(getTkLevel(147_974, profile, window)).toBe('normal');
-    });
-
-    it('the exact reported reading is red, not silent', () => {
-        // 166,984 tokens was one of that session's actual compaction sizes.
-        expect(getTkLevel(166_984, profile, window)).toBe('normal');
-        expect(getTkLevel(166_984, profile, window, compactPoint)).toBe('error');
-    });
-
-    it('leaves a session well short of its compact point alone', () => {
-        expect(getTkLevel(100_000, profile, window, compactPoint)).toBe('normal');
-    });
-
-    it('does not disturb sessions that really do compact at the window', () => {
-        // The 1M sessions on older Claude Code compacted at ~1,000,900, which
-        // is within a rounding error of the reserve model's own answer.
-        const atWindow = 1_000_889;
-        expect(getTkLevel(500_000, profile, window, atWindow)).toBe('rotLight');
-        expect(getTkLevel(700_000, profile, window, atWindow)).toBe('rotDeep');
-        expect(getTkLevel(996_000, profile, window, atWindow)).toBe('error');
-    });
-
-    it('falls back to the reserve model when the session has never compacted', () => {
-        for (const noPoint of [null, undefined, 0, NaN, -1]) {
-            expect(getTkLevel(947_000, profile, window, noPoint)).toBe('warning');
-            expect(getTkLevel(500_000, profile, window, noPoint)).toBe('rotLight');
-        }
-    });
-
-    it('rot still keys off absolute usage, not the compact point', () => {
-        // Rot is a property of how much text the model is reasoning over, so a
-        // low compact point must not drag the 400K/650K frontier down with it.
-        // Above the compact point the compaction warning wins, as it should.
-        expect(getTkLevel(450_000, profile, window, compactPoint)).toBe('error');
-        expect(getTkLevel(450_000, profile, window, 900_000)).toBe('rotLight');
-    });
-});
-
 describe('getTkLevel — defensive', () => {
     it('null profile → normal', () => {
         expect(getTkLevel(500_000, null, 1_000_000)).toBe('normal');

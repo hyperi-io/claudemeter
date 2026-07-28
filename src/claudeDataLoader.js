@@ -11,7 +11,6 @@ const path = require('path');
 const os = require('os');
 const { createHash } = require('crypto');
 const { getTokenLimit, splitLines } = require('./utils');
-const { observedCompactPoint } = require('./tk/compactPoint');
 const {
     projectDirName,
     normaliseUnicode,
@@ -105,37 +104,7 @@ function resetTranscriptCache() {
     inFlightReads.clear();
 }
 
-// Pre-filter for the compact-boundary scan on the FIRST read of a transcript,
-// where the whole file has to be looked at once. JSON.parse on every line of a
-// large transcript is the expensive part, so a line is only parsed if it
-// already contains the marker. Prose mentioning `compact_boundary` matches too
-// - a session discussing Claude Code internals costs a few wasted parses - but
-// the shape check in autoCompactPreTokensOf() means a false match can never
-// become a number. Appended lines are parsed unconditionally: there are only
-// ever a handful of them.
-const COMPACT_BOUNDARY_MARKER = 'compact_boundary';
-
-// Pull an AUTO compact boundary's pre-compaction size out of a parsed record,
-// or 0 if the record is not one.
-//
-// Claude Code writes a `compact_boundary` system record on every compaction:
-//
-//   {"type":"system","subtype":"compact_boundary",
-//    "compactMetadata":{"trigger":"auto","preTokens":167974,"postTokens":15235}}
-//
-// `trigger:"auto"` means Claude Code decided to compact, so preTokens records
-// the size it actually fires at. `trigger:"manual"` is worthless for this - a
-// user can /compact at any size at all.
-function autoCompactPreTokensOf(entry) {
-    if (entry?.subtype !== COMPACT_BOUNDARY_MARKER) return 0;
-    const meta = entry.compactMetadata;
-    if (!meta || meta.trigger !== 'auto') return 0;
-    const pre = meta.preTokens;
-    return Number.isFinite(pre) && pre > 0 ? pre : 0;
-}
-
-// Fold one parsed record into the running state, which is everything a
-// transcript contributes: the newest real prompt, and every auto compaction.
+// Fold one parsed record into the running state: the newest real prompt.
 // Shared by the first full read and each incremental tail read so the two can
 // never drift apart.
 //
@@ -144,22 +113,7 @@ function autoCompactPreTokensOf(entry) {
 // turn, so it lags by one turn and collapses on a cache miss - ingest a large
 // file and all of it lands in cache_creation. Measured 32K against a real
 // 233K prompt in a live session (#54).
-// Record an auto compaction, once. Resuming a session rewrites earlier lines,
-// so the same boundary can appear more than once, and counting a duplicate
-// twice weights it double in the median downstream. The uuid is the record's
-// identity; without one, fall back to the value so an exact repeat still folds.
-function foldBoundary(entry, state) {
-    const preTokens = autoCompactPreTokensOf(entry);
-    if (!preTokens) return;
-    const id = entry.uuid || `v:${preTokens}`;
-    if (state.seenBoundaries.has(id)) return;
-    state.seenBoundaries.add(id);
-    state.autoCompacts.push(preTokens);
-}
-
 function foldRecord(entry, state) {
-    foldBoundary(entry, state);
-
     // Same shapes isValidUsageRecord() rejects. These carry a token count
     // without being a real prompt, and one would become the session's whole
     // reported context.
@@ -191,30 +145,19 @@ function foldRecord(entry, state) {
     };
 }
 
-// First read of a transcript: the whole file, once.
-//
-// Scans BACKWARD because the newest prompt is normally a few lines from the
-// end, and only parses a line past that point if it contains the boundary
-// marker - which keeps JSON.parse off the ~49,000 lines of a large transcript.
-// Auto compactions come out newest-first and get reversed to match the
-// oldest-first order every other path produces.
+// First read of a transcript: scan BACKWARD and stop at the newest prompt,
+// which is normally a few lines from the end. That keeps JSON.parse off the
+// tens of thousands of lines behind it.
 function scanWholeTranscript(lines) {
-    const state = { latest: null, autoCompacts: [], seenBoundaries: new Set() };
+    const state = { latest: null };
     for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i];
-        if (state.latest && !line.includes(COMPACT_BOUNDARY_MARKER)) continue;
         try {
-            const entry = JSON.parse(line);
-            // Scanning backward, so the FIRST usage record found is the newest.
-            // Once it is in hand only boundaries are still wanted - folding a
-            // whole record here would let an older prompt overwrite it.
-            if (state.latest) foldBoundary(entry, state);
-            else foldRecord(entry, state);
+            foldRecord(JSON.parse(lines[i]), state);
         } catch (parseError) {
             continue;
         }
+        if (state.latest) break;
     }
-    state.autoCompacts.reverse();
     return state;
 }
 
@@ -363,20 +306,11 @@ async function readTranscript(filePath, log) {
 
             const text = buffer.toString('utf-8');
             const complete = lastCompleteLineEnd(text);
-            // Carries `seenBoundaries` forward so a boundary rewritten into the
-            // appended bytes is not counted a second time.
-            const state = {
-                latest: cached.state.latest,
-                autoCompacts: cached.state.autoCompacts,
-                seenBoundaries: cached.state.seenBoundaries,
-            };
+            const state = { latest: cached.state.latest };
             let added = 0;
             for (const line of recordLines(text.slice(0, complete))) {
                 added++;
                 try {
-                    // Appended lines are a handful per turn, so parse them all
-                    // rather than pre-filtering - the tail is where the newest
-                    // prompt lives and it has to be parsed regardless.
                     foldRecord(JSON.parse(line), state);
                 } catch (parseError) {
                     continue;
@@ -389,7 +323,6 @@ async function readTranscript(filePath, log) {
                 ...state.latest,
                 messageCount,
                 cwd: cached.cwd,
-                autoCompacts: [...state.autoCompacts],
             } : null;
 
             rememberTranscript(filePath, {
@@ -448,7 +381,6 @@ async function readTranscript(filePath, log) {
             ...state.latest,
             messageCount,
             cwd,
-            autoCompacts: [...state.autoCompacts],
         } : null;
 
         rememberTranscript(filePath, {
@@ -941,10 +873,6 @@ class ClaudeDataLoader {
             }
 
             const modelIds = active && active.model ? [active.model] : [];
-            // Where THIS session actually compacts, from its own history. Null
-            // until it has auto-compacted at least once, and the tiers fall
-            // back to the window-minus-reserve model then.
-            const compactPoint = active ? observedCompactPoint(active.autoCompacts) : null;
 
             if (active) {
                 const resolvedLimit = getTokenLimit(modelIds, active.contextTotal);
@@ -952,9 +880,6 @@ class ClaudeDataLoader {
                 this.log(`Showing ${agedOut ? 'latest aged-out' : 'highest-consumption live'} session: ${active.file}`);
                 this.log(`   Models: ${modelIds.join(', ') || 'none'} | Window: ${resolvedLimit.toLocaleString()} | context: ${active.contextTotal.toLocaleString()} (${pct}%)`);
                 this.log(`   input: ${active.input.toLocaleString()} + cache_creation: ${active.cacheCreation.toLocaleString()} + cache_read: ${active.cacheRead.toLocaleString()}`);
-                this.log(compactPoint
-                    ? `   compacts at ~${compactPoint.toLocaleString()} (from ${active.autoCompacts.length} auto-compaction(s) this session)`
-                    : '   never auto-compacted - tiers fall back to window minus reserve');
             } else {
                 this.log('No session with usage - inactive');
             }
@@ -969,7 +894,6 @@ class ClaudeDataLoader {
                 isActive: !!active,
                 activeSessionCount: activeSessionCount,
                 modelIds: modelIds,
-                compactPoint,
             };
 
         } catch (error) {
@@ -998,6 +922,5 @@ module.exports = {
     ClaudeDataLoader,
     selectActiveSession,
     readSessionUsage,
-    autoCompactPreTokensOf,
     resetTranscriptCache,
 };

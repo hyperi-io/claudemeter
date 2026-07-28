@@ -679,10 +679,6 @@ async function updateTokensFromJsonl(silent = false) {
                         lastUpdate: new Date().toISOString(),
                         limitSource: resolved.source,
                         limitConfidence: resolved.confidence,
-                        // Where this session actually compacts, measured from
-                        // its own history. Drives the yellow/red tiers; the
-                        // limit above still drives the bar and the max label.
-                        compactPoint: usage.compactPoint ?? null,
                     },
                 };
             } else {
