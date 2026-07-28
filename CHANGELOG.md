@@ -1,3 +1,10 @@
+## [2.5.8](https://github.com/hyperi-io/claudemeter/compare/v2.5.7...v2.5.8) (2026-07-28)
+
+
+### Bug Fixes
+
+* **tk:** detect a transcript rewritten to the same size ([769b824](https://github.com/hyperi-io/claudemeter/commit/769b824ac70925801305fc7e76bbdf1c566897bd))
+
 ## [2.5.7](https://github.com/hyperi-io/claudemeter/compare/v2.5.6...v2.5.7) (2026-07-28)
 
 
