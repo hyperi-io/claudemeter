@@ -1,3 +1,10 @@
+## [2.5.10](https://github.com/hyperi-io/claudemeter/compare/v2.5.9...v2.5.10) (2026-07-28)
+
+
+### Bug Fixes
+
+* Derek manual rework and removal fix for ai code. Oh the irony. ([091de49](https://github.com/hyperi-io/claudemeter/commit/091de49891eeab41fc8dd7d7fe536585a5883d03))
+
 ## [2.5.9](https://github.com/hyperi-io/claudemeter/compare/v2.5.8...v2.5.9) (2026-07-28)
 
 
