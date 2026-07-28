@@ -464,6 +464,48 @@ describe('readSessionUsage - incremental tail reads', () => {
             expect((await readSessionUsage(file)).contextTotal).toBe(44446);
         });
 
+        it('recovers even when size, mtime, device and inode ALL match', async () => {
+            // Reproduces what a CI runner produced by accident: a same-size
+            // rewrite inside one filesystem timestamp tick, so every piece of
+            // stat metadata is identical and the file looks untouched. APFS
+            // resolves the two writes apart, ext4 did not - so pin the
+            // timestamp back rather than depending on the host's granularity.
+            // A whole second, so the utimes round-trip is exact on any
+            // filesystem and the two stats are identical by construction
+            // rather than by luck.
+            const PINNED = 1_700_000_000;
+            const file = fresh([turn(11111), turn(22222)]);
+            fs.utimesSync(file, PINNED, PINNED);
+            const before = fs.statSync(file);
+            expect((await readSessionUsage(file)).contextTotal).toBe(22224);
+
+            const rewritten = [turn(33333), turn(44444)].join('\n') + '\n';
+            fs.writeFileSync(file, rewritten, 'utf-8');
+            fs.utimesSync(file, PINNED, PINNED);
+
+            const after = fs.statSync(file);
+            expect(after.size).toBe(before.size);
+            expect(after.mtimeMs).toBe(before.mtimeMs);
+            expect(after.ino).toBe(before.ino);
+            expect(after.dev).toBe(before.dev);
+
+            // Nothing in the metadata says this changed. The content does.
+            expect((await readSessionUsage(file)).contextTotal).toBe(44446);
+        });
+
+        it('does not re-read a genuinely untouched file', async () => {
+            // The other side of that coin: having stopped trusting mtime, it
+            // must not now treat every tick as a change and re-read forever.
+            const file = fresh([turn(11111), turn(22222)]);
+            await readSessionUsage(file);
+
+            const logged = [];
+            for (let i = 0; i < 5; i++) {
+                await readSessionUsage(file, (m) => logged.push(m));
+            }
+            expect(logged.filter(m => m.includes('resync'))).toHaveLength(0);
+        });
+
         it('recovers from a truncation to a shorter file', async () => {
             const file = fresh([turn(10000), turn(20000), turn(30000)]);
             expect((await readSessionUsage(file)).messageCount).toBe(3);

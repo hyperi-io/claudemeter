@@ -226,12 +226,28 @@ const FINGERPRINT_BYTES = 1024;
 //
 // Any of those means the cached byte offset points into a file that no longer
 // exists, so the answer is to forget it and read the whole thing again.
-async function readFingerprint(handle, size) {
+// Head AND tail. The head answers "is this the same file"; the tail answers
+// "has anything changed", which size and mtime cannot be trusted to do. A
+// same-size rewrite inside one mtime tick leaves size, mtime, device and inode
+// all identical - it looks untouched and is not. Filesystem timestamp
+// granularity varies (APFS resolves it, ext4 on a CI runner did not), so the
+// only honest answer is to look at the bytes.
+async function readEdgeHashes(handle, size) {
     const length = Math.min(FINGERPRINT_BYTES, size);
-    if (length <= 0) return 'empty';
-    const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, 0);
-    return createHash('sha1').update(buffer).digest('hex');
+    if (length <= 0) return { head: 'empty', tail: 'empty' };
+    const head = Buffer.alloc(length);
+    await handle.read(head, 0, length, 0);
+    if (size <= FINGERPRINT_BYTES) {
+        // The window covers the whole file, so one hash says everything.
+        const digest = createHash('sha1').update(head).digest('hex');
+        return { head: digest, tail: digest };
+    }
+    const tail = Buffer.alloc(length);
+    await handle.read(tail, 0, length, size - length);
+    return {
+        head: createHash('sha1').update(head).digest('hex'),
+        tail: createHash('sha1').update(tail).digest('hex'),
+    };
 }
 
 // Windows can report ino/dev as 0 on some filesystems, in which case they
@@ -253,36 +269,38 @@ async function readSessionUsage(filePath, log) {
         const stats = await fs.stat(filePath);
         const cached = transcriptCache.get(filePath);
 
-        // Nothing has touched the file since the last look - one stat, no read
-        // and no hash. This is the common case by a wide margin.
-        if (cached
-            && cached.size === stats.size
-            && cached.mtimeMs === stats.mtimeMs
-            && cached.dev === (stats.dev || 0)
-            && cached.ino === (stats.ino || 0)) {
+        handle = await fs.open(filePath, 'r');
+        const edges = await readEdgeHashes(handle, stats.size);
+        const identity = identityOf(stats, edges.head);
+
+        // Same file. Only then does the cached byte offset mean anything.
+        const sameFile = cached && cached.identity === identity;
+
+        // Same file, same length, same last bytes: genuinely nothing new. This
+        // is the common case by a wide margin and costs a stat plus 2KB of
+        // reads, against re-reading up to 162MB.
+        if (sameFile && stats.size === cached.size && edges.tail === cached.tail) {
+            await handle.close();
+            handle = null;
             return cached.summary ? { ...cached.summary } : null;
         }
 
-        handle = await fs.open(filePath, 'r');
-        const fingerprint = await readFingerprint(handle, stats.size);
-        const identity = identityOf(stats, fingerprint);
-
-        // Same file, and everything we consumed is still there: read only what
-        // was appended. Anything else - truncated, replaced, rewritten from the
-        // top - and the cached offset is meaningless.
-        const continues = cached
-            && cached.identity === identity
+        // Grew, and everything already consumed is still behind us: read only
+        // the new bytes. Anything else - shrunk, replaced, rewritten in place -
+        // and the cached offset points into a file that no longer exists.
+        const continues = sameFile
+            && stats.size >= cached.size
             && stats.size >= cached.readAt;
 
         if (continues && stats.size === cached.readAt) {
             // Touched but no COMPLETE new line yet (a write caught mid-flight).
-            // Re-stamp so the cheap path catches it next time.
             await handle.close();
             handle = null;
             transcriptCache.set(filePath, {
                 ...cached,
                 size: stats.size,
                 mtimeMs: stats.mtimeMs,
+                tail: edges.tail,
             });
             return cached.summary ? { ...cached.summary } : null;
         }
@@ -327,6 +345,7 @@ async function readSessionUsage(filePath, log) {
 
             transcriptCache.set(filePath, {
                 identity,
+                tail: edges.tail,
                 dev: stats.dev || 0,
                 ino: stats.ino || 0,
                 size: stats.size,
@@ -384,6 +403,7 @@ async function readSessionUsage(filePath, log) {
 
         transcriptCache.set(filePath, {
             identity,
+            tail: edges.tail,
             dev: stats.dev || 0,
             ino: stats.ino || 0,
             size: stats.size,
