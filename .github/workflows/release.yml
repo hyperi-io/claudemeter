@@ -56,10 +56,21 @@ jobs:
       - name: Run Gitleaks
         run: ./gitleaks detect --source . --verbose
 
+  # Quality gate - must pass before release.
+  #
+  # Release and CI are separate workflows triggered by the same push, so CI
+  # going red never stopped a publish: v2.5.7 reached the Marketplace with two
+  # failing tests. The tests only mean something if they can block the thing
+  # they are testing, so the release chain now runs them itself rather than
+  # hoping the other workflow went green. Same definition CI uses.
+  quality:
+    name: Quality Gate
+    uses: ./.github/workflows/quality.yml
+
   # Semantic release - creates version tags and changelog
   release:
     name: Release
-    needs: security
+    needs: [security, quality]
     if: github.repository == 'hyperi-io/claudemeter'
     runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
     permissions:

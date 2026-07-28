@@ -1,0 +1,64 @@
+name: Quality
+
+# Lint, test and build, defined ONCE and called by both CI and Release.
+#
+# Release used to have no quality gate at all. It and CI are separate workflows
+# on the same push, so a red CI never stopped a publish - v2.5.7 went to the
+# Marketplace with two failing tests. Copying the steps into Release would have
+# fixed that and left two definitions free to drift, which is exactly what has
+# already happened to the two `security` jobs. One definition, two callers.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          # Match the extension-host Node for our engines.vscode floor; keep in
+          # step with .nvmrc + engines.node. Bump only when the floor is raised
+          # - see CONTRIBUTING.md / assets/src/deps_node_guard.py.
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check for build errors
+        run: |
+          if [ ! -f dist/extension.js ]; then
+            echo "::error::Build failed - dist/extension.js not found"
+            exit 1
+          fi
+          echo "✓ Build successful"
+
+      - name: Verify package.json
+        run: |
+          # Check required fields exist
+          node -e "
+            const pkg = require('./package.json');
+            const required = ['name', 'displayName', 'version', 'publisher', 'engines', 'main'];
+            const missing = required.filter(f => !pkg[f]);
+            if (missing.length) {
+              console.error('Missing required fields:', missing.join(', '));
+              process.exit(1);
+            }
+            console.log('✓ package.json valid');
+          "
