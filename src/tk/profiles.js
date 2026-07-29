@@ -15,10 +15,17 @@
 //                'team-premium' is intentionally absent - it ships when the
 //                verbatim Anthropic detection strings are observable.
 //
-//                'enterprise' has rotEnabled: false because the typical
-//                500K window makes rotDeep (650K) unreachable and leaves
-//                rot largely inert - the auto-compact/error runway fires
-//                first. Honest beats inert.
+//                No profile turns rot off. Rot is gated on the WINDOW in
+//                thresholds.js (>200K), not on the profile, because on macOS
+//                the credentials live in the Keychain and detection often
+//                falls back to 'unknown' - profile-gating would switch rot
+//                off for exactly the 1M sessions that need it.
+//
+//                The context window is a property of the MODEL and the
+//                SURFACE, not the plan: in Claude Code every paid plan gets
+//                1M on Sonnet 5 / Fable 5 / Opus 4.6+. Do not reintroduce
+//                per-plan window assumptions here - contextWindowResolver
+//                owns the window and these profiles only carry thresholds.
 //
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED
@@ -39,54 +46,51 @@ const STANDARD_RUNWAY = Object.freeze({
 // end of the doc's 4.8-reasoned bands (400-550K / 650-800K). Still a
 // judgement call - no third-party binned 4.8 data exists in the 256K->1M gap.
 const STANDARD_ROT = Object.freeze({
-    rotEnabled:       true,
     rotLightTokens:  400_000,
     rotDeepTokens:   650_000,
 });
 
-const NO_ROT = Object.freeze({ rotEnabled: false });
-
 const PROFILES = Object.freeze({
     pro: Object.freeze({
         name: 'pro',
-        description: 'Pro — 200K Sonnet/Opus. Auto-compact at ~83% of window.',
-        thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...NO_ROT }),
+        description: 'Pro. 1M in Claude Code on Sonnet 5 / Fable 5, and on Opus once usage credits are enabled.',
+        thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...STANDARD_ROT }),
     }),
 
     'max-5x': Object.freeze({
         name: 'max-5x',
-        description: 'Max 5x ($100/mo) — 1M Opus auto. Multi-needle rot tiers active.',
+        description: 'Max 5x. 1M in Claude Code, no credits needed.',
         thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...STANDARD_ROT }),
     }),
 
     'max-20x': Object.freeze({
         name: 'max-20x',
-        description: 'Max 20x ($200/mo) — 1M Opus auto. Multi-needle rot tiers active.',
+        description: 'Max 20x. 1M in Claude Code, no credits needed.',
         thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...STANDARD_ROT }),
     }),
 
     'max-unknown': Object.freeze({
         name: 'max-unknown',
-        description: 'Max plan, rateLimitTier not detected. Treats as 1M Opus auto.',
+        description: 'Max plan, rateLimitTier not detected. Same thresholds as the known Max tiers.',
         thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...STANDARD_ROT }),
     }),
 
     'team-standard': Object.freeze({
         name: 'team-standard',
-        description: 'Team Standard — 1M Opus auto. Multi-needle rot tiers active.',
+        description: 'Team Standard. 1M in Claude Code, no credits needed.',
         thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...STANDARD_ROT }),
     }),
 
     enterprise: Object.freeze({
         name: 'enterprise',
-        description: 'Anthropic Enterprise — typical 500K window. Rot tiers disabled (rotDeep at 650K is unreachable on a 500K window).',
-        thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...NO_ROT }),
+        description: 'Anthropic Enterprise. 1M in Claude Code, same as every other paid plan.',
+        thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...STANDARD_ROT }),
     }),
 
     unknown: Object.freeze({
         name: 'unknown',
-        description: 'Detection fallback. Conservative: assumes 200K window, no rot tiers.',
-        thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...NO_ROT }),
+        description: 'Detection fallback. Standard thresholds - the window comes from contextWindowResolver, not from here.',
+        thresholds: Object.freeze({ ...STANDARD_RUNWAY, ...STANDARD_ROT }),
     }),
 });
 

@@ -198,7 +198,7 @@
       },
       {
         "id": "claudemeter.rotLight",
-        "description": "Light blue used for the Tk 'context drift' tier (~300K tokens used on 1M+ profiles). Subdued Solarized cyan. Override via workbench.colorCustomizations or claudemeter.colors.rotLight.",
+        "description": "Light blue used for the Tk 'context drift' tier, the earlier of the two rot tiers on windows above 200K. Threshold is claudemeter.thresholds.tokens.profiles rotLightTokens. Subdued Solarized cyan. Override via workbench.colorCustomizations or claudemeter.colors.rotLight.",
         "defaults": {
           "dark": "#6ca0c4",
           "light": "#4279a1",
@@ -207,7 +207,7 @@
       },
       {
         "id": "claudemeter.rotDeep",
-        "description": "Dark blue used for the Tk 'context rot' tier (~500K tokens used on 1M+ profiles). Subdued Solarized blue. Override via workbench.colorCustomizations or claudemeter.colors.rotDeep.",
+        "description": "Dark blue used for the Tk 'context rot' tier, the deeper of the two rot tiers on windows above 200K. Threshold is claudemeter.thresholds.tokens.profiles rotDeepTokens. Subdued Solarized blue. Override via workbench.colorCustomizations or claudemeter.colors.rotDeep.",
         "defaults": {
           "dark": "#4279a1",
           "light": "#205c80",

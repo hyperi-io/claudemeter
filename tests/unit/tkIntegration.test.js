@@ -82,7 +82,7 @@ describe('tk integration — detection → profile → level → colour → reco
         expect(TIER_RECOMMENDATIONS[level]).toBeNull();
     });
 
-    it('Pro at 300K used on 200K (over the window) → error (rot tiers do not fire because rotEnabled=false on pro)', () => {
+    it('Pro at 300K used on 200K (over the window) → error (rot cannot fire on a 200K window)', () => {
         const profile = selectProfile({ subscriptionType: 'pro' });
         // 300K used on a 200K window is conceptually impossible, but we
         // still want a sensible result — error wins because used is way
@@ -91,25 +91,25 @@ describe('tk integration — detection → profile → level → colour → reco
         expect(level).toBe('error');
     });
 
-    it('Enterprise at 420K used on 500K -> rotLight (window-gated, profile rotEnabled ignored)', () => {
+    // Enterprise gets 1M in Claude Code like every other paid plan - the window
+    // is a property of the model and the surface, not the plan.
+    it('Enterprise at 420K used on 1M → rotLight', () => {
         const profile = selectProfile({ orgType: 'Enterprise' });
         expect(profile.name).toBe('enterprise');
-        expect(profile.thresholds.rotEnabled).toBe(false);  // flag off, but a >200K window still rots
 
-        const level = getTkLevel(420_000, profile, 500_000);
+        const level = getTkLevel(420_000, profile, 1_000_000);
         expect(level).toBe('rotLight');
     });
 
-    it('Enterprise at 462K used on 500K → error', () => {
+    it('Enterprise at 962K used on 1M → error', () => {
         const profile = selectProfile({ orgType: 'Enterprise' });
-        const level = getTkLevel(462_000, profile, 500_000);
+        const level = getTkLevel(962_000, profile, 1_000_000);
         expect(level).toBe('error');
     });
 
     it('Unknown signals → unknown profile → normal at any reasonable usage', () => {
         const profile = selectProfile({});
         expect(profile.name).toBe('unknown');
-        expect(profile.thresholds.rotEnabled).toBe(false);
 
         // 50K on a 200K assumed window
         expect(getTkLevel(50_000, profile, 200_000)).toBe('normal');

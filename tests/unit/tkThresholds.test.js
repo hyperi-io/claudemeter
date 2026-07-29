@@ -2,8 +2,8 @@
 //  File:         tests/unit/tkThresholds.test.js
 //  Purpose:      Test suite for getTkLevel resolver.
 //                Tests 5-tier ladder: normal / rotLight / rotDeep / warning / error.
-//                Covers 200K / 500K / 1M window sizes, boundary semantics,
-//                rotEnabled gating, and defensive null handling.
+//                Covers small / non-tier / large window sizes, boundary
+//                semantics, window-gated rot, and defensive null handling.
 //
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED
@@ -13,7 +13,7 @@ const { getTkLevel } = require('../../src/tk/thresholds');
 const { PROFILES } = require('../../src/tk/profiles');
 
 describe('getTkLevel — 200K window (Pro / Unknown profiles)', () => {
-    const profile = PROFILES.pro;  // standard runway, no rot
+    const profile = PROFILES.pro;  // standard runway; rot cannot fire on a 200K window
     const window = 200_000;
 
     it('low usage (50K) → normal', () => {
@@ -38,10 +38,10 @@ describe('getTkLevel — 200K window (Pro / Unknown profiles)', () => {
         expect(getTkLevel(180_000, profile, window)).toBe('error');
     });
 
-    it('rot tiers do not fire on rotEnabled=false profile', () => {
-        // Rot is window-gated (>200K); this pro profile is on a 200K window so
-        // rot never fires regardless. 300K on a 200K window is past the error
-        // threshold (162K) anyway, so error wins.
+    it('rot tiers cannot fire on a 200K window even past the rot floor', () => {
+        // Rot is gated on the window (>200K), so 300K used never reads rotLight
+        // here despite clearing the 400K floor... and 300K on a 200K window is
+        // past the error threshold (162K) anyway, so error wins.
         expect(getTkLevel(300_000, profile, window)).toBe('error');
     });
 });
@@ -84,8 +84,11 @@ describe('getTkLevel — 1M window (Max profiles)', () => {
     });
 });
 
-describe('getTkLevel — 500K window (Enterprise profile)', () => {
-    const profile = PROFILES.enterprise;  // 500K window is >200K, so rot applies (window-gated, not profile)
+// 500K is not a Claude Code tier - the resolver only returns KNOWN_CONTEXT_TIERS
+// values. It IS reachable through the claudemeter.tokenLimit user override, so
+// the resolver must behave sanely on a window between the tiers.
+describe('getTkLevel — non-tier window from a user override', () => {
+    const profile = PROFILES.enterprise;
     const window = 500_000;
 
     it('420K used → rotLight (rot floor 400K, yellow at 447K)', () => {
