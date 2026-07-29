@@ -1,3 +1,10 @@
+## [2.5.11](https://github.com/hyperi-io/claudemeter/compare/v2.5.10...v2.5.11) (2026-07-29)
+
+
+### Bug Fixes
+
+* remove per-plan context window claims from the Tk profiles ([36766a3](https://github.com/hyperi-io/claudemeter/commit/36766a321767751f2387eb527c199dd773a32aac))
+
 ## [2.5.10](https://github.com/hyperi-io/claudemeter/compare/v2.5.9...v2.5.10) (2026-07-28)
 
 
