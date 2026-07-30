@@ -26,8 +26,9 @@ const {
 const DIR_MISS_TTL_MS = 60 * 1000;
 
 // Active session = the HIGHEST current context consumption across the live
-// INTERACTIVE sessions - max contextTotal over the main transcripts modified
-// inside the recency window.
+// INTERACTIVE sessions - max contextTotal over the main transcripts whose
+// NEWEST PROMPT falls inside the recency window. Prompted, not merely
+// modified; getCurrentSessionUsage() has the reason.
 //
 // Interactive means subagents do not count. They are excluded twice over:
 // Claude Code writes them to agent-*.jsonl, which getCurrentSessionUsage()
@@ -80,9 +81,8 @@ const TRANSCRIPT_CACHE_MAX = 64;
 // file-watcher both reach readSessionUsage() with nothing between them, so two
 // reads of one transcript can overlap. Whichever finished last would write back
 // its `readAt`, and if that were the one that saw the SMALLER file the offset
-// regresses and the overlap is folded in twice - inflating messageCount and
-// double-counting any compaction in that range, which then skews the median
-// compact point. Sharing one promise per path removes the interleaving.
+// regresses and the overlap is folded in twice, inflating messageCount.
+// Sharing one promise per path removes the interleaving.
 const inFlightReads = new Map();
 
 function rememberTranscript(filePath, entry) {
@@ -142,6 +142,10 @@ function foldRecord(entry, state) {
         cacheRead,
         cacheCreation,
         model: entry.message?.model || null,
+        // Date.parse yields NaN on a missing or malformed stamp, which
+        // `|| null` turns into "unknown". Consumed by the liveness gate in
+        // getCurrentSessionUsage().
+        lastActivity: Date.parse(entry.timestamp) || null,
     };
 }
 
@@ -841,18 +845,38 @@ class ClaudeDataLoader {
                 };
             }
 
-            // Live = written inside the live window (a subset of the deck).
-            // Show the one consuming the most context; see selectActiveSession.
+            // Live = a PROMPT written inside the live window. Show the one
+            // consuming the most context; see selectActiveSession.
+            //
+            // mtime is the cheap pre-filter, not the answer. It cannot
+            // under-include - an append always bumps it, so an old mtime never
+            // hides a new prompt - but it over-includes freely: reading a
+            // transcript without appending to it (the --resume picker
+            // enumerating sessions, any tool opening one) moves mtime on a
+            // conversation that ended days ago. Only the timestamp on the
+            // newest prompt establishes that someone is using the session.
             const liveCutoff = Date.now() - windowMs;
-            const liveFiles = relevantFiles.filter(f => f.modified >= liveCutoff);
-            this.log(`${liveFiles.length} live (${Math.round(windowMs / 60000)}min) of ${relevantFiles.length} in-deck, ${allFiles.length} total`);
+            const touchedFiles = relevantFiles.filter(f => f.modified >= liveCutoff);
 
             const ours = await this.makeSessionFilter();
 
             const liveSessions = [];
-            for (const f of liveFiles) {
+            let staleCount = 0;
+            for (const f of touchedFiles) {
                 const s = await readSessionUsage(f.path, (m) => this.log(m));
-                if (s && await ours(s)) liveSessions.push(s);
+                if (!s || !(await ours(s))) continue;
+                // Unknown stamp falls back to mtime rather than dropping the
+                // session: an unparseable or future transcript shape must not
+                // blank the gauge.
+                if (s.lastActivity !== null && s.lastActivity < liveCutoff) {
+                    staleCount++;
+                    continue;
+                }
+                liveSessions.push(s);
+            }
+            this.log(`${liveSessions.length} live (${Math.round(windowMs / 60000)}min) of ${touchedFiles.length} touched, ${relevantFiles.length} in-deck, ${allFiles.length} total`);
+            if (staleCount > 0) {
+                this.log(`   ${staleCount} touched but stale: mtime fresh, newest prompt older than the window`);
             }
 
             let { active, activeSessionCount } = selectActiveSession(liveSessions);
@@ -861,14 +885,17 @@ class ClaudeDataLoader {
             if (!active) {
                 // Nothing live with usage. Fall back to the most-recent session
                 // still inside the hard deck - last-known context, not a blank.
+                // Same content-timestamp rule as the live gate: a transcript
+                // whose newest prompt predates the deck is dead however
+                // recently something touched the file.
                 for (const f of relevantFiles) {
                     const s = await readSessionUsage(f.path, (m) => this.log(m));
-                    if (s && await ours(s)) {
-                        active = s;
-                        activeSessionCount = 1;
-                        agedOut = true;
-                        break;
-                    }
+                    if (!s || !(await ours(s))) continue;
+                    if (s.lastActivity !== null && s.lastActivity < hardDeckCutoff) continue;
+                    active = s;
+                    activeSessionCount = 1;
+                    agedOut = true;
+                    break;
                 }
             }
 

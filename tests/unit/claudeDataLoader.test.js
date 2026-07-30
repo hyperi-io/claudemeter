@@ -5,7 +5,7 @@
 // dash). These tests pin the exact mapping so the same regression can't
 // silently come back the next time someone touches that function.
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
@@ -254,11 +254,6 @@ describe('readSessionUsage - context accounting (#54)', () => {
     });
 });
 
-// Claude Code writes a compact_boundary record on every compaction, and a
-// trigger:"auto" one records the size compaction actually fires at. That is
-// the only per-session evidence of where the cliff is, because it is not
-// derivable from the window - one 1M session compacted sixteen times between
-// 166,984 and 608,197.
 // Transcripts are append-only and reach 162MB, while the gauge re-reads on a
 // 15s timer and on every debounced write. Reading one whole per tick cost
 // ~280ms of synchronous work on the extension host; reading only what was
@@ -452,6 +447,108 @@ describe('readSessionUsage - session attribution by origin cwd', () => {
             message: { model: 'claude-opus-4-8', usage: { input_tokens: 1, cache_read_input_tokens: 9, output_tokens: 1 } },
         }) + '\n', 'utf-8');
         expect((await readSessionUsage(file)).cwd).toBeNull();
+    });
+});
+
+describe('getCurrentSessionUsage - liveness is the newest prompt, not the mtime', () => {
+    let dir;
+
+    // Claude Code names main transcripts by UUID and getCurrentSessionUsage
+    // filters on that shape, so the fixtures have to look the part.
+    const LIVE = '11111111-1111-1111-1111-111111111111.jsonl';
+    const STALE = '22222222-2222-2222-2222-222222222222.jsonl';
+
+    // contextTotal = input + cache_creation + cache_read, so cache_read is set
+    // 2 below the total each case is asserting on.
+    const transcript = (timestamp, cacheRead) => JSON.stringify({
+        type: 'assistant',
+        cwd: '/repo',
+        ...(timestamp ? { timestamp } : {}),
+        message: {
+            model: 'claude-opus-4-8',
+            usage: {
+                input_tokens: 2,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: cacheRead,
+                output_tokens: 5,
+            },
+        },
+    }) + '\n';
+
+    const agoIso = (ms) => new Date(Date.now() - ms).toISOString();
+    const touch = (name) => {
+        const now = new Date();
+        fs.utimesSync(path.join(dir, name), now, now);
+    };
+
+    // Real getCurrentSessionUsage over real files. Only the directory lookup and
+    // the project-attribution filter are stubbed, so the liveness logic itself
+    // is the thing under test.
+    const loader = () => {
+        const l = new ClaudeDataLoader('/repo', () => {});
+        l.getProjectDataDirectory = async () => dir;
+        l.makeSessionFilter = async () => async () => true;
+        return l;
+    };
+
+    beforeEach(async () => {
+        dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claudemeter-live-'));
+        resetTranscriptCache();
+    });
+
+    afterEach(async () => {
+        if (dir) await fsp.rm(dir, { recursive: true, force: true });
+    });
+
+    it('ignores a huge dead session whose file was only touched', async () => {
+        // Reading a transcript without appending to it bumps mtime. On mtime
+        // alone a long-dead session passes the live gate and, being far larger,
+        // outranks the session actually in use.
+        await fsp.writeFile(path.join(dir, LIVE), transcript(agoIso(60 * 1000), 102_344), 'utf-8');
+        await fsp.writeFile(path.join(dir, STALE), transcript(agoIso(6 * 24 * 60 * 60 * 1000), 953_550), 'utf-8');
+        touch(STALE);
+
+        const usage = await loader().getCurrentSessionUsage();
+        expect(usage.isActive).toBe(true);
+        expect(usage.totalTokens).toBe(102_346);
+        expect(usage.activeSessionCount).toBe(1);
+    });
+
+    it('does not fall back to a touched-but-dead session when nothing is live', async () => {
+        // The aged-out fallback reads the same mtime, so it needs the same
+        // content check. Past the hard deck by content means hide the gauge,
+        // not report a number from a session that ended days ago.
+        await fsp.writeFile(path.join(dir, STALE), transcript(agoIso(6 * 24 * 60 * 60 * 1000), 953_550), 'utf-8');
+        touch(STALE);
+
+        const usage = await loader().getCurrentSessionUsage();
+        expect(usage.isActive).toBe(false);
+        expect(usage.totalTokens).toBe(0);
+    });
+
+    it('still shows a session whose prompt carries no timestamp', async () => {
+        // Unknown stamp falls back to mtime: an unparseable or future
+        // transcript shape must not blank the gauge.
+        await fsp.writeFile(path.join(dir, LIVE), transcript(null, 102_344), 'utf-8');
+        touch(LIVE);
+
+        const usage = await loader().getCurrentSessionUsage();
+        expect(usage.isActive).toBe(true);
+        expect(usage.totalTokens).toBe(102_346);
+    });
+
+    it('reports lastActivity off the newest prompt', async () => {
+        const ts = agoIso(90 * 1000);
+        const file = path.join(dir, LIVE);
+        await fsp.writeFile(file, transcript(ts, 500), 'utf-8');
+        const s = await readSessionUsage(file);
+        expect(s.lastActivity).toBe(Date.parse(ts));
+    });
+
+    it('reports lastActivity null when the prompt has no timestamp', async () => {
+        const file = path.join(dir, LIVE);
+        await fsp.writeFile(file, transcript(null, 500), 'utf-8');
+        expect((await readSessionUsage(file)).lastActivity).toBeNull();
     });
 });
 
