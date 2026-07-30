@@ -26,7 +26,7 @@
 //   limit    - "Tk ●○○○○ 1m"           bar + max only, but ONLY when the
 //                                       max is extended beyond the 200K
 //                                       baseline. 200K sessions show
-//                                       just the bar. NEW DEFAULT.
+//                                       just the bar. This is the default.
 //   count    - "Tk 518k/1m"             count only, no bar
 //
 // The threshold for `limit`'s "is it extended" check mirrors

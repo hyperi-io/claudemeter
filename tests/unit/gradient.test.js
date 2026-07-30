@@ -1,9 +1,9 @@
 //  Project:      Claudemeter
 //  File:         tests/unit/gradient.test.js
-//  Purpose:      Test suite for lerpHexOklab — OKLab colour interpolation.
+//  Purpose:      Test suite for lerpHexOklab - OKLab colour interpolation.
 //                Locks in the properties that motivated OKLab over naive
 //                sRGB/HSL: no muddy-grey or spurious-pink midpoints on a
-//                white→blue ramp.
+//                white->blue ramp.
 //
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED

@@ -180,7 +180,7 @@ describe('SessionTracker multi-instance safety', () => {
         const a = new SessionTracker(sessionFile);
         await a.startSession('From A');
 
-        // Fresh tracker instance — should read what A wrote
+        // Fresh tracker instance - should read what A wrote
         const b = new SessionTracker(sessionFile);
         const data = await b.loadData({ useCache: false });
         expect(data.sessions).toHaveLength(1);

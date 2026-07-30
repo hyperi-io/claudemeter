@@ -1,4 +1,4 @@
-// Tests for happyHour.js — pure peak-window detection.
+// Tests for happyHour.js - pure peak-window detection.
 // All tests use frozen UTC instants to avoid DST flake when asserting
 // against America/Los_Angeles. LA is UTC-7 in PDT (Mar-Nov) and
 // UTC-8 in PST; 2026-04-15 is Wed PDT, 2026-01-15 is Thu PST.
@@ -93,7 +93,7 @@ describe('isHappyHour — inverted custom window', () => {
     });
 
     it('inverted: weekday in day is now happy hour', () => {
-        // Wed 12:00 LA PDT = 19:00 UTC, weekday not in [0,6] → happy hour
+        // Wed 12:00 LA PDT = 19:00 UTC, weekday not in [0,6] -> happy hour
         expect(isHappyHour(utc('2026-04-15T19:00:00Z'), inverted)).toBe(true);
     });
 });

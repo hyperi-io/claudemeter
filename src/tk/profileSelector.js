@@ -4,19 +4,18 @@
 //
 //                Implementation is an EXPLICIT if-else priority chain
 //                sorted by signal specificity (most-specific first), NOT
-//                an iteration over the PROFILES object. This is per
-//                architectural-review C2: array-position coupling is
-//                invisible and silently breaks when contributors insert
-//                entries in the wrong order. An explicit chain forces
-//                anyone adding a new profile to ALSO add an explicit
-//                branch here, with the precedence visible at a glance.
+//                an iteration over the PROFILES object. Array-position
+//                coupling is invisible and breaks silently when entries
+//                are inserted in the wrong order. An explicit chain forces
+//                anyone adding a profile to ALSO add a branch here, with
+//                the precedence visible at a glance.
 //
 //                String comparisons are EXACT (no normalisation). Verbatim
-//                Anthropic strings come from src/credentialsReader.js and
-//                the bootstrap API; they're compared as-is. Do not import
-//                or call formatSubscriptionType / formatRateLimitTier here
-//                - those are display formatters and a parallel-normalisation
-//                hazard.
+//                Anthropic strings come from the credential store and the
+//                OAuth /profile response; they are compared as-is. Do not
+//                import or call formatSubscriptionType /
+//                formatRateLimitTier here - those are display formatters
+//                and a parallel-normalisation hazard.
 //
 //                'unknown' fallback emits a one-time output-channel warning
 //                so users with detection-failure scenarios can see the

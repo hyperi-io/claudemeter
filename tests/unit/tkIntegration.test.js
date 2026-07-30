@@ -1,6 +1,6 @@
 // Full-stack integration test for the Tk profile/threshold/colour pipeline.
 // No vscode runtime; exercises the pure modules end-to-end:
-//   selectProfile(signals) → getTkLevel(used, profile, window) → TIER_COLORS / TIER_RECOMMENDATIONS
+//   selectProfile(signals) -> getTkLevel(used, profile, window) -> TIER_COLORS / TIER_RECOMMENDATIONS
 
 import { describe, it, expect, beforeEach } from 'vitest';
 const { selectProfile, resetUnknownWarning } = require('../../src/tk/profileSelector');
@@ -85,7 +85,7 @@ describe('tk integration — detection → profile → level → colour → reco
     it('Pro at 300K used on 200K (over the window) → error (rot cannot fire on a 200K window)', () => {
         const profile = selectProfile({ subscriptionType: 'pro' });
         // 300K used on a 200K window is conceptually impossible, but we
-        // still want a sensible result — error wins because used is way
+        // still want a sensible result - error wins because used is way
         // past compactPoint - errorRunwayTokens (162K).
         const level = getTkLevel(300_000, profile, 200_000);
         expect(level).toBe('error');

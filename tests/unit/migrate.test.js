@@ -18,7 +18,7 @@ describe('migrateLegacySettings — happy paths', () => {
 
         const result = await migrateLegacySettings(vscode, 1_000_000, profile, logger);
 
-        // 70% of 1M = 700K used → runway = 1M - 700K - 33K (compactReserve) = 267K
+        // 70% of 1M = 700K used -> runway = 1M - 700K - 33K (compactReserve) = 267K
         expect(result.migrated).toEqual(['thresholds.tokens.warning']);
         const writes = vscode._getWrittenValues();
         const writeNew = writes.find(w => w.key === 'thresholds.tokens.profiles.max-20x.thresholds.warningRunwayTokens');
@@ -36,7 +36,7 @@ describe('migrateLegacySettings — happy paths', () => {
 
         const result = await migrateLegacySettings(vscode, 200_000, profile, logger);
 
-        // 80% of 200K = 160K used → runway = 200K - 160K - 33K = 7K
+        // 80% of 200K = 160K used -> runway = 200K - 160K - 33K = 7K
         expect(result.migrated).toEqual(['thresholds.tokens.error']);
         const writes = vscode._getWrittenValues();
         const writeNew = writes.find(w => w.key === 'thresholds.tokens.profiles.pro.thresholds.errorRunwayTokens');
@@ -72,7 +72,7 @@ describe('migrateLegacySettings — idempotency', () => {
 
         expect(result.migrated).toEqual([]);
         expect(result.skipped).toEqual(['thresholds.tokens.warning']);
-        // No writes recorded — neither write nor delete
+        // No writes recorded - neither write nor delete
         expect(vscode._getWrittenValues()).toEqual([]);
     });
 
@@ -81,7 +81,7 @@ describe('migrateLegacySettings — idempotency', () => {
         vscode._setConfigInspectValues('thresholds.tokens.warning', { globalValue: 70 });
         await migrateLegacySettings(vscode, 1_000_000, PROFILES['max-20x'], makeLogger());
 
-        // Simulate second run — legacy key has been deleted (mock cleared via update(undefined))
+        // Simulate second run - legacy key has been deleted (mock cleared via update(undefined))
         vscode._resetWrittenValues();
         // After delete, inspect should NOT have the legacy key any more
         vscode._setConfigInspectValues('thresholds.tokens.warning', { globalValue: undefined });
@@ -122,7 +122,7 @@ describe('migrateLegacySettings — defensive paths', () => {
     });
 
     it('skips when computed runway would be <=0 on extremely tight thresholds', async () => {
-        // 99% on 200K = 198K used → runway = 200K - 198K - 33K = -31K (negative)
+        // 99% on 200K = 198K used -> runway = 200K - 198K - 33K = -31K (negative)
         vscode._setConfigInspectValues('thresholds.tokens.warning', { globalValue: 99 });
         const logger = makeLogger();
         const result = await migrateLegacySettings(vscode, 200_000, PROFILES.pro, logger);

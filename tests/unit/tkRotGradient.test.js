@@ -1,6 +1,6 @@
 //  Project:      Claudemeter
 //  File:         tests/unit/tkRotGradient.test.js
-//  Purpose:      Test suite for rotGradientT — the continuous position of
+//  Purpose:      Test suite for rotGradientT - the continuous position of
 //                `used` within the rot blue zone [rotLightTokens, yellow).
 //                Returns 0..1 inside the zone, null outside it (so callers
 //                fall back to discrete normal/warning/error colours).

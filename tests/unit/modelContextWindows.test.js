@@ -210,7 +210,7 @@ describe('resolveSessionContextWindow', () => {
 
     // NOTE: the tests below assert the post-ratchet-fix behaviour.
     // resolveSessionContextWindow is now a deprecated delegator to
-    // contextWindowResolver.resolveContextWindow — observed tokens
+    // contextWindowResolver.resolveContextWindow - observed tokens
     // are treated as a LOWER BOUND and snapped to the next known
     // tier (200K -> 1M -> 2M), never returned raw. See
     // tests/unit/contextWindowResolver.test.js for the full matrix.

@@ -314,8 +314,8 @@ function renderPlatformBlock(state) {
     return ['', ...platformTooltipLines];
 }
 
-// HyperI brand link on the footer version line. Hardcoded for now (the
-// manifest carries no company URL); revisit if a homepage field is added.
+// HyperI brand link on the footer version line. Hardcoded because the
+// manifest carries no company URL - read it from there if one is added.
 const HYPERI_URL = 'https://hyperi.io';
 
 function renderFooter(state) {

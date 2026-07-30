@@ -69,7 +69,7 @@ describe('snapToNextKnownTier', () => {
     });
 
     it('returns highest known tier for values above the top tier', () => {
-        // We explicitly do NOT invent higher tiers — the rule table is the
+        // We explicitly do NOT invent higher tiers - the rule table is the
         // source of truth for new tiers. Snap saturates at the top.
         expect(snapToNextKnownTier(2000001)).toBe(2000000);
         expect(snapToNextKnownTier(3000000)).toBe(2000000);

@@ -2,7 +2,7 @@
 //  File:         src/tk/thresholds.js
 //  Purpose:      Pure 5-tier resolver for the Tk (token) gauge.
 //
-//                Anchored to absolute tokens — both used and contextWindow
+//                Anchored to absolute tokens - both used and contextWindow
 //                are token counts. The auto-compact "imminent" runway and
 //                the rot frontier are absolute concerns; expressing them
 //                in tokens (not percent) keeps the model consistent with
@@ -26,7 +26,7 @@
 //                a model property, so it is the same whether it comes from a
 //                profile's explicit values or these defaults.
 //
-//                Pure JS — no vscode dependency, no I/O, fully testable.
+//                Pure JS - no vscode dependency, no I/O, fully testable.
 //
 //  License:      MIT
 //  Copyright:    (c) 2026 HYPERI PTY LIMITED

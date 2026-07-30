@@ -109,7 +109,7 @@ describe('formatAsBar', () => {
     });
 
     it('renders 27% with barCircle', () => {
-        // 27% of 5 → 1.35 → rounds to 1
+        // 27% of 5 -> 1.35 -> rounds to 1
         expect(formatAsBar(27, 'barCircle')).toBe('●○○○○');
     });
 
@@ -186,7 +186,7 @@ describe('formatTokensDisplay — bar mode', () => {
 
 describe('formatKCount — tokensDisplay modes', () => {
     // The tokensDisplay setting controls the numeric part of the Tk
-    // indicator. 200K is STANDARD_LIMIT — the baseline everyone shares.
+    // indicator. 200K is STANDARD_LIMIT - the baseline everyone shares.
     // `limit` mode only shows the max when it's *extended* past 200K,
     // because showing "200k" always would be noise.
 
@@ -373,7 +373,7 @@ describe('formatTokensDisplay — both mode (default)', () => {
 
 describe('formatTokensDisplay — fallback and edge cases', () => {
     it('defaults to limit mode when display is undefined (1M session)', () => {
-        // New default: limit mode shows max only when extended.
+        // limit mode shows max only when extended.
         // 1M > 200K threshold, so max renders as "1m".
         const result = formatTokensDisplay({
             percent: 27,

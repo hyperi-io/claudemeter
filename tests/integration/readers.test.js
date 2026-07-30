@@ -144,7 +144,7 @@ describe('claudeConfigReader.hasMaxContextAccess', () => {
     });
 
     it('only returns cache for the currently-logged-in org, not others', () => {
-        // Cache has an entry for a DIFFERENT org — should be ignored
+        // Cache has an entry for a DIFFERENT org - should be ignored
         writeClaudeConfig({
             oauthAccount: { organizationUuid: 'org-current' },
             s1mAccessCache: {
@@ -219,7 +219,7 @@ describe('credentialsReader.readCredentials (merged view)', () => {
         const before = credentials.readCredentials();
         const beforeKey = credentials.getIdentityKey(before);
 
-        // Simulate post-upgrade state — .claude.json now exists with
+        // Simulate post-upgrade state - .claude.json now exists with
         // matching orgId and added accountUuid/email
         writeClaudeConfig({
             oauthAccount: {
@@ -235,7 +235,7 @@ describe('credentialsReader.readCredentials (merged view)', () => {
         // Even though accountUuid/email became non-null, the PRIMARY
         // identifier (orgId) is unchanged. identityChanged uses OR so
         // technically this IS flagged as a change because accountUuid
-        // went from null → non-null. That's acceptable — it forces a
+        // went from null -> non-null. That's acceptable - it forces a
         // fresh fetch after the upgrade, which is desired.
         expect(credentials2.identityChanged(beforeKey, afterKey)).toBe(true);
     });
