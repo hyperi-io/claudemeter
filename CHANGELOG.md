@@ -1,3 +1,10 @@
+## [2.5.12](https://github.com/hyperi-io/claudemeter/compare/v2.5.11...v2.5.12) (2026-07-30)
+
+
+### Bug Fixes
+
+* judge session liveness by the newest prompt, not the file mtime ([9bb52cf](https://github.com/hyperi-io/claudemeter/commit/9bb52cf944a28c91482e4a08adcaadbc00c61953))
+
 ## [2.5.11](https://github.com/hyperi-io/claudemeter/compare/v2.5.10...v2.5.11) (2026-07-29)
 
 
