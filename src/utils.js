@@ -34,11 +34,12 @@ const COMMANDS = {
     SIMULATE_STATUS: 'claudemeter.simulateStatus',
 };
 
-// Cross-platform config directory following OS conventions
+// Claudemeter's OWN config directory, following OS conventions. Named apart
+// from tokenSource.getConfigDir, which resolves Claude Code's.
 // macOS: ~/Library/Application Support/claudemeter
 // Linux: ~/.config/claudemeter (XDG spec)
 // Windows: %APPDATA%\claudemeter
-function getConfigDir() {
+function getClaudemeterConfigDir() {
     if (process.platform === 'win32') {
         return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'claudemeter');
     } else if (process.platform === 'darwin') {
@@ -47,7 +48,7 @@ function getConfigDir() {
     return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'claudemeter');
 }
 
-const CONFIG_DIR = getConfigDir();
+const CONFIG_DIR = getClaudemeterConfigDir();
 
 const PATHS = {
     CONFIG_DIR: CONFIG_DIR,

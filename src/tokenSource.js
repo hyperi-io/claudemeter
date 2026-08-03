@@ -37,6 +37,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { createHash } = require('crypto');
 
 // Env vars that make Claude Code bypass the stored OAuth token. If any is
 // set the shared store is NOT the source of truth, so we must not claim
@@ -52,10 +53,31 @@ const AUTH_OVERRIDE_ENV = [
 
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
 
-// CLAUDE_CONFIG_DIR wins so we track whichever account THIS environment's
-// Claude Code is on (the split-config power-user case); else ~/.claude.
+// Claude Code scopes the Keychain item to the config dir by appending the
+// first 8 hex of sha256 over it, and omits the suffix entirely for the default
+// dir. Derived rather than searched for: a search matches on resemblance and
+// would adopt a different config dir's account, or one any local process can
+// plant. A wrong derivation merely misses the lookup.
+//
+// The suffixed name is used ALONE when a config dir is set - falling back to
+// the bare name there would read the default dir's account instead.
+function keychainServiceName() {
+    const secureDir = process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+    const scoped = secureDir !== undefined ? !!secureDir : !!process.env.CLAUDE_CONFIG_DIR;
+    if (!scoped) return KEYCHAIN_SERVICE;
+    const input = secureDir !== undefined ? secureDir.normalize('NFC') : getConfigDir();
+    const hash = createHash('sha256').update(input).digest('hex').substring(0, 8);
+    return `${KEYCHAIN_SERVICE}-${hash}`;
+}
+
+// The single resolver for the Claude config dir; every other module defers to
+// it so the token and the identity read cannot land in different directories.
+// CLAUDE_CONFIG_DIR relocates .credentials.json on Linux and Windows, so it
+// wins. CLAUDE_CONFIG_HOME is claudemeter's own test hook for pointing the
+// home dir at a fixture, not a Claude Code variable.
 function getConfigDir() {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    return process.env.CLAUDE_CONFIG_DIR
+        || path.join(process.env.CLAUDE_CONFIG_HOME || os.homedir(), '.claude');
 }
 
 function credentialsFilePath() {
@@ -81,6 +103,15 @@ function readFromFile() {
     }
 }
 
+// A store can exist and still carry no usable token: Claude Code writes
+// accessToken as an empty string when an OAuth login persists badly (#57,
+// anthropics/claude-code#83345). That state needs different advice from an
+// absent store, so the two are told apart everywhere rather than both reading
+// as "no token".
+function hasUsableToken(blob) {
+    return !!blob && typeof blob.accessToken === 'string' && blob.accessToken.trim() !== '';
+}
+
 // Tiny TTL cache for the Keychain read only (the file read is cheap). Keeps
 // repeated readToken() calls in one cycle from each spawning `security`.
 const KEYCHAIN_TTL_MS = 2000;
@@ -97,13 +128,16 @@ function readFromKeychain(forceFresh = false) {
     try {
         const out = execFileSync(
             'security',
-            ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
-            { encoding: 'utf-8', timeout: 5000 },
+            ['find-generic-password', '-s', keychainServiceName(), '-w'],
+            // stderr ignored: a miss is routine and would otherwise print
+            // "item could not be found" into the extension host on every poll.
+            { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] },
         );
         const raw = JSON.parse(out);
         blob = raw.claudeAiOauth || raw;
     } catch {
-        // absent/locked Keychain or malformed entry -> no token (blob stays null)
+        // Absent, locked or malformed entry -> no token. Never log the error:
+        // an execFileSync timeout carries .stdout, which is the token.
     }
     keychainCache = { blob, at: Date.now() };
     return blob;
@@ -112,7 +146,7 @@ function readFromKeychain(forceFresh = false) {
 // Build the token result from a raw oauth blob, or null when it carries no
 // usable access token.
 function buildToken(blob, source) {
-    if (!blob || !blob.accessToken) return null;
+    if (!hasUsableToken(blob)) return null;
     const expiresAt = typeof blob.expiresAt === 'number' ? blob.expiresAt : null;
     return {
         ok: true,
@@ -151,17 +185,29 @@ function chooseToken(fileTok, kcTok) {
 // re-read does). Returns:
 //   { ok: true, token, expiresAt, scopes, subscriptionType, rateLimitTier,
 //     source: 'file'|'keychain', expired: bool }
-//   { ok: false, reason: 'ENV_OVERRIDE'|'NO_TOKEN', detail }
+//   { ok: false, reason: 'ENV_OVERRIDE'|'TOKEN_BLANK'|'NO_TOKEN', detail }
 function readToken(opts = {}) {
     const override = detectAuthOverride();
     if (override) {
         return { ok: false, reason: 'ENV_OVERRIDE', detail: override };
     }
 
-    const fileTok = buildToken(readFromFile(), 'file');
-    const kcTok = buildToken(readFromKeychain(opts.fresh === true), 'keychain');
-    return chooseToken(fileTok, kcTok)
-        || { ok: false, reason: 'NO_TOKEN', detail: getConfigDir() };
+    const fileBlob = readFromFile();
+    const kcBlob = readFromKeychain(opts.fresh === true);
+    const chosen = chooseToken(buildToken(fileBlob, 'file'), buildToken(kcBlob, 'keychain'));
+    if (chosen) return chosen;
+    return { ...classifyEmptyRead(fileBlob, kcBlob), ok: false, detail: getConfigDir() };
+}
+
+// Which failure a pair of raw store blobs represents once neither yielded a
+// usable token. A store carrying an accessToken key that is blank means the
+// login worked and the persist did not, so logging in again reproduces it.
+// A store that is merely unparseable or some other shape is NOT that - it must
+// stay NO_TOKEN so the user is still offered the login that would fix it.
+function classifyEmptyRead(fileBlob, kcBlob) {
+    const blank = (b) => !!b && Object.prototype.hasOwnProperty.call(b, 'accessToken');
+    const source = (blank(kcBlob) && 'keychain') || (blank(fileBlob) && 'file') || null;
+    return source ? { reason: 'TOKEN_BLANK', source } : { reason: 'NO_TOKEN' };
 }
 
 // Watch the credential FILE for changes and invoke onChange (debounced).
@@ -207,13 +253,58 @@ function watchToken(onChange) {
     };
 }
 
+// Both stores, built and unchosen. A token the server refuses is a dead end if
+// the other store holds a good one we never try, which is the mirror of #50.
+function readAllTokens(opts = {}) {
+    if (detectAuthOverride()) return { file: null, keychain: null };
+    return {
+        file: buildToken(readFromFile(), 'file'),
+        keychain: buildToken(readFromKeychain(opts.fresh === true), 'keychain'),
+    };
+}
+
+// What the token read actually looked at. Presence, paths and service names
+// only - never a token value - so it is safe in the state dump users paste
+// into public issues. A config-dir mismatch between the extension host and the
+// shell that ran `claude auth login` is invisible without it.
+function describeStores() {
+    const file = credentialsFilePath();
+    const fileBlob = readFromFile();
+    const stores = [{
+        store: 'file',
+        path: file,
+        exists: fs.existsSync(file),
+        hasToken: hasUsableToken(fileBlob),
+        blank: !!fileBlob && !hasUsableToken(fileBlob),
+    }];
+    if (process.platform === 'darwin') {
+        const kcBlob = readFromKeychain();
+        stores.push({
+            store: 'keychain',
+            service: keychainServiceName(),
+            hasToken: hasUsableToken(kcBlob),
+            blank: !!kcBlob && !hasUsableToken(kcBlob),
+        });
+    }
+    return {
+        configDir: getConfigDir(),
+        configDirFromEnv: !!process.env.CLAUDE_CONFIG_DIR,
+        stores,
+    };
+}
+
 module.exports = {
     readToken,
+    readAllTokens,
     chooseToken,
     watchToken,
     detectAuthOverride,
     getConfigDir,
     credentialsFilePath,
+    describeStores,
+    hasUsableToken,
+    classifyEmptyRead,
+    keychainServiceName,
     AUTH_OVERRIDE_ENV,
     KEYCHAIN_SERVICE,
 };

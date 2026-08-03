@@ -21,14 +21,16 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const oauthFetcher = require('./src/oauthFetcher');
 const { cachedFetchUsage } = require('./src/usageCache');
-const { readToken, watchToken, detectAuthOverride } = require('./src/tokenSource');
+const { readToken, watchToken, detectAuthOverride, describeStores } = require('./src/tokenSource');
+const { AUTH_REASONS, AUTH_FAILURES, describeAuthFailure, summariseAuthFailure } = require('./src/authFailure');
+const { redactIdentity } = require('./src/redact');
 const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
 const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, scrubHome, getDefaultDebugLogPath } = require('./src/utils');
 const {
-    CREDENTIALS_PATH,
+    getCredentialsPath,
     readCredentials,
     formatSubscriptionType,
     formatRateLimitTier,
@@ -36,7 +38,7 @@ const {
     identityChanged,
 } = require('./src/credentialsReader');
 const {
-    CLAUDE_CONFIG_PATH,
+    getClaudeConfigPath,
     getOAuthAccount,
     hasMaxContextAccess,
     findSessionForWorkspace,
@@ -68,6 +70,9 @@ let claudeConfigWatcher;
 let tokenWatcherDispose = null;
 let awaitTokenTimer = null;
 let currentWorkspacePath = null;
+// Last auth failure, kept for the state dump so a bug report carries the
+// reason rather than only the state it left behind.
+let lastAuthFailure = null;
 
 let tokenDiagnosticChannel = null;
 
@@ -179,14 +184,31 @@ function awaitTokenThenFetch() {
     let elapsed = 0;
     awaitTokenTimer = setInterval(async () => {
         elapsed += 3000;
-        if (readToken().ok) {
+        const tok = readToken();
+        if (tok.ok) {
             clearInterval(awaitTokenTimer);
             awaitTokenTimer = null;
             fileLog('Token appeared after login - fetching');
             await performFetch(true);
-        } else if (elapsed >= 90000) {
+            return;
+        }
+        // A login that reports success and stores a blank token is the state
+        // the poll would otherwise sit through in silence (#57), so stop and
+        // say so rather than time out with no message.
+        if (tok.reason === AUTH_REASONS.TOKEN_BLANK) {
             clearInterval(awaitTokenTimer);
             awaitTokenTimer = null;
+            fileLog('Login completed but the credential store holds a blank token');
+            vscode.window.showWarningMessage(
+                `Claudemeter: ${AUTH_FAILURES.TOKEN_BLANK.lines.join(' ')}`
+            );
+            updateStatusBarWithAllData();
+            return;
+        }
+        if (elapsed >= 90000) {
+            clearInterval(awaitTokenTimer);
+            awaitTokenTimer = null;
+            fileLog('No token appeared within the post-login poll window');
         }
     }, 3000);
 }
@@ -248,37 +270,66 @@ async function performFetchInner(isManual = false) {
         // the api.anthropic.com rate limit (429). Floor 30s.
         const maxAgeMs = Math.max(30, config.get('usageRefreshSeconds', 120)) * 1000;
         const res = await cachedFetchUsage(() => oauthFetcher.fetchUsageData(), maxAgeMs);
+        // Only a clean fetch clears the recorded failure; a cache hit that
+        // masked a live error must keep it, or the dump reports all-well.
+        if (!res.error) lastAuthFailure = null;
         usageData = res.usageData;
         applyProfileSignals(usageData.accountInfo);
         if (res.fromCache) {
             fileLog(res.error
-                ? `Web usage from cache (live fetch failed: ${res.error.message})`
+                ? `Web usage from cache (live fetch failed: ${describeFetchError(res.error)})`
                 : 'Web usage from shared cache');
         } else {
             fileLog('OAuth usage fetch OK');
         }
     } catch (error) {
         webError = error;
-        if (error.message === 'NO_OAUTH_TOKEN') {
-            webError = new Error('Not logged into Claude Code. Click to log in.');
-            if (isManual) { await promptClaudeLogin(); handled = true; }
-        } else if (error.message === 'AUTH_OVERRIDE') {
-            // API key / Bedrock / Vertex user -- no subscription usage to show.
-            // Informational, not an error toast; the state shows in the tooltip.
-            webError = new Error(`Using ${error.detail} - subscription usage unavailable.`);
-            fileLog(`Auth override active (${error.detail}); web usage unavailable`);
-            handled = true;
+        if (error.message === 'NO_OAUTH_TOKEN' || error.message === 'AUTH_OVERRIDE') {
+            const reason = error.authReason || AUTH_REASONS.NO_TOKEN;
+            const context = error.authContext || {};
+            const { canRelogin } = describeAuthFailure(reason, context);
+            webError = new Error(summariseAuthFailure(reason, context));
+            webError.authReason = reason;
+            webError.authContext = context;
+            webError.httpStatus = error.httpStatus || null;
+            lastAuthFailure = {
+                reason,
+                httpStatus: error.httpStatus || null,
+                cause: context.cause || null,
+                at: new Date().toISOString(),
+            };
+            fileLog(`Auth failure: ${reason}`
+                + (error.httpStatus ? ` (HTTP ${error.httpStatus})` : '')
+                + (context.cause ? ` - ${context.cause}` : '')
+                + (context.lookedIn ? ` - looked in ${context.lookedIn}` : ''));
+            // Offer login only where it can help. Prompting on a blank stored
+            // token is the loop #57 reported.
+            if (isManual && canRelogin) await promptClaudeLogin();
+            // An auth override is informational, not an error toast.
+            handled = reason === 'ENV_OVERRIDE' || (isManual && canRelogin);
         } else {
             fileLog(`OAuth usage fetch failed: ${error.message}`);
             console.error('Claudemeter web fetch failed:', error);
         }
     } finally {
         if (!currentSessionData?.tokenUsage) tokenError = new Error('No token data available');
-        stopSpinner(webError, tokenError);
+        // Order matters: updateStatusBar rewrites every tooltip unconditionally,
+        // so stopSpinner has to run second for an error state to survive.
         updateStatusBarWithAllData();
+        stopSpinner(webError, tokenError);
     }
 
     return { webError, tokenError, handled };
+}
+
+// A fetch error's coarse message alone reads as "logged out" for the auth
+// class, so the reason and cause are unfolded for the log the README sends
+// bug reporters at.
+function describeFetchError(error) {
+    if (!error) return 'unknown';
+    if (!error.authReason) return error.message;
+    const cause = error.authContext && error.authContext.cause;
+    return `${error.authReason}${cause ? ` (${cause})` : ''}`;
 }
 
 // Seed the Tk profile signals (subscriptionType, rateLimitTier) from the
@@ -459,21 +510,23 @@ function buildStateDump() {
     })();
 
     // Redact anything that looks sensitive. The dump is safe to paste into
-    // public issue trackers.
-    const safeCreds = creds ? {
+    // public issue trackers: SECURITY.md commits to no account name, no email
+    // and no username in paths, so identity is reported as PRESENCE plus the
+    // non-identifying descriptors that actually help diagnosis.
+    const safeCreds = creds ? redactIdentity({
+        organizationName: creds.organizationName,
+        organizationRole: creds.organizationRole,
         orgId: creds.orgId,
         accountUuid: creds.accountUuid,
         email: creds.email,
         displayName: creds.displayName,
-        organizationName: creds.organizationName,
-        organizationRole: creds.organizationRole,
         billingType: creds.billingType,
         hasAvailableSubscription: creds.hasAvailableSubscription,
         subscriptionType: creds.subscriptionType,
         rateLimitTier: creds.rateLimitTier,
         hasAccessToken: !!creds.accessToken,
         hasRefreshToken: !!creds.refreshToken,
-    } : null;
+    }) : null;
 
     const tokenLimitResolved = (() => {
         try { return getTokenLimit(); } catch { return null; }
@@ -484,9 +537,9 @@ function buildStateDump() {
         version: getExtensionVersion(),
         mode: 'oauth',
         workspacePath: currentWorkspacePath,
-        identity: getIdentityKey(creds),
+        identityPresent: !!getIdentityKey(creds),
         credentials: safeCreds,
-        oauthAccount,
+        oauthAccount: redactIdentity(oauthAccount),
         s1mAccessCacheForCurrentOrg: s1mAccess,
         tokenLimit: tokenLimitResolved,
         liveSessionsCount: liveSessions.length,
@@ -499,6 +552,13 @@ function buildStateDump() {
             entrypoint: workspaceSession.entrypoint,
         } : null,
         token: tokenState,
+        // Which stores were probed and what was in them. A config-dir mismatch
+        // between the extension host and the shell that ran `claude auth login`
+        // is invisible without it (#57).
+        tokenStores: (() => {
+            try { return describeStores(); } catch { return null; }
+        })(),
+        lastAuthFailure,
         usage: usageData ? {
             timestamp: usageData.timestamp,
             usagePercent: usageData.usagePercent,
@@ -580,8 +640,8 @@ function setupCredentialsMonitoring(context) {
         });
     };
 
-    // Watcher 1: ~/.claude/.credentials.json
-    const credentialsDir = path.dirname(CREDENTIALS_PATH);
+    // Watcher 1: the credentials file in whichever config dir is in force
+    const credentialsDir = path.dirname(getCredentialsPath());
     if (fs.existsSync(credentialsDir)) {
         credentialsWatcher = vscode.workspace.createFileSystemWatcher(
             new vscode.RelativePattern(credentialsDir, '.credentials.json')
@@ -594,8 +654,9 @@ function setupCredentialsMonitoring(context) {
     }
 
     // Watcher 2: ~/.claude.json (new source of truth for account identity)
-    const claudeConfigDir = path.dirname(CLAUDE_CONFIG_PATH);
-    const claudeConfigName = path.basename(CLAUDE_CONFIG_PATH);
+    const claudeConfigPath = getClaudeConfigPath();
+    const claudeConfigDir = path.dirname(claudeConfigPath);
+    const claudeConfigName = path.basename(claudeConfigPath);
     if (fs.existsSync(claudeConfigDir)) {
         claudeConfigWatcher = vscode.workspace.createFileSystemWatcher(
             new vscode.RelativePattern(claudeConfigDir, claudeConfigName)
@@ -854,7 +915,11 @@ async function activate(context) {
         vscode.commands.registerCommand(COMMANDS.FETCH_NOW, async () => {
             const { webError, handled } = await performFetch(true);
             if (webError && !handled) {
-                vscode.window.showErrorMessage(`Failed to fetch Claude usage: ${webError.message}`);
+                // An auth message already states the failure in full; prefixing
+                // it would say the same thing twice.
+                vscode.window.showErrorMessage(webError.authReason
+                    ? webError.message
+                    : `Failed to fetch Claude usage: ${webError.message}`);
             }
         })
     );
@@ -946,11 +1011,22 @@ async function activate(context) {
                 );
                 return;
             }
-            if (readToken().ok) {
+            const tok = readToken();
+            if (tok.ok) {
                 // Already have a token -- just refetch rather than re-login.
                 const { webError } = await performFetch(true);
                 if (webError) vscode.window.showErrorMessage(webError.message);
                 return;
+            }
+            // An explicit login request is still honoured against a blank
+            // store, but logging in over the top of one usually reproduces it.
+            if (tok.reason === AUTH_REASONS.TOKEN_BLANK) {
+                const pick = await vscode.window.showWarningMessage(
+                    AUTH_FAILURES.TOKEN_BLANK.lines.join(' '),
+                    'Log in anyway',
+                    'Cancel'
+                );
+                if (pick !== 'Log in anyway') return;
             }
             await beginLoginOrInstall();
         })
@@ -964,7 +1040,9 @@ async function activate(context) {
             channel.appendLine('');
             channel.appendLine('Copy everything below this line into a bug report:');
             channel.appendLine('----------------------------------------------------');
-            channel.appendLine(JSON.stringify(dump, null, 2));
+            // Scrubbed on the way out so every path in the object is covered,
+            // not just the ones a caller remembered to wrap (SECURITY.md).
+            channel.appendLine(scrubHome(JSON.stringify(dump, null, 2)));
             channel.appendLine('----------------------------------------------------');
             channel.show(true);
         })

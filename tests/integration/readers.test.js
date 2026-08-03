@@ -33,11 +33,16 @@ function loadReaders() {
 
 let tmpHome;
 let originalHome;
+let originalConfigDir;
 
 beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'claudemeter-test-'));
     originalHome = process.env.CLAUDE_CONFIG_HOME;
     process.env.CLAUDE_CONFIG_HOME = tmpHome;
+    // CLAUDE_CONFIG_DIR outranks the test hook in the resolver, so a developer
+    // who has it set would otherwise run these against their real config dir.
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    delete process.env.CLAUDE_CONFIG_DIR;
     // Ensure ~/.claude subdir exists (credentials live there)
     fs.mkdirSync(path.join(tmpHome, '.claude'), { recursive: true });
 });
@@ -47,6 +52,9 @@ afterEach(() => {
         delete process.env.CLAUDE_CONFIG_HOME;
     } else {
         process.env.CLAUDE_CONFIG_HOME = originalHome;
+    }
+    if (originalConfigDir !== undefined) {
+        process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
     }
     fs.rmSync(tmpHome, { recursive: true, force: true });
 });

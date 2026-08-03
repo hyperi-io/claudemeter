@@ -17,22 +17,14 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { getOAuthAccount } = require('./claudeConfigReader');
+const { getConfigDir } = require('./tokenSource');
 
-// Home directory is resolved per-call (not at module load) so tests can
-// override it via the CLAUDE_CONFIG_HOME env var without re-importing.
-function getHomeDir() {
-    return process.env.CLAUDE_CONFIG_HOME || os.homedir();
-}
-
+// Resolved per-call (not at module load) so the env vars are honoured without
+// re-importing. getConfigDir is the single resolver for the Claude config dir.
 function getCredentialsPath() {
-    return path.join(getHomeDir(), '.claude', '.credentials.json');
+    return path.join(getConfigDir(), '.credentials.json');
 }
-
-// Back-compat constant - snapshot at module load, still used by callers that
-// don't override CLAUDE_CONFIG_HOME. Prefer getCredentialsPath() in new code.
-const CREDENTIALS_PATH = path.join(os.homedir(), '.claude', '.credentials.json');
 
 // Read the raw .credentials.json oauth blob. Returns null if missing/unreadable.
 function readCredentialsRaw() {
@@ -149,7 +141,6 @@ function formatRateLimitTier(tier) {
 }
 
 module.exports = {
-    CREDENTIALS_PATH,
     getCredentialsPath,
     readCredentials,
     readCredentialsRaw,

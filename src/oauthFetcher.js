@@ -35,7 +35,8 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
 const { processApiResponse } = require('./apiSchema');
-const { readToken } = require('./tokenSource');
+const { readToken, readAllTokens } = require('./tokenSource');
+const { AUTH_REASONS, classifyRejection } = require('./authFailure');
 
 const API_BASE = 'https://api.anthropic.com';
 const USAGE_URL = `${API_BASE}/api/oauth/usage`;
@@ -168,15 +169,18 @@ async function fetchWithToken(tok) {
     return result;
 }
 
-// End-to-end. Throws typed errors the caller maps to UX:
-//   NO_OAUTH_TOKEN  - nothing usable in the store (prompt `claude auth login`)
-//   AUTH_OVERRIDE   - user is on API key / Bedrock / Vertex (no sub usage)
-//   TOKEN_REJECTED  - a valid-looking token the server refused twice
+// End-to-end. Throws typed errors the caller maps to UX. `message` keeps the
+// coarse NO_OAUTH_TOKEN / AUTH_OVERRIDE contract. `authReason` names which
+// failure it was and `authContext` carries what to say about it (see
+// authFailure.js); each reason has a different remedy (#57).
 async function fetchUsageData() {
-    let tok = readToken();
+    const tok = readToken();
     if (!tok.ok) {
         const err = new Error(tok.reason === 'ENV_OVERRIDE' ? 'AUTH_OVERRIDE' : 'NO_OAUTH_TOKEN');
-        err.detail = tok.detail;
+        err.authReason = tok.reason;
+        err.authContext = tok.reason === 'ENV_OVERRIDE'
+            ? { override: tok.detail }
+            : { lookedIn: tok.detail };
         // Auth-absence, not a transient failure: the usage cache must NOT
         // serve stale subscription numbers over this - the user is logged
         // out / on an API key and should see that, not yesterday's usage.
@@ -187,34 +191,72 @@ async function fetchUsageData() {
     try {
         return await fetchWithToken(tok);
     } catch (e) {
-        // A rejected token, OR ANY failure while the stored token is already
-        // known-expired, is an auth problem. A 429 / timeout on a VALID token
-        // stays transient so the shared usage cache can serve last-known usage
-        // rather than dropping to the not-logged-in state.
-        if (e.message !== 'TOKEN_REJECTED' && !tok.expired) throw e;
+        const rejected = e.message === 'TOKEN_REJECTED';
+        // A 429 / timeout on a valid token stays transient so the shared usage
+        // cache can serve last-known usage rather than dropping to the
+        // not-logged-in state.
+        if (!rejected && !tok.expired) throw e;
 
-        // Claude Code may have just rotated the token -- read fresh ONCE
-        // (bypassing the Keychain TTL) and retry with whatever is stored now.
-        // For an expired FILE token this also picks up a valid KEYCHAIN token
-        // (issue #50: the native install writes the Keychain, and a stale npm
-        // ~/.claude/.credentials.json was shadowing it).
-        const fresh = readToken({ fresh: true });
-        if (fresh.ok && !fresh.expired && fresh.token !== tok.token) {
-            return fetchWithToken(fresh);
+        // Only a rejection justifies spending more requests. Retrying an
+        // endpoint that just rate-limited us would amplify the very failure.
+        if (rejected) {
+            const retried = await retryOtherStores(tok);
+            if (retried) return retried;
         }
-        // Genuinely stale -> surface a clear re-login signal, NOT a raw
-        // API_ERROR_429 (issue #50 reported an expired token shown as a rate
-        // limit, which sent users down a dead end).
+
         const err = new Error('NO_OAUTH_TOKEN');
-        err.detail = tok.expired ? 'token expired' : 'token rejected';
-        err.bypassCache = true;
+        if (rejected) {
+            err.authReason = classifyRejection(e.status, tok.expired);
+            err.httpStatus = e.status || null;
+            err.authContext = { cause: e.status ? `HTTP ${e.status}` : 'token rejected' };
+            err.bypassCache = true;
+        } else {
+            // Expired-looking token plus a transient failure. Nothing was
+            // rejected, so the expiry stays advisory: name it, but leave
+            // bypassCache off so the cache can keep the gauges up.
+            err.authReason = AUTH_REASONS.TOKEN_EXPIRED;
+            err.authContext = { cause: e.message };
+        }
         throw err;
     }
+}
+
+// Claude Code may have just rotated the token, so re-read both stores fresh
+// (bypassing the Keychain TTL) and try each DISTINCT token that is not the one
+// just refused. Covering both stores stops a rejected token in the preferred
+// one dead-ending while the other holds a good token (#50). Returns the usage
+// result, or null when no candidate worked.
+async function retryOtherStores(refused) {
+    for (const cand of pickRetryCandidates(refused.token, readAllTokens({ fresh: true }))) {
+        try {
+            return await fetchWithToken(cand);
+        } catch {
+            // That store is no better -- fall through to the next.
+        }
+    }
+    return null;
+}
+
+// Each DISTINCT non-expired stored token that is not the one just refused,
+// Keychain first. De-duplicating by token value matters because both stores
+// commonly hold the same token, and retrying it would spend a second round of
+// requests to learn what the first already proved.
+function pickRetryCandidates(refusedToken, stores) {
+    const seen = new Set([refusedToken]);
+    const candidates = [];
+    for (const cand of [stores.keychain, stores.file]) {
+        if (!cand || cand.expired || seen.has(cand.token)) continue;
+        seen.add(cand.token);
+        candidates.push(cand);
+    }
+    return candidates;
 }
 
 module.exports = {
     fetchUsageData,
     fetchWithToken,
+    retryOtherStores,
+    pickRetryCandidates,
     mapAccountInfo,
     deriveCreditsArgs,
     USAGE_URL,

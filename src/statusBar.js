@@ -24,6 +24,7 @@ const {
 const { composeTooltip } = require('./tooltipComposer');
 const { gaugeLabels, scopedShortLabel, resolveGauges, mergeDefinitions, isGenericPanel } = require('./gauges');
 const { composeClaudeLabel } = require('./claudeLabelComposer');
+const { describeAuthFailure } = require('./authFailure');
 const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = require('./happyHour');
 const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolver');
 const simulator = require('./simulator');
@@ -1223,7 +1224,32 @@ function stopSpinner(webError = null, tokenError = null) {
     const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
     const isCompactMode = displayMode === DISPLAY_MODES.COMPACT;
 
-    if (webError && tokenError) {
+    // Checked before the combined branch: tokenError is set in every window
+    // without a live Claude Code session, so the combined wording would
+    // otherwise bury the auth message in the common case.
+    const authFailure = webError && webError.authReason
+        ? describeAuthFailure(webError.authReason, webError.authContext)
+        : null;
+
+    if (authFailure) {
+        const errorLines = [`**${authFailure.title}**`, '', ...authFailure.lines];
+        if (tokenError) {
+            errorLines.push('', 'No Claude Code session in this window, so no context gauge either.');
+        }
+        errorLines.push('', authFailure.canRelogin
+            ? '• **Click to log into Claude Code**'
+            : '• Run "Claudemeter: Show Debug Output" for details');
+
+        setAllTooltips(makeErrorTooltip(errorLines));
+
+        if (isCompactMode && statusBarItems.compact) {
+            statusBarItems.compact.text = `${statusBarItems.compact.text || getLabelTextWithStatus()} ⚠`;
+            statusBarItems.compact.color = new vscode.ThemeColor('charts.yellow');
+        } else if (statusBarItems.label) {
+            statusBarItems.label.text = `${getLabelTextWithStatus()} ⚠`;
+            statusBarItems.label.color = new vscode.ThemeColor('charts.yellow');
+        }
+    } else if (webError && tokenError) {
         const errorLines = [
             '**Complete Fetch Failed**',
             '',
@@ -1251,42 +1277,20 @@ function stopSpinner(webError = null, tokenError = null) {
     } else if (webError) {
         // tokenOnlyMode is NOT handled here: performFetch short-circuits before
         // any web fetch when it's on, so webError is never set in that mode.
-        const isNotLoggedIn = webError.message.includes('Not logged into Claude Code');
-        const isAuthOverride = webError.message.includes('subscription usage unavailable');
-
-        let errorLines;
-        if (isNotLoggedIn) {
-            errorLines = [
-                '**Not logged into Claude Code**',
-                '',
-                'Claudemeter reads Claude Code\'s login to show your usage.',
-                '',
-                '• **Click to log into Claude Code**',
-            ];
-        } else if (isAuthOverride) {
-            errorLines = [
-                '**Subscription usage unavailable**',
-                '',
-                webError.message,
-                '',
-                'The local Tk context gauge still works.',
-            ];
-        } else {
-            errorLines = [
-                '**Web Fetch Failed**',
-                '',
-                `Error: ${webError.message}`,
-                '',
-                '**Debug Info**',
-                `Time: ${new Date().toLocaleString()}`,
-                '',
-                'Token data may still be available',
-                '',
-                '**Actions**',
-                '• Click to retry',
-                '• Run "Claudemeter: Show Debug Output" for details',
-            ];
-        }
+        const errorLines = [
+            '**Web Fetch Failed**',
+            '',
+            `Error: ${webError.message}`,
+            '',
+            '**Debug Info**',
+            `Time: ${new Date().toLocaleString()}`,
+            '',
+            'Token data may still be available',
+            '',
+            '**Actions**',
+            '• Click to retry',
+            '• Run "Claudemeter: Show Debug Output" for details',
+        ];
         const errorTooltip = makeErrorTooltip(errorLines);
 
         setAllTooltips(errorTooltip);

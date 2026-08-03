@@ -21,24 +21,28 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// Home directory is resolved per-call (not at module load) so tests can
-// override it via the CLAUDE_CONFIG_HOME env var without re-importing.
+const { getConfigDir } = require('./tokenSource');
+
+// Home directory is resolved per-call (not at module load) so the test hook is
+// honoured without re-importing.
 function getHomeDir() {
     return process.env.CLAUDE_CONFIG_HOME || os.homedir();
 }
 
+// Mirrors Claude Code's own resolution: a `.config.json` inside the config dir
+// wins where it exists, else `.claude.json` under CLAUDE_CONFIG_DIR, else under
+// the home dir. The fallback's base is the raw env var, NOT the config dir, so
+// the default case stays at ~/.claude.json rather than ~/.claude/.claude.json.
 function getClaudeConfigPath() {
-    return path.join(getHomeDir(), '.claude.json');
+    const modern = path.join(getConfigDir(), '.config.json');
+    if (fs.existsSync(modern)) return modern;
+    return path.join(process.env.CLAUDE_CONFIG_DIR || getHomeDir(), '.claude.json');
 }
 
+// Sessions live inside the config dir, so they move with it.
 function getClaudeSessionsDir() {
-    return path.join(getHomeDir(), '.claude', 'sessions');
+    return path.join(getConfigDir(), 'sessions');
 }
-
-// Back-compat constants - snapshot at module load, still useful for callers
-// that don't override CLAUDE_CONFIG_HOME. Prefer the getters above in new code.
-const CLAUDE_CONFIG_PATH = path.join(os.homedir(), '.claude.json');
-const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), '.claude', 'sessions');
 
 // Read and parse ~/.claude.json.
 // Returns null on any read/parse error - callers must handle the null case.
@@ -189,8 +193,6 @@ function getClaudeConfigMtime() {
 }
 
 module.exports = {
-    CLAUDE_CONFIG_PATH,
-    CLAUDE_SESSIONS_DIR,
     getClaudeConfigPath,
     getClaudeSessionsDir,
     readClaudeConfig,
