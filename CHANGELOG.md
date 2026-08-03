@@ -1,3 +1,11 @@
+## [2.5.13](https://github.com/hyperi-io/claudemeter/compare/v2.5.12...v2.5.13) (2026-08-03)
+
+
+### Bug Fixes
+
+* **deps:** raise the brace-expansion override past GHSA-mh99-v99m-4gvg ([158f43f](https://github.com/hyperi-io/claudemeter/commit/158f43fd53740b2d73727a058a6f99d9b28486dc))
+* resolve the context window from the model, and draw the per-model weekly caps ([040d69c](https://github.com/hyperi-io/claudemeter/commit/040d69cbb70f8e6cc7a9455ba58707c1cc606c5e)), closes [#55](https://github.com/hyperi-io/claudemeter/issues/55) [#56](https://github.com/hyperi-io/claudemeter/issues/56) [#55](https://github.com/hyperi-io/claudemeter/issues/55) [#56](https://github.com/hyperi-io/claudemeter/issues/56)
+
 ## [2.5.12](https://github.com/hyperi-io/claudemeter/compare/v2.5.11...v2.5.12) (2026-07-30)
 
 
