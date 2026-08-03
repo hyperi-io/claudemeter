@@ -22,6 +22,7 @@ const {
     DISPLAY_DEFAULT,
 } = require('./statusBarFormatters');
 const { composeTooltip } = require('./tooltipComposer');
+const { gaugeLabels, scopedShortLabel, resolveGauges, mergeDefinitions, isGenericPanel } = require('./gauges');
 const { composeClaudeLabel } = require('./claudeLabelComposer');
 const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = require('./happyHour');
 const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolver');
@@ -312,8 +313,7 @@ function getServiceStatusBackground() {
 // the whole cluster lights up red/yellow, not just the leftmost label.
 // Items that own transient state (spinner, happy-hour panel) are skipped.
 function setAllBackgrounds(background) {
-    Object.entries(statusBarItems).forEach(([key, item]) => {
-        if (!item) return;
+    forEachPanel((item, key) => {
         if (key === 'spinner' || key === 'happyHour') return;
         item.backgroundColor = background;
     });
@@ -368,14 +368,19 @@ const DISPLAY_MODES = {
 // without needing our own setInterval.
 let isSpinnerActive = false;
 
+// Status-bar slots for model-scoped weekly limits (the Fable cap and whatever
+// Anthropic scopes next). The payload returns one today; two slots leave room
+// for a second without re-registering items, and the tooltip lists every
+// entry, so a third is reported rather than dropped silently.
+const SCOPED_SLOTS = 2;
+
 let statusBarItems = {
     label: null,
     spinner: null,       // transient - shown only while a fetch is in flight
     happyHour: null,     // transient - shown only during off-peak
     session: null,
     weekly: null,
-    sonnet: null,
-    opus: null,
+    scoped: [],          // SCOPED_SLOTS items, each shown only above 0%
     tokens: null,
     credits: null,
     compact: null
@@ -384,8 +389,7 @@ let statusBarItems = {
 let lastDisplayedValues = {
     sessionText: null,
     weeklyText: null,
-    sonnetText: null,
-    opusText: null,
+    scopedTexts: [],
     tokensText: null,
     creditsText: null,
     compactText: null
@@ -410,6 +414,31 @@ function getIconAndColor(percent, warningThreshold = 80, errorThreshold = 90) {
     return { icon: '', color: undefined, level: 'normal' };
 }
 
+// Whether a gauge draws a threshold glyph at all. Off by default: colour
+// already carries the tier, and a row of triangles reads as breakage rather
+// than as usage. `statusBar.thresholdIcons` overrides the global per gauge,
+// keyed by gauge id or by the model name a scoped cap reports.
+// Cascade, most specific first: the per-gauge map, then the global setting
+// (or the simulator standing in for it), then off.
+//
+// `gauge` may be several names, most specific first - a scoped cap is looked
+// up by its model name before the generic 'scoped'.
+function thresholdIconEnabled(gauge) {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    const perGauge = config.get('statusBar.thresholdIcons', {}) || {};
+    const names = (Array.isArray(gauge) ? gauge : [gauge]).filter(n => typeof n === 'string');
+    for (const name of names) {
+        for (const [key, value] of Object.entries(perGauge)) {
+            if (key.toLowerCase() === name.toLowerCase() && typeof value === 'boolean') {
+                return value;
+            }
+        }
+    }
+    const simulated = simulator.getThresholdIcons();
+    if (simulated !== null) return simulated;
+    return config.get('statusBar.showThresholdIcons', false);
+}
+
 // Pick the prefix glyph for a usage gauge. The error-cross is
 // reserved for the Claude platform-status panel where it really does
 // mean "something failed". Usage gauges (Se/Wk) use the warning
@@ -419,6 +448,7 @@ function getIconAndColor(percent, warningThreshold = 80, errorThreshold = 90) {
 function gaugeIconForLevel(level, gauge) {
     if (getColorMode() === 'basic') return '';
     if (gauge === 'tokens') return '';
+    if (!thresholdIconEnabled(gauge)) return '';
     if (level === 'error' || level === 'warning') return '$(warning)';
     return '';
 }
@@ -445,11 +475,43 @@ function tokenStatusFromLevel(level) {
     return { icon: '', color: colour.themeColor, level };
 }
 
+// Scoped weekly limits for display, simulator override first.
+//
+// The user's gauge definitions are applied here rather than in the fetch path:
+// the fetch result is shared across windows through the on-disk cache, and it
+// stays free of one user's overrides. Re-resolving from the stored raw payload
+// lets a definition surface a meter the fetch did not know to look for.
+function getScopedWeekly(usageData) {
+    const simulated = simulator.getScopedWeekly();
+    if (simulated !== null) return simulated;
+
+    const userDefinitions = vscode.workspace.getConfiguration(CONFIG_NAMESPACE)
+        .get('gauges.definitions', {});
+    if (usageData?.rawData && userDefinitions && Object.keys(userDefinitions).length > 0) {
+        return resolveGauges(usageData.rawData, { definitions: mergeDefinitions(userDefinitions) })
+            .filter(g => isGenericPanel(g) && typeof g.percent === 'number');
+    }
+
+    return Array.isArray(usageData?.scopedWeekly) ? usageData.scopedWeekly : [];
+}
+
+// User label overrides, keyed by gauge id for the fixed gauges and by the
+// payload's model name for the scoped ones.
+function getGaugeLabelOverrides() {
+    return vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get('gauges.labels', {}) || {};
+}
+
+function hideScopedItems() {
+    statusBarItems.scoped.forEach((item, i) => {
+        item.hide();
+        lastDisplayedValues.scopedTexts[i] = null;
+    });
+}
+
 function hideAllMetricItems() {
     statusBarItems.session.hide();
     statusBarItems.weekly.hide();
-    statusBarItems.sonnet.hide();
-    statusBarItems.opus.hide();
+    hideScopedItems();
     statusBarItems.tokens.hide();
     statusBarItems.credits.hide();
     statusBarItems.compact.hide();
@@ -459,10 +521,22 @@ function hideAllMetricItems() {
 // Transient panels that own their own tooltip are excluded: spinner
 // ("Checking Claude...") and happyHour (off-peak countdown).
 function setAllTooltips(tooltip) {
-    Object.entries(statusBarItems).forEach(([key, item]) => {
-        if (!item) return;
+    forEachPanel((item, key) => {
         if (key === 'spinner' || key === 'happyHour') return;
         item.tooltip = tooltip;
+    });
+}
+
+// Walk every registered panel, flattening the scoped slot array so callers
+// treat one item and a group of items the same way.
+function forEachPanel(fn) {
+    Object.entries(statusBarItems).forEach(([key, value]) => {
+        if (!value) return;
+        if (Array.isArray(value)) {
+            value.forEach(item => item && fn(item, key));
+            return;
+        }
+        fn(value, key);
     });
 }
 
@@ -521,24 +595,27 @@ function renderHappyHourPanel() {
     item.show();
 }
 
-function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo = null) {
+function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo = null, scopedEntries = []) {
     statusBarItems.label.hide();
     statusBarItems.session.hide();
     statusBarItems.weekly.hide();
-    statusBarItems.sonnet.hide();
-    statusBarItems.opus.hide();
+    hideScopedItems();
     statusBarItems.tokens.hide();
     statusBarItems.credits.hide();
     lastDisplayedValues.sessionText = null;
     lastDisplayedValues.weeklyText = null;
     lastDisplayedValues.tokensText = null;
 
+    const labels = getGaugeLabelOverrides();
     const parts = [getLabelTextWithStatus()];
     if (sessionPercent !== null) {
-        parts.push(`S${formatPercent(sessionPercent, true)}`);
+        parts.push(`${gaugeLabels('session', labels).compact}${formatPercent(sessionPercent, true)}`);
     }
     if (weeklyPercent !== null) {
-        parts.push(`Wk${formatPercent(weeklyPercent, true)}`);
+        parts.push(`${gaugeLabels('weekly', labels).compact}${formatPercent(weeklyPercent, true)}`);
+    }
+    for (const entry of scopedEntries) {
+        parts.push(`${scopedShortLabel(entry.label, labels)}${formatPercent(entry.percent, true)}`);
     }
     // Tk rendering uses the new tokensDisplay setting to choose between
     // bar/percent, k-count, or both. In compact mode the 'bar' variant
@@ -553,7 +630,7 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
             knownLimit: tokensInfo?.knownLimit ?? false,
         }));
     } else {
-        parts.push('Tk-');
+        parts.push(`${gaugeLabels('tokens', labels).compact}-`);
     }
 
     const compactText = parts.join(' ');
@@ -572,14 +649,16 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
         }
     }
 
-    // Compact aggregate icon mirrors the per-gauge rule: only Se/Wk
-    // drive the prefix, and they always use the warning triangle -
-    // never the error cross. Tokens are signalled by colour only.
-    let icon = '';
+    // Compact aggregate icon mirrors the per-gauge rule: only Se/Wk drive the
+    // prefix, and they always use the warning triangle - never the error
+    // cross. Tokens are signalled by colour only. It follows the same
+    // threshold-icon setting, taking whichever of the two gauges enables it.
     const sessionWeeklyLevels = [sessionStatus.level, weeklyStatus.level];
-    if (sessionWeeklyLevels.includes('error') || sessionWeeklyLevels.includes('warning')) {
-        icon = '$(warning) ';
-    }
+    const compactIconOn = gaugeIconForLevel('warning', 'session') || gaugeIconForLevel('warning', 'weekly');
+    const icon = (compactIconOn
+        && (sessionWeeklyLevels.includes('error') || sessionWeeklyLevels.includes('warning')))
+        ? '$(warning) '
+        : '';
 
     statusBarItems.compact.color = compactColor;
     if (compactText !== lastDisplayedValues.compactText) {
@@ -600,11 +679,9 @@ function renderMultiPanelMode(
     weeklyStatus,
     tokenPercent,
     tokenStatus,
-    showSonnet,
-    showOpus,
+    visibleScoped,
     showCredits,
-    sonnetThresholds,
-    opusThresholds,
+    scopedThresholds,
     creditsThresholds,
     tokensInfo = null
 ) {
@@ -614,15 +691,18 @@ function renderMultiPanelMode(
 
     const isMinimal = displayMode === DISPLAY_MODES.MINIMAL;
 
+    const labels = getGaugeLabelOverrides();
+
     let newSessionText = null;
     let sessionVisible = false;
     if (sessionPercent !== null) {
         const sessionDisplay = formatPercent(sessionPercent);
         const sessionIcon = gaugeIconForLevel(sessionStatus.level, 'session');
+        const sessionLabel = gaugeLabels('session', labels).short;
         if (isMinimal) {
-            newSessionText = `${sessionIcon ? sessionIcon + ' ' : ''}Se ${sessionDisplay}`;
+            newSessionText = `${sessionIcon ? sessionIcon + ' ' : ''}${sessionLabel} ${sessionDisplay}`;
         } else {
-            newSessionText = `${sessionIcon ? sessionIcon + ' ' : ''}Se ${sessionDisplay} $(history) ${sessionResetTime}`;
+            newSessionText = `${sessionIcon ? sessionIcon + ' ' : ''}${sessionLabel} ${sessionDisplay} $(history) ${sessionResetTime}`;
         }
         sessionVisible = true;
     }
@@ -647,10 +727,11 @@ function renderMultiPanelMode(
     if (weeklyPercent !== null) {
         const weeklyDisplay = formatPercent(weeklyPercent);
         const weeklyIcon = gaugeIconForLevel(weeklyStatus.level, 'weekly');
+        const weeklyLabel = gaugeLabels('weekly', labels).short;
         if (isMinimal) {
-            newWeeklyText = `${weeklyIcon ? weeklyIcon + ' ' : ''}Wk ${weeklyDisplay}`;
+            newWeeklyText = `${weeklyIcon ? weeklyIcon + ' ' : ''}${weeklyLabel} ${weeklyDisplay}`;
         } else {
-            newWeeklyText = `${weeklyIcon ? weeklyIcon + ' ' : ''}Wk ${weeklyDisplay} $(history) ${weeklyResetTime}`;
+            newWeeklyText = `${weeklyIcon ? weeklyIcon + ' ' : ''}${weeklyLabel} ${weeklyDisplay} $(history) ${weeklyResetTime}`;
         }
         weeklyVisible = true;
     }
@@ -681,10 +762,10 @@ function renderMultiPanelMode(
         });
         // Tk deliberately has no icon at any level - the colour alone
         // signals warning/error. See gaugeIconForLevel for rationale.
-        newTokensText = `Tk ${tokenDisplay}`;
+        newTokensText = `${gaugeLabels('tokens', labels).short} ${tokenDisplay}`;
         tokensVisible = true;
     } else {
-        newTokensText = 'Tk -';
+        newTokensText = `${gaugeLabels('tokens', labels).short} -`;
         tokensVisible = true;
     }
 
@@ -705,54 +786,30 @@ function renderMultiPanelMode(
         lastDisplayedValues.tokensText = newTokensText;
     }
 
-    // Simulator overrides for the per-model gauges and credits panel.
-    // Each override only changes the percent; the rest of the rendering
-    // (currency, used count) stays drawn from real data so the visual
-    // shape matches production. Set null to fall through to real values.
-    const simSonnet = simulator.getSonnetPercent();
-    const simOpus = simulator.getOpusPercent();
+    // Simulator overrides for the scoped gauges and credits panel. Each
+    // override only changes the percent; the rest of the rendering (currency,
+    // used count) stays drawn from real data so the visual shape matches
+    // production. Set null to fall through to real values.
     const simCredits = simulator.getCreditsPercent();
 
-    const effectiveSonnetPercent = simSonnet !== null
-        ? simSonnet
-        : (usageData?.usagePercentSonnet ?? null);
-    const effectiveOpusPercent = simOpus !== null
-        ? simOpus
-        : (usageData?.usagePercentOpus ?? null);
-
-    let newSonnetText;
-    if (showSonnet && effectiveSonnetPercent !== null && effectiveSonnetPercent !== undefined) {
-        const sonnetStatus = getIconAndColor(effectiveSonnetPercent, sonnetThresholds.warning, sonnetThresholds.error);
-        const sonnetDisplay = formatPercent(effectiveSonnetPercent);
-        newSonnetText = `${sonnetStatus.icon ? sonnetStatus.icon + ' ' : ''}${sonnetDisplay}S`;
-
-        statusBarItems.sonnet.color = gaugeColorOrUndefined(sonnetStatus);
-        if (newSonnetText !== lastDisplayedValues.sonnetText) {
-            statusBarItems.sonnet.text = newSonnetText;
-            statusBarItems.sonnet.show();
-            lastDisplayedValues.sonnetText = newSonnetText;
+    statusBarItems.scoped.forEach((item, i) => {
+        const entry = visibleScoped[i];
+        if (!entry) {
+            item.hide();
+            lastDisplayedValues.scopedTexts[i] = null;
+            return;
         }
-    } else {
-        statusBarItems.sonnet.hide();
-        lastDisplayedValues.sonnetText = null;
-    }
-
-    let newOpusText;
-    if (showOpus && effectiveOpusPercent !== null && effectiveOpusPercent !== undefined) {
-        const opusStatus = getIconAndColor(effectiveOpusPercent, opusThresholds.warning, opusThresholds.error);
-        const opusDisplay = formatPercent(effectiveOpusPercent);
-        newOpusText = `${opusStatus.icon ? opusStatus.icon + ' ' : ''}${opusDisplay}O`;
-
-        statusBarItems.opus.color = gaugeColorOrUndefined(opusStatus);
-        if (newOpusText !== lastDisplayedValues.opusText) {
-            statusBarItems.opus.text = newOpusText;
-            statusBarItems.opus.show();
-            lastDisplayedValues.opusText = newOpusText;
+        const status = getIconAndColor(entry.percent, scopedThresholds.warning, scopedThresholds.error);
+        const icon = gaugeIconForLevel(status.level, [entry.label, 'scoped']);
+        // Label leads the value, as it does on Se / Wk / Tk.
+        const text = `${icon ? icon + ' ' : ''}${scopedShortLabel(entry.label, labels)} ${formatPercent(entry.percent)}`;
+        item.color = gaugeColorOrUndefined(status);
+        if (text !== lastDisplayedValues.scopedTexts[i]) {
+            item.text = text;
+            item.show();
+            lastDisplayedValues.scopedTexts[i] = text;
         }
-    } else {
-        statusBarItems.opus.hide();
-        lastDisplayedValues.opusText = null;
-    }
+    });
 
     // Credits override only meaningful when real monthlyCredits exists -
     // the override changes the percent for tier-colour testing but keeps
@@ -771,7 +828,8 @@ function renderMultiPanelMode(
             ? `${(credits.used / 1000).toFixed(1)}K`
             : Math.round(credits.used);
         const creditsDisplay = formatPercent(credits.percent);
-        newCreditsText = `${creditsStatus.icon ? creditsStatus.icon + ' ' : ''}${currencySymbol}${usedDisplay}/${creditsDisplay}`;
+        const creditsIcon = gaugeIconForLevel(creditsStatus.level, 'credits');
+        newCreditsText = `${creditsIcon ? creditsIcon + ' ' : ''}${currencySymbol}${usedDisplay}/${creditsDisplay}`;
 
         statusBarItems.credits.color = gaugeColorOrUndefined(creditsStatus);
         if (newCreditsText !== lastDisplayedValues.creditsText) {
@@ -848,19 +906,17 @@ function createStatusBarItem(context) {
     statusBarItems.weekly.command = COMMANDS.FETCH_NOW;
     context.subscriptions.push(statusBarItems.weekly);
 
-    statusBarItems.sonnet = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.5
-    );
-    statusBarItems.sonnet.command = COMMANDS.FETCH_NOW;
-    context.subscriptions.push(statusBarItems.sonnet);
-
-    statusBarItems.opus = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.4
-    );
-    statusBarItems.opus.command = COMMANDS.FETCH_NOW;
-    context.subscriptions.push(statusBarItems.opus);
+    // Scoped weekly slots sit between Weekly and Tokens.
+    statusBarItems.scoped = [];
+    for (let i = 0; i < SCOPED_SLOTS; i++) {
+        const item = vscode.window.createStatusBarItem(
+            alignment,
+            basePriority + 0.5 - i * 0.05
+        );
+        item.command = COMMANDS.FETCH_NOW;
+        statusBarItems.scoped.push(item);
+        context.subscriptions.push(item);
+    }
 
     statusBarItems.credits = vscode.window.createStatusBarItem(
         alignment,
@@ -893,8 +949,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
-    const showSonnet = config.get('statusBar.showSonnet', false);
-    const showOpus = config.get('statusBar.showOpus', false);
+    const showScopedWeekly = config.get('statusBar.showScopedWeekly', true);
     const showCredits = config.get('statusBar.showCredits', false);
 
     const globalWarning = config.get('thresholds.warning', 80);
@@ -914,8 +969,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     const sessionThresholds = getThresholds('session');
     const weeklyThresholds = getThresholds('weekly');
-    const sonnetThresholds = getThresholds('sonnet');
-    const opusThresholds = getThresholds('opus');
+    const scopedThresholds = getThresholds('scoped');
     const creditsThresholds = getThresholds('credits');
 
     const tokenOnlyMode = config.get('tokenOnlyMode', false);
@@ -1121,8 +1175,15 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     markdown.supportThemeIcons = true;  // Render $(codicon-name) glyphs
     setAllTooltips(markdown);
 
+    // A scoped limit is drawn only once it registers above 0%: an account that
+    // has never touched the model reports 0 and would otherwise carry a
+    // permanent dead gauge.
+    const visibleScoped = showScopedWeekly
+        ? getScopedWeekly(usageData).filter(e => typeof e.percent === 'number' && e.percent > 0)
+        : [];
+
     if (displayMode === DISPLAY_MODES.COMPACT) {
-        renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo);
+        renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo, visibleScoped);
     } else {
         renderMultiPanelMode(
             displayMode,
@@ -1135,11 +1196,9 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             weeklyStatus,
             tokenPercent,
             tokenStatus,
-            showSonnet,
-            showOpus,
+            visibleScoped.slice(0, SCOPED_SLOTS),
             showCredits,
-            sonnetThresholds,
-            opusThresholds,
+            scopedThresholds,
             creditsThresholds,
             tokensInfo
         );

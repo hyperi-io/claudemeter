@@ -177,7 +177,9 @@ describe('processApiResponse', () => {
 
         expect(result.usagePercent).toBe(16);
         expect(result.usagePercentWeek).toBe(13);
-        expect(result.usagePercentSonnet).toBe(0);
+        expect(result.scopedWeekly).toEqual([
+            expect.objectContaining({ label: 'Sonnet', percent: 0 }),
+        ]);
         expect(result.accountInfo).toEqual(accountInfo);
         expect(result.timestamp).toBeInstanceOf(Date);
         expect(result.schemaVersion).toBe('2.0');

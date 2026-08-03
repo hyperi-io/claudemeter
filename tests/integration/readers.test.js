@@ -98,6 +98,7 @@ describe('claudeConfigReader.getOAuthAccount', () => {
             organizationType: 'claude_max',
             organizationRateLimitTier: 'default_claude_max_20x',
             billingType: 'personal',
+            hasExtraUsageEnabled: null,
             hasAvailableSubscription: true,
             hasOpusPlanDefault: true,
         });

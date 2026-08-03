@@ -10,7 +10,8 @@
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
-// Usage payload: five_hour / seven_day / seven_day_{opus,sonnet} / extra_usage
+// Usage payload: five_hour / seven_day / extra_usage, plus the legacy
+// seven_day_{opus,sonnet} buckets that normaliseScopedWeekly falls back to.
 const USAGE_API_SCHEMA = {
     fiveHour: {
         utilization: { path: 'five_hour.utilization', type: 'percent', default: 0 },
@@ -48,6 +49,8 @@ const OVERAGE_API_SCHEMA = {
 // here makes this helper safe to reuse.
 const PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+const { resolveGauges, isGenericPanel } = require('./gauges');
+
 // Traverse object by dot-notation path (e.g. "five_hour.utilization")
 function getNestedValue(obj, path, defaultValue = null) {
     if (!obj || !path) return defaultValue;
@@ -83,6 +86,44 @@ function extractFromSchema(response, schema) {
     }
 
     return result;
+}
+
+// The scoped weekly gauges, resolved through the gauge registry so a meter
+// Anthropic adds is a descriptor rather than a new field mapping (#56).
+//
+// The named `seven_day_opus` / `seven_day_sonnet` fields are null on current
+// accounts, so they serve only as a fallback for payloads predating `limits[]`.
+function normaliseScopedWeekly(gauges, legacy) {
+    const scoped = gauges
+        .filter(g => isGenericPanel(g) && typeof g.percent === 'number')
+        .map(g => ({
+            key: g.key,
+            label: g.label,
+            percent: g.percent,
+            resetsAt: g.resetsAt,
+            severity: g.severity,
+            modelId: g.modelId,
+            kind: g.kind,
+            group: g.group,
+        }));
+
+    if (scoped.length > 0) return scoped;
+
+    return [
+        { label: 'Sonnet', ...(legacy?.sevenDaySonnet || {}) },
+        { label: 'Opus', ...(legacy?.sevenDayOpus || {}) },
+    ]
+        .filter(e => typeof e.utilization === 'number')
+        .map(e => ({
+            key: `scoped:${e.label.toLowerCase()}`,
+            label: e.label,
+            percent: e.utilization,
+            resetsAt: e.resetsAt || null,
+            severity: null,
+            modelId: null,
+            kind: 'weekly_scoped',
+            group: 'weekly',
+        }));
 }
 
 // Convert cents to dollars and calculate percentage
@@ -155,21 +196,26 @@ function calculateResetTime(isoTimestamp) {
     }
 }
 
-// Build standardised usage response from raw API data
-function processApiResponse(apiResponse, creditsData, overageData, accountInfo) {
+// Build standardised usage response from raw API data.
+//
+// `definitions` is the merged gauge registry; callers with user overrides pass
+// theirs, and the built-in table is used otherwise.
+function processApiResponse(apiResponse, creditsData, overageData, accountInfo, definitions) {
     const data = extractFromSchema(apiResponse, USAGE_API_SCHEMA);
     const monthlyCredits = processOverageData(overageData);
     const prepaidCredits = processPrepaidData(creditsData);
 
+    const gauges = resolveGauges(apiResponse, { definitions });
+    const byKey = key => gauges.find(g => g.key === key) || { percent: null, resetsAt: null };
+    const session = byKey('session');
+    const weekly = byKey('weekly');
+
     return {
-        usagePercent: data.fiveHour.utilization,
-        resetTime: calculateResetTime(data.fiveHour.resetsAt),
-        usagePercentWeek: data.sevenDay.utilization,
-        resetTimeWeek: calculateResetTime(data.sevenDay.resetsAt),
-        usagePercentSonnet: data.sevenDaySonnet.utilization,
-        resetTimeSonnet: calculateResetTime(data.sevenDaySonnet.resetsAt),
-        usagePercentOpus: data.sevenDayOpus.utilization,
-        resetTimeOpus: calculateResetTime(data.sevenDayOpus.resetsAt),
+        usagePercent: session.percent ?? 0,
+        resetTime: calculateResetTime(session.resetsAt),
+        usagePercentWeek: weekly.percent ?? 0,
+        resetTimeWeek: calculateResetTime(weekly.resetsAt),
+        scopedWeekly: normaliseScopedWeekly(gauges, data),
         extraUsage: data.extraUsage.value,
         prepaidCredits: prepaidCredits,
         monthlyCredits: monthlyCredits,
@@ -193,6 +239,7 @@ module.exports = {
     OVERAGE_API_SCHEMA,
     getNestedValue,
     extractFromSchema,
+    normaliseScopedWeekly,
     processOverageData,
     processPrepaidData,
     calculateResetTime,

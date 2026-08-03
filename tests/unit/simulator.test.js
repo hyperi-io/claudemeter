@@ -9,8 +9,10 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         expect(sim.getTokenUsed()).toBe(null);
         expect(sim.getSessionPercent()).toBe(null);
         expect(sim.getWeeklyPercent()).toBe(null);
-        expect(sim.getSonnetPercent()).toBe(null);
-        expect(sim.getOpusPercent()).toBe(null);
+        expect(sim.getScopedWeekly()).toBe(null);
+        expect(sim.getThresholdIcons()).toBe(null);
+        expect(sim.getContextWindow()).toBe(null);
+        expect(sim.getPlanSignals()).toBe(null);
         expect(sim.getCreditsPercent()).toBe(null);
         expect(sim.getHappyHour()).toBe(null);
         expect(sim.getColorMode()).toBe(null);
@@ -50,36 +52,65 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         expect(sim.getSessionPercent()).toBe(null);
     });
 
-    it('roundtrips sonnetPercent and clamps 0..100', () => {
-        sim.setSonnetPercent(42);
-        expect(sim.getSonnetPercent()).toBe(42);
-        sim.setSonnetPercent(150);
-        expect(sim.getSonnetPercent()).toBe(100);
-        sim.setSonnetPercent(-5);
-        expect(sim.getSonnetPercent()).toBe(0);
-        sim.setSonnetPercent(null);
-        expect(sim.getSonnetPercent()).toBe(null);
+    it('roundtrips scopedWeekly and clamps each percent 0..100', () => {
+        sim.setScopedWeekly([{ label: 'Fable', percent: 42 }, { label: 'Opus', percent: 150 }]);
+        expect(sim.getScopedWeekly()).toEqual([
+            { label: 'Fable', percent: 42, modelId: null, resetsAt: null, severity: null },
+            { label: 'Opus', percent: 100, modelId: null, resetsAt: null, severity: null },
+        ]);
+        sim.setScopedWeekly(null);
+        expect(sim.getScopedWeekly()).toBe(null);
     });
 
-    it('rejects non-numeric sonnetPercent', () => {
-        sim.setSonnetPercent('fifty');
-        expect(sim.getSonnetPercent()).toBe(null);
+    it('drops scopedWeekly entries with no label or a non-numeric percent', () => {
+        sim.setScopedWeekly([
+            { label: '', percent: 10 },
+            { label: 'Fable', percent: 'fifty' },
+            { label: 'Fable', percent: 7 },
+        ]);
+        expect(sim.getScopedWeekly()).toEqual([
+            { label: 'Fable', percent: 7, modelId: null, resetsAt: null, severity: null },
+        ]);
     });
 
-    it('roundtrips opusPercent and clamps 0..100', () => {
-        sim.setOpusPercent(15);
-        expect(sim.getOpusPercent()).toBe(15);
-        sim.setOpusPercent(200);
-        expect(sim.getOpusPercent()).toBe(100);
-        sim.setOpusPercent(-1);
-        expect(sim.getOpusPercent()).toBe(0);
-        sim.setOpusPercent(null);
-        expect(sim.getOpusPercent()).toBe(null);
+    it('rejects a non-array scopedWeekly', () => {
+        sim.setScopedWeekly('Fable 50%');
+        expect(sim.getScopedWeekly()).toBe(null);
     });
 
-    it('rejects non-numeric opusPercent', () => {
-        sim.setOpusPercent(NaN);
-        expect(sim.getOpusPercent()).toBe(null);
+    it('roundtrips thresholdIcons as a tri-state', () => {
+        sim.setThresholdIcons(true);
+        expect(sim.getThresholdIcons()).toBe(true);
+        sim.setThresholdIcons(false);
+        expect(sim.getThresholdIcons()).toBe(false);
+        // null returns to the real setting rather than forcing either way.
+        sim.setThresholdIcons(null);
+        expect(sim.getThresholdIcons()).toBe(null);
+    });
+
+    it('roundtrips contextWindow and rejects zero or nonsense', () => {
+        sim.setContextWindow(1_000_000);
+        expect(sim.getContextWindow()).toBe(1_000_000);
+        sim.setContextWindow(0);
+        expect(sim.getContextWindow()).toBe(1_000_000);
+        sim.setContextWindow('1m');
+        expect(sim.getContextWindow()).toBe(1_000_000);
+        sim.setContextWindow(null);
+        expect(sim.getContextWindow()).toBe(null);
+    });
+
+    it('roundtrips planSignals with creditsEnabled tri-state', () => {
+        sim.setPlanSignals({ subscriptionType: 'pro', organizationType: 'claude_pro', creditsEnabled: false });
+        expect(sim.getPlanSignals()).toEqual({
+            subscriptionType: 'pro', organizationType: 'claude_pro', creditsEnabled: false,
+        });
+
+        // An omitted credit state stays unknown rather than becoming false.
+        sim.setPlanSignals({ subscriptionType: 'max' });
+        expect(sim.getPlanSignals().creditsEnabled).toBe(null);
+
+        sim.setPlanSignals(null);
+        expect(sim.getPlanSignals()).toBe(null);
     });
 
     it('roundtrips creditsPercent and clamps 0..100', () => {
@@ -123,8 +154,10 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         sim.setTokenUsed(800_000);
         sim.setSessionPercent(50);
         sim.setWeeklyPercent(30);
-        sim.setSonnetPercent(20);
-        sim.setOpusPercent(40);
+        sim.setScopedWeekly([{ label: 'Fable', percent: 20 }]);
+        sim.setThresholdIcons(true);
+        sim.setContextWindow(1_000_000);
+        sim.setPlanSignals({ subscriptionType: 'pro' });
         sim.setCreditsPercent(80);
         sim.setHappyHour(true);
         sim.setColorMode('basic');
@@ -136,8 +169,10 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         expect(sim.getTokenUsed()).toBe(null);
         expect(sim.getSessionPercent()).toBe(null);
         expect(sim.getWeeklyPercent()).toBe(null);
-        expect(sim.getSonnetPercent()).toBe(null);
-        expect(sim.getOpusPercent()).toBe(null);
+        expect(sim.getScopedWeekly()).toBe(null);
+        expect(sim.getThresholdIcons()).toBe(null);
+        expect(sim.getContextWindow()).toBe(null);
+        expect(sim.getPlanSignals()).toBe(null);
         expect(sim.getCreditsPercent()).toBe(null);
         expect(sim.getHappyHour()).toBe(null);
         expect(sim.getColorMode()).toBe(null);

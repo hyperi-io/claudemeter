@@ -153,18 +153,37 @@ describe('composeTooltip - weekly block', () => {
         expect(out).toMatch(/\*\*Weekly - 25%\*\*/);
     });
 
-    it('includes Sonnet and Opus sub-lines when provided', () => {
+    // Every scoped cap the payload reports gets a line, whatever the model is
+    // called - the tooltip names no model of its own.
+    it('includes a sub-line per scoped weekly cap', () => {
         const out = composeTooltip({
             config: baseConfig,
             usageData: {
                 usagePercent: 10, usagePercentWeek: 25,
-                usagePercentSonnet: 30, usagePercentOpus: 15,
+                scopedWeekly: [
+                    { label: 'Fable', percent: 72 },
+                    { label: 'Something New', percent: 3 },
+                ],
                 resetTime: '1h', resetTimeWeek: '3d 12h',
                 timestamp: new Date(),
             },
         });
-        expect(out).toMatch(/Sonnet 30%/);
-        expect(out).toMatch(/Opus 15%/);
+        expect(out).toMatch(/Fable 72%/);
+        expect(out).toMatch(/Something New 3%/);
+    });
+
+    it('omits scoped sub-lines when the payload has none', () => {
+        const out = composeTooltip({
+            config: baseConfig,
+            usageData: {
+                usagePercent: 10, usagePercentWeek: 25,
+                scopedWeekly: [],
+                resetTime: '1h', resetTimeWeek: '3d 12h',
+                timestamp: new Date(),
+            },
+        });
+        expect(out).toMatch(/\*\*Weekly - 25%\*\*/);
+        expect(out).not.toMatch(/%\n.*%/);
     });
 });
 

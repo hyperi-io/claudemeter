@@ -144,14 +144,26 @@
         "category": "Claudemeter (debug)"
       },
       {
-        "command": "claudemeter.simulate.sonnetPercent",
-        "title": "Claudemeter: Simulate Sonnet %",
+        "command": "claudemeter.simulate.scopedWeekly",
+        "title": "Claudemeter: Simulate Scoped Weekly Caps",
         "enablement": "config.claudemeter.debug",
         "category": "Claudemeter (debug)"
       },
       {
-        "command": "claudemeter.simulate.opusPercent",
-        "title": "Claudemeter: Simulate Opus %",
+        "command": "claudemeter.simulate.contextWindow",
+        "title": "Claudemeter: Simulate Context Window",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.planSignals",
+        "title": "Claudemeter: Simulate Plan Signals",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
+        "command": "claudemeter.simulate.thresholdIcons",
+        "title": "Claudemeter: Toggle Threshold Icons",
         "enablement": "config.claudemeter.debug",
         "category": "Claudemeter (debug)"
       },
@@ -261,20 +273,35 @@
           ],
           "markdownDescription": "Status bar display mode:\n- **default**: Full display with reset times (separate panels)\n- **minimal**: Percentages only (separate panels)\n- **compact**: All metrics in a single panel"
         },
-        "claudemeter.statusBar.showSonnet": {
+        "claudemeter.statusBar.showScopedWeekly": {
           "type": "boolean",
-          "default": false,
-          "description": "Show Sonnet weekly usage in status bar (default/minimal modes only)"
-        },
-        "claudemeter.statusBar.showOpus": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show Opus weekly usage in status bar (Max plans only, default/minimal modes)"
+          "default": true,
+          "description": "Show per-model weekly caps in the status bar, one panel each between Wk and Tk (default/minimal modes only). A cap appears only once it is above 0%."
         },
         "claudemeter.statusBar.showCredits": {
           "type": "boolean",
           "default": false,
           "description": "Show extra usage (spending cap) in status bar (default/minimal modes only)"
+        },
+        "claudemeter.statusBar.showThresholdIcons": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show a warning glyph on a usage gauge that has crossed its warning or error threshold. Off by default — the gauge colour already carries the tier. Does not affect the Claude platform-status or happy-hour panels, which own their own icons. Override per gauge with `claudemeter.statusBar.thresholdIcons`."
+        },
+        "claudemeter.statusBar.thresholdIcons": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Per-gauge override of `claudemeter.statusBar.showThresholdIcons`. Key is a gauge id (`session`, `weekly`, `scoped`, `credits`) or the model name of a scoped cap (e.g. `Fable`); value is `true` or `false`. Example: `{\"session\": true, \"Fable\": false}`. The context gauge (Tk) never draws one — its colour is the signal."
+        },
+        "claudemeter.gauges.labels": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Relabel any gauge. Key is a gauge id (`session`, `weekly`, `scoped`, `credits`, `tokens`) or the model name the API reports for a scoped cap (e.g. `Fable`). Value is `{\"short\": \"...\", \"compact\": \"...\", \"tooltip\": \"...\"}` — any field may be omitted, and `compact` falls back to `short`. A scoped cap defaults to two characters derived from its name (Fable -> `Fb`); override it here. Example: `{\"Fable\": {\"short\": \"Fbl\", \"tooltip\": \"Fable weekly\"}}`."
+        },
+        "claudemeter.gauges.definitions": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Add or redefine a gauge without a new extension version. Merges over the built-in registry (`src/gauges.js`), one field at a time. A gauge's `source` says where its value comes from in the usage payload: `limitKind` / `limitGroup` match an entry in the API's `limits[]`, `scoped: true` expands into one gauge per matching entry, and `percentPath` / `resetsAtPath` are dot paths to a named field. Example: `{\"scoped\": {\"source\": {\"limitGroup\": \"weekly\", \"scoped\": true}}}`."
         },
         "claudemeter.statusBar.showServiceStatus": {
           "type": "boolean",
@@ -406,33 +433,19 @@
           "maximum": 100,
           "markdownDescription": "Token-gauge error (red) threshold. Default `75` tracks Claude Code's auto-compact trigger (~83% of the context window) minus ~10 — giving roughly 10 percentage points of red runway before auto-compact. `0` inherits `claudemeter.thresholds.error`."
         },
-        "claudemeter.thresholds.sonnet.warning": {
+        "claudemeter.thresholds.scoped.warning": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "maximum": 100,
-          "markdownDescription": "Sonnet-gauge warning (yellow) threshold. `0` inherits `claudemeter.thresholds.warning` (default 80)."
+          "markdownDescription": "Warning (yellow) threshold for the per-model weekly caps. `0` inherits `claudemeter.thresholds.warning` (default 80)."
         },
-        "claudemeter.thresholds.sonnet.error": {
+        "claudemeter.thresholds.scoped.error": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "maximum": 100,
-          "markdownDescription": "Sonnet-gauge error (red) threshold. `0` inherits `claudemeter.thresholds.error` (default 90)."
-        },
-        "claudemeter.thresholds.opus.warning": {
-          "type": "number",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 100,
-          "markdownDescription": "Opus-gauge warning (yellow) threshold. `0` inherits `claudemeter.thresholds.warning` (default 80)."
-        },
-        "claudemeter.thresholds.opus.error": {
-          "type": "number",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 100,
-          "markdownDescription": "Opus-gauge error (red) threshold. `0` inherits `claudemeter.thresholds.error` (default 90)."
+          "markdownDescription": "Error (red) threshold for the per-model weekly caps. `0` inherits `claudemeter.thresholds.error` (default 90)."
         },
         "claudemeter.thresholds.credits.warning": {
           "type": "number",

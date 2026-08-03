@@ -67,6 +67,7 @@ function readClaudeConfig() {
 //     organizationType,          // verbatim plan token, e.g. "claude_max" (#51)
 //     organizationRateLimitTier, // verbatim tier, e.g. "default_claude_max_20x" (#51)
 //     billingType,
+//     hasExtraUsageEnabled,      // usage credits on; null when the field is absent
 //     hasAvailableSubscription,
 //     hasOpusPlanDefault,
 //   }
@@ -91,6 +92,12 @@ function getOAuthAccount() {
         organizationType: oauth.organizationType || null,
         organizationRateLimitTier: oauth.organizationRateLimitTier || null,
         billingType: oauth.billingType || null,
+        // Tri-state: an absent field means "unknown", which the context-window
+        // rules treat as "do not apply the credits caveat". Coercing it to
+        // false would withhold 1M from a Pro account on Opus.
+        hasExtraUsageEnabled: typeof oauth.hasExtraUsageEnabled === 'boolean'
+            ? oauth.hasExtraUsageEnabled
+            : null,
         hasAvailableSubscription: config.hasAvailableSubscription === true,
         hasOpusPlanDefault: config.hasOpusPlanDefault === true,
     };

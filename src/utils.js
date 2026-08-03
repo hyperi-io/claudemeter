@@ -235,6 +235,8 @@ function sleep(ms) {
 //   organizationType - verbatim plan token ('claude_max') from
 //                      ~/.claude.json oauthAccount, when a caller has one
 //   subscriptionType - subscriptionType ('max'/'pro') from the token/profile
+//   creditsEnabled   - usage credits on for the org; only ever narrows a
+//                      context-window rule that carries a credits caveat
 //
 // Signals not passed in ctx are resolved here from VS Code settings /
 // ~/.claude.json etc. This design lets call sites that already have
@@ -243,6 +245,15 @@ function sleep(ms) {
 function resolveTokenLimit(ctx = {}) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const userOverride = config.get('tokenLimit', 0);
+
+    // F5 overrides. A forced window short-circuits the chain; forced plan
+    // signals feed it, so the rules can be exercised on any account.
+    const simulator = require('./simulator');
+    const simWindow = simulator.getContextWindow();
+    if (simWindow !== null) {
+        return { limit: simWindow, source: 'simulated', confidence: 'authoritative' };
+    }
+    const simPlan = simulator.getPlanSignals();
 
     const { resolveContextWindow } = require('./contextWindowResolver');
     const { parseModelAlias, getHighestDeclaredLimit } = require('./modelContextWindows');
@@ -261,12 +272,16 @@ function resolveTokenLimit(ctx = {}) {
     // never as a definitive negative, since we've seen it go stale
     // with hasAccess:false on accounts that were genuinely running
     // 1M context at the time.
-    let s1mHasAccess;
-    try {
-        const { hasMaxContextAccess } = require('./claudeConfigReader');
-        s1mHasAccess = hasMaxContextAccess();
-    } catch {
-        s1mHasAccess = null;
+    // Suppressed while plan signals are simulated: a real cached eligibility
+    // would grant 1M and hide the simulated plan's answer.
+    let s1mHasAccess = null;
+    if (!simPlan) {
+        try {
+            const { hasMaxContextAccess } = require('./claudeConfigReader');
+            s1mHasAccess = hasMaxContextAccess();
+        } catch {
+            s1mHasAccess = null;
+        }
     }
 
     // Local plan fallbacks (used when live capabilities aren't
@@ -274,23 +289,35 @@ function resolveTokenLimit(ctx = {}) {
     // organizationType from ~/.claude.json oauthAccount is the primary
     // local signal - on macOS .credentials.json does not exist, so the
     // legacy subscriptionType below is never readable there (#51).
-    let organizationType = ctx.organizationType || null;
-    if (!organizationType) {
-        try {
-            const { getOAuthAccount } = require('./claudeConfigReader');
-            organizationType = getOAuthAccount()?.organizationType || null;
-        } catch {
-            organizationType = null;
+    // Simulated plan signals replace the local ones outright rather than
+    // merging: a real claude_max read from disk would otherwise mask the
+    // Pro-without-credits case the simulator exists to reproduce.
+    let organizationType = simPlan ? simPlan.organizationType : (ctx.organizationType || null);
+    let subscriptionType = simPlan ? simPlan.subscriptionType : (ctx.subscriptionType || null);
+    let creditsEnabled = simPlan
+        ? simPlan.creditsEnabled
+        : (typeof ctx.creditsEnabled === 'boolean' ? ctx.creditsEnabled : null);
+
+    if (!simPlan) {
+        if (!organizationType || creditsEnabled === null) {
+            try {
+                const { getOAuthAccount } = require('./claudeConfigReader');
+                const account = getOAuthAccount();
+                organizationType = organizationType || account?.organizationType || null;
+                if (creditsEnabled === null && typeof account?.hasExtraUsageEnabled === 'boolean') {
+                    creditsEnabled = account.hasExtraUsageEnabled;
+                }
+            } catch {
+                organizationType = organizationType || null;
+            }
         }
-    }
-    let subscriptionType = ctx.subscriptionType || null;
-    if (!subscriptionType) {
-        try {
-            const { readCredentials } = require('./credentialsReader');
-            const creds = readCredentials();
-            subscriptionType = creds?.subscriptionType || null;
-        } catch {
-            subscriptionType = null;
+        if (!subscriptionType) {
+            try {
+                const { readCredentials } = require('./credentialsReader');
+                subscriptionType = readCredentials()?.subscriptionType || null;
+            } catch {
+                subscriptionType = null;
+            }
         }
     }
 
@@ -301,6 +328,7 @@ function resolveTokenLimit(ctx = {}) {
         capabilities: ctx.capabilities || null,
         organizationType,
         subscriptionType,
+        creditsEnabled,
         s1mHasAccess,
         modelIds: ctx.modelIds || null,
         observedFloor: ctx.observedFloor || 0,

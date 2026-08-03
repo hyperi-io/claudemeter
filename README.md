@@ -42,14 +42,14 @@ Claude Code changed - its CLI token can now reach the usage API, which it couldn
 
 Claudemeter automatically detects your context window size - no manual configuration needed.
 
-Anthropic's March 2026 GA rollout made **1M context the default** for Max, Team, and Enterprise plans on current-generation models - Opus 4.6 and later (4.7, 4.8), Sonnet 4.6 and later, and Fable 5 (launched June 2026) - no `[1m]` suffix required. Pro and Free plans stay at 200K unless a user explicitly picks a `[1m]`-suffixed alias or tops up via pay-as-you-go.
+The context window is a property of the **model**, not the plan. Sonnet 5, Fable 5, and Opus 4.6 and later (4.7, 4.8, 5) run a **1M window on Pro, Max, Team and Enterprise alike** in Claude Code, with no `[1m]` suffix required. Two credit caveats apply and neither is a different window - they gate access to the same 1M: Pro needs usage credits enabled for 1M on **Opus** models, and Sonnet 4.6 needs them on every paid plan bar usage-based Enterprise. Everything else falls back to 200K.
 
 Because Claude Code strips the `[1m]` suffix from model IDs before writing them to session logs, and because Claude Code's own `s1mAccessCache` can go stale, claudemeter can't rely on any single source. Instead it uses a priority chain and labels the result honestly in the tooltip:
 
 1. **User override** - `claudemeter.tokenLimit` setting, if set (authoritative)
 2. **Explicit alias suffix** - `claudeCode.selectedModel: "opus[1m]"` (authoritative)
 3. **JSONL suffix** - a model ID with `[Nm]` in session logs (authoritative, rare in practice)
-4. **Plan + model rule table** - plan from `organizationType` in `~/.claude.json`, else the token blob's `subscriptionType`, matched with the model family from session logs against a data-driven rule table (e.g. Max + `opus-4.6+` or `fable-5` -> 1M)
+4. **Model rule table** - the model family and version from session logs, matched against a data-driven rule table (`opus-4.6+`, `sonnet-5+`, `fable-5+` -> 1M). The plan is read only to apply Anthropic's credit caveats, and a rule is withheld only when the plan is *known* to be affected AND credits are *known* to be off - an unreadable plan never costs you the window
 5. **Claude Code's `s1mAccessCache`** - used only as a last-resort corroborating signal, never as a negative
 6. **Observed usage snap-to-tier** - if all authoritative signals fail but observed tokens exceed 200K, snap up to the next known tier (200K -> 1M -> 2M) and label the result as `(inferred)`
 7. **Standard fallback** - 200K
@@ -184,15 +184,18 @@ that Claude's recall is going to drift" warnings.
 
 Each Claude account tier resolves to a built-in threshold profile:
 
-| Profile         | Detected by                              | Typical window   |
-|-----------------|------------------------------------------|------------------|
-| `pro`           | `subscriptionType='pro'`                 | 200K             |
-| `max-5x`        | `rateLimitTier='default_claude_max_5x'`  | 1M Opus auto     |
-| `max-20x`       | `rateLimitTier='default_claude_max_20x'` | 1M Opus auto     |
-| `max-unknown`   | `subscriptionType='max'` alone           | 1M Opus auto     |
-| `team-standard` | `orgType='Team'`                         | 1M Opus auto     |
-| `enterprise`    | `orgType='Enterprise'`                   | 500K             |
-| `unknown`       | fallback                                 | 200K (assumed)   |
+| Profile         | Detected by                              |
+|-----------------|------------------------------------------|
+| `pro`           | `subscriptionType='pro'`                 |
+| `max-5x`        | `rateLimitTier='default_claude_max_5x'`  |
+| `max-20x`       | `rateLimitTier='default_claude_max_20x'` |
+| `max-unknown`   | `subscriptionType='max'` alone           |
+| `team-standard` | `orgType='Team'`                         |
+| `enterprise`    | `orgType='Enterprise'`                   |
+| `unknown`       | fallback                                 |
+
+The profile does not decide the window - that comes from the model, per
+Context Window Detection above.
 
 The profile sets the yellow / red runway. The blue rot tiers are NOT
 profile-gated - they fire whenever the detected context window is
@@ -339,17 +342,35 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
   - **minimal**: Percentages only (separate panels)
   - **compact**: All metrics in a single panel
 
-### `claudemeter.statusBar.showSonnet`
+### `claudemeter.statusBar.showScopedWeekly`
+
+- **Type**: Boolean
+- **Default**: `true`
+- **Description**: Show per-model weekly caps in the status bar, one panel each between Wk and Tk (default/minimal modes only). A cap appears only once it is above 0%. These come from the API's own scoped-limit list, so a model Anthropic adds shows up without an extension update.
+
+### `claudemeter.statusBar.showThresholdIcons`
 
 - **Type**: Boolean
 - **Default**: `false`
-- **Description**: Show Sonnet weekly usage in status bar (default/minimal modes only)
+- **Description**: Show a warning glyph on a usage gauge that has crossed its warning or error threshold. Off by default - the gauge colour already carries the tier. Does not affect the Claude platform-status or happy-hour panels, which own their own icons.
 
-### `claudemeter.statusBar.showOpus`
+### `claudemeter.statusBar.thresholdIcons`
 
-- **Type**: Boolean
-- **Default**: `false`
-- **Description**: Show Opus weekly usage in status bar (Max plans only, default/minimal modes)
+- **Type**: Object
+- **Default**: `{}`
+- **Description**: Per-gauge override of `showThresholdIcons`, e.g. `{"session": true, "Fable": false}`. Key is a gauge id (`session`, `weekly`, `scoped`, `credits`) or the model name of a scoped cap. The context gauge (Tk) never draws one - its colour is the signal.
+
+### `claudemeter.gauges.labels`
+
+- **Type**: Object
+- **Default**: `{}`
+- **Description**: Relabel any gauge, e.g. `{"Fable": {"short": "Fbl", "tooltip": "Fable weekly"}}`. Key is a gauge id or a scoped cap's model name; `short` is the status-bar text, `compact` the compact-mode text (falls back to `short`), `tooltip` the tooltip heading. A scoped cap's default short label is derived from its name as two characters - first letter plus the next consonant, so Fable becomes `Fb` - to sit consistently beside `Se`, `Wk` and `Tk`.
+
+### `claudemeter.gauges.definitions`
+
+- **Type**: Object
+- **Default**: `{}`
+- **Description**: Add or redefine a gauge without waiting for a release. Merges over the built-in registry in `src/gauges.js`, one field at a time. A gauge's `source` says where its value comes from: `limitKind` / `limitGroup` match an entry in the API's `limits[]`, `scoped: true` expands into one gauge per matching entry, and `percentPath` / `resetsAtPath` are dot paths to a named field.
 
 ### `claudemeter.statusBar.showCredits`
 
@@ -488,13 +509,19 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 - **Range**: `0-100`
 - **Description**: Token-gauge error (red) threshold as a percentage. Default `75` gives roughly 10 percentage points of red runway before auto-compact fires (~83%). `0` inherits `claudemeter.thresholds.error`. **Deprecated for profile-based accounts:** use `claudemeter.thresholds.tokens.profiles` to override `errorRunwayTokens` instead.
 
+### `claudemeter.thresholds.scoped.warning` / `.error`
+
+- **Type**: Number
+- **Default**: `0`
+- **Description**: Warning (yellow) and error (red) thresholds for the per-model weekly caps. `0` inherits `claudemeter.thresholds.warning` / `.error`.
+
 ### `claudemeter.statusBar.colorMode`
 
 - **Type**: String
 - **Default**: `color`
 - **Options**: `color`, `basic`
 - **Description**: Status-bar decoration mode.
-  - **color** (default): full palette - gauge tiers (rotLight, rotDeep, warning, error), Se/Wk warning icons, happy-hour green, and the colour-coded `●` prefix in the tooltip.
+  - **color** (default): full palette - gauge tiers (rotLight, rotDeep, warning, error), threshold icons where enabled, happy-hour green, and the colour-coded `●` prefix in the tooltip.
   - **basic**: every gauge renders in default foreground - no icons, no tier tints, no tooltip prefix dots, no rot recommendation sub-lines. Tooltip section structure is preserved either way.
 
 ### `claudemeter.thresholds.tokens.profileOverride`

@@ -33,10 +33,19 @@
 //   major    (partial outage)  $(error)   red,    no background
 //   critical (major outage)    $(error)   red,    RED BACKGROUND
 //                              + "He's dead, Jim." in the quirkyOverride.
+//   unknown  (unreachable)     no icon
 //
 // The icon progression is intentional: warning-triangle -> error-cross
 // reads instantly as "something wrong -> everything wrong". Critical
 // reuses the cross but adds a red background so it's unmistakable.
+//
+// `unknown` carries no status-bar glyph because it is not a severity - it
+// means the status page could not be reached, which is ours to report in the
+// tooltip rather than to alarm about.
+//
+// Unlike the usage gauges, these icons are not opt-in: an outage is not a
+// threshold being approached. The tooltip line keeps its own icon at every
+// severity, `unknown` included.
 //
 // Happy hour has its own dedicated status-bar panel (see
 // renderHappyHourPanel in statusBar.js) and is not part of this
@@ -44,12 +53,14 @@
 
 const LABEL = 'Claude';
 
+// `statusBarIcon` is the glyph beside the label; `icon` is the tooltip's,
+// which every severity keeps.
 const SERVICE_RENDER = Object.freeze({
     minor: {
-        icon:       '$(warning)',
-        color:      'charts.yellow',
-        background: undefined,
-        label:      'Service degraded',
+        icon:          '$(warning)',
+        color:         'charts.yellow',
+        background:    undefined,
+        label:         'Service degraded',
     },
     major: {
         icon:       '$(error)',
@@ -65,10 +76,11 @@ const SERVICE_RENDER = Object.freeze({
         quote:      "He's dead, Jim.",
     },
     unknown: {
-        icon:       '$(question)',
-        color:      undefined,
-        background: undefined,
-        label:      'Status unknown',
+        icon:          '$(question)',
+        statusBarIcon: undefined,
+        color:         undefined,
+        background:    undefined,
+        label:         'Status unknown',
     },
 });
 
@@ -88,7 +100,8 @@ function composeClaudeLabel(state = {}) {
     if (serviceStatus && serviceStatus.indicator && serviceStatus.indicator !== 'none') {
         const render = SERVICE_RENDER[serviceStatus.indicator];
         if (render) {
-            icons.push(render.icon);
+            const statusBarIcon = 'statusBarIcon' in render ? render.statusBarIcon : render.icon;
+            if (statusBarIcon) icons.push(statusBarIcon);
             color = render.color;
             backgroundColor = render.background;
             const desc = serviceStatus.description

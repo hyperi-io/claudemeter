@@ -103,6 +103,11 @@ function mapAccountInfo(profile) {
         subscriptionType: acc.has_claude_max ? 'max' : (acc.has_claude_pro ? 'pro' : null),
         subscriptionStatus: org.subscription_status || null,
         billingType: org.billing_type || null,
+        // Tri-state, feeding the context-window rules' credits caveat: an
+        // absent field must stay null so the caveat cannot fire on a guess.
+        creditsEnabled: typeof org.has_extra_usage_enabled === 'boolean'
+            ? org.has_extra_usage_enabled
+            : null,
         hasClaudeMax: !!acc.has_claude_max,
         hasClaudePro: !!acc.has_claude_pro,
     };

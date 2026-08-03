@@ -87,9 +87,8 @@ describe('CONTEXT_WINDOW_RULES', () => {
         expect(CONTEXT_WINDOW_RULES.length).toBeGreaterThan(0);
     });
 
-    it('every rule has plans, family, minVersion, limit, source', () => {
+    it('every rule has family, minVersion, limit, source', () => {
         for (const rule of CONTEXT_WINDOW_RULES) {
-            expect(Array.isArray(rule.plans)).toBe(true);
             expect(typeof rule.family).toBe('string');
             expect(typeof rule.minVersion).toBe('number');
             expect(typeof rule.limit).toBe('number');
@@ -98,171 +97,205 @@ describe('CONTEXT_WINDOW_RULES', () => {
         }
     });
 
-    it('covers claude_max + opus-4.6 at 1M', () => {
-        const match = CONTEXT_WINDOW_RULES.find(r =>
-            r.plans.includes('claude_max') &&
-            r.family === 'opus' &&
-            r.minVersion <= 4.6 &&
-            r.limit === 1000000
-        );
-        expect(match).toBeDefined();
+    // The window is a property of the model, not the plan, so no rule may
+    // carry a plan allowlist - that gate is what made a Pro or
+    // plan-signal-less account read 200K on a 1M model (#55).
+    it('no rule gates on a plan allowlist', () => {
+        for (const rule of CONTEXT_WINDOW_RULES) {
+            expect(rule.plans).toBeUndefined();
+        }
     });
 
-    it('covers claude_max + sonnet-4.6 at 1M', () => {
-        const match = CONTEXT_WINDOW_RULES.find(r =>
-            r.plans.includes('claude_max') &&
-            r.family === 'sonnet' &&
-            r.minVersion <= 4.6 &&
-            r.limit === 1000000
-        );
-        expect(match).toBeDefined();
+    it('any credits caveat names plans, not a bare flag', () => {
+        for (const rule of CONTEXT_WINDOW_RULES) {
+            if (rule.creditsRequiredPlans !== undefined) {
+                expect(Array.isArray(rule.creditsRequiredPlans)).toBe(true);
+                expect(rule.creditsRequiredPlans.length).toBeGreaterThan(0);
+            }
+        }
     });
 
-    it('covers claude_team and claude_enterprise in the same rules', () => {
-        const maxOpusRule = CONTEXT_WINDOW_RULES.find(r =>
-            r.family === 'opus' && r.plans.includes('claude_max')
+    it('covers opus-4.6 at 1M, credits-gated for Pro only', () => {
+        const match = CONTEXT_WINDOW_RULES.find(r =>
+            r.family === 'opus' && r.minVersion <= 4.6 && r.limit === 1000000
         );
-        expect(maxOpusRule.plans).toContain('claude_team');
-        expect(maxOpusRule.plans).toContain('claude_enterprise');
+        expect(match).toBeDefined();
+        expect(match.creditsRequiredPlans).toEqual(['claude_pro']);
+    });
+
+    it('covers sonnet-5 at 1M with no credits caveat', () => {
+        const match = CONTEXT_WINDOW_RULES.find(r =>
+            r.family === 'sonnet' && r.minVersion === 5 && r.limit === 1000000
+        );
+        expect(match).toBeDefined();
+        expect(match.creditsRequiredPlans).toBeUndefined();
+    });
+
+    it('covers fable-5 at 1M with no credits caveat', () => {
+        const match = CONTEXT_WINDOW_RULES.find(r =>
+            r.family === 'fable' && r.minVersion === 5 && r.limit === 1000000
+        );
+        expect(match).toBeDefined();
+        expect(match.creditsRequiredPlans).toBeUndefined();
+    });
+
+    // Sonnet 4.6 needs credits on every paid plan except usage-based
+    // Enterprise, and first-match-wins means the unconditional Sonnet 5 rule
+    // has to sit ahead of it or Sonnet 5 inherits the caveat.
+    it('lists the sonnet-5 rule before the credits-gated sonnet-4.6 rule', () => {
+        const five = CONTEXT_WINDOW_RULES.findIndex(r => r.family === 'sonnet' && r.minVersion === 5);
+        const legacy = CONTEXT_WINDOW_RULES.findIndex(r => r.family === 'sonnet' && r.minVersion === 4.6);
+        expect(five).toBeGreaterThanOrEqual(0);
+        expect(legacy).toBeGreaterThan(five);
+        expect(CONTEXT_WINDOW_RULES[legacy].creditsRequiredPlans).toContain('claude_pro');
+        expect(CONTEXT_WINDOW_RULES[legacy].creditsRequiredPlans).not.toContain('claude_enterprise');
     });
 });
 
 describe('matchRuleTable', () => {
-    it('matches Max + Opus 4.6 → 1M', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-opus-4-6']);
+    const max = { planTokens: ['claude_max'] };
+    const pro = { planTokens: ['claude_pro'] };
+
+    it('matches Opus 4.6 → 1M', () => {
+        const result = matchRuleTable(['claude-opus-4-6'], max);
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
         expect(result.source).toMatch(/^rule:/);
     });
 
-    it('matches Max + Sonnet 4.6 → 1M', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-sonnet-4-6']);
+    it('matches Sonnet 4.6 → 1M', () => {
+        const result = matchRuleTable(['claude-sonnet-4-6'], max);
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
     });
 
     it('matches Team + Opus 4.6 → 1M', () => {
-        const result = matchRuleTable(['claude_team'], ['claude-opus-4-6']);
+        const result = matchRuleTable(['claude-opus-4-6'], { planTokens: ['claude_team'] });
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
     });
 
     it('matches Enterprise + Sonnet 4.6 → 1M', () => {
-        const result = matchRuleTable(['claude_enterprise'], ['claude-sonnet-4-6']);
+        const result = matchRuleTable(['claude-sonnet-4-6'], { planTokens: ['claude_enterprise'] });
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
     });
 
     // Future-proofing: minVersion is a >= comparison, so new point releases
-    // automatically qualify without requiring a code change. When Anthropic
-    // ships Opus 4.7, this test proves the rule table still fires.
-    it('matches Max + future Opus 4.7 → 1M (minVersion future-proofing)', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-opus-4-7']);
+    // automatically qualify without requiring a code change.
+    it('matches Opus 4.7 → 1M (minVersion future-proofing)', () => {
+        const result = matchRuleTable(['claude-opus-4-7'], max);
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
     });
 
-    it('matches Max + future Opus 5.0 → 1M', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-opus-5-0']);
+    it('matches Opus 5.0 → 1M', () => {
+        const result = matchRuleTable(['claude-opus-5-0'], max);
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
     });
 
-    it('matches Max + future Sonnet 5.0 → 1M', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-sonnet-5-0']);
+    it('matches Sonnet 5.0 → 1M', () => {
+        const result = matchRuleTable(['claude-sonnet-5-0'], max);
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
     });
 
-    it('matches Max + Fable 5 -> 1M (single-version ID)', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-fable-5']);
+    it('matches Fable 5 -> 1M (single-version ID)', () => {
+        const result = matchRuleTable(['claude-fable-5'], max);
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
-        expect(result.source).toBe('rule:max-fable-5+');
+        expect(result.source).toBe('rule:fable-5+');
     });
 
-    it('matches Team + Fable 5 -> 1M', () => {
-        const result = matchRuleTable(['claude_team'], ['claude-fable-5']);
-        expect(result).not.toBeNull();
-        expect(result.limit).toBe(1000000);
-    });
-
-    it('matches Max + Fable 5 with date suffix -> 1M (date not read as minor)', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-fable-5-20260609']);
+    it('matches Fable 5 with date suffix -> 1M (date not read as minor)', () => {
+        const result = matchRuleTable(['claude-fable-5-20260609'], max);
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
     });
 
-    it('does NOT match Pro + Fable 5 (Pro not in rule plans)', () => {
-        const result = matchRuleTable(['claude_pro'], ['claude-fable-5']);
-        expect(result).toBeNull();
-    });
-
-    it('does NOT match Max + Fable 4 (below minVersion 5)', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-fable-4']);
-        expect(result).toBeNull();
-    });
-
-    it('does NOT match Max + old-gen Opus 4.5 (minVersion cutoff)', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-opus-4-5-20251101']);
-        expect(result).toBeNull();
-    });
-
-    it('does NOT match Max + old-gen Sonnet 4.5', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-sonnet-4-5-20250929']);
-        expect(result).toBeNull();
-    });
-
-    it('does NOT match Max + Haiku (no rule for haiku family)', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-haiku-4-5-20251001']);
-        expect(result).toBeNull();
-    });
-
-    it('does NOT match Max + Claude 3 Opus', () => {
-        const result = matchRuleTable(['claude_max'], ['claude-3-opus-20240229']);
-        expect(result).toBeNull();
-    });
-
-    it('does NOT match Pro + Opus 4.6 (Pro is not in rule plans)', () => {
-        const result = matchRuleTable(['claude_pro'], ['claude-opus-4-6']);
-        expect(result).toBeNull();
-    });
-
-    it('does NOT match Free + Opus 4.6 (free has no claude_* token)', () => {
-        const result = matchRuleTable(['chat'], ['claude-opus-4-6']);
-        expect(result).toBeNull();
-    });
-
-    it('ignores unknown capability tokens', () => {
-        const result = matchRuleTable(['claude_unicorn', 'chat'], ['claude-opus-4-6']);
-        expect(result).toBeNull();
-    });
-
-    it('mixed: unknown token alongside real plan still matches', () => {
-        const result = matchRuleTable(['claude_max', 'claude_unicorn'], ['claude-opus-4-6']);
+    it('matches Pro + Fable 5 -> 1M (no plan gate, no credits caveat)', () => {
+        const result = matchRuleTable(['claude-fable-5'], { ...pro, creditsEnabled: false });
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
     });
 
-    it('returns null when capabilities is null/undefined/empty', () => {
-        expect(matchRuleTable(null, ['claude-opus-4-6'])).toBeNull();
-        expect(matchRuleTable(undefined, ['claude-opus-4-6'])).toBeNull();
-        expect(matchRuleTable([], ['claude-opus-4-6'])).toBeNull();
+    it('matches with no plan tokens at all -> 1M (the window is the model\'s)', () => {
+        const result = matchRuleTable(['claude-opus-5']);
+        expect(result).not.toBeNull();
+        expect(result.limit).toBe(1000000);
+    });
+
+    it('does NOT match Fable 4 (below minVersion 5)', () => {
+        expect(matchRuleTable(['claude-fable-4'], max)).toBeNull();
+    });
+
+    it('does NOT match old-gen Opus 4.5 (minVersion cutoff)', () => {
+        expect(matchRuleTable(['claude-opus-4-5-20251101'], max)).toBeNull();
+    });
+
+    it('does NOT match old-gen Sonnet 4.5', () => {
+        expect(matchRuleTable(['claude-sonnet-4-5-20250929'], max)).toBeNull();
+    });
+
+    it('does NOT match Haiku (no rule for haiku family)', () => {
+        expect(matchRuleTable(['claude-haiku-4-5-20251001'], max)).toBeNull();
+    });
+
+    it('does NOT match Claude 3 Opus', () => {
+        expect(matchRuleTable(['claude-3-opus-20240229'], max)).toBeNull();
     });
 
     it('returns null when modelIds is null/undefined/empty', () => {
-        expect(matchRuleTable(['claude_max'], null)).toBeNull();
-        expect(matchRuleTable(['claude_max'], undefined)).toBeNull();
-        expect(matchRuleTable(['claude_max'], [])).toBeNull();
+        expect(matchRuleTable(null, max)).toBeNull();
+        expect(matchRuleTable(undefined, max)).toBeNull();
+        expect(matchRuleTable([], max)).toBeNull();
     });
 
     it('matches even if unrecognised model IDs are mixed in', () => {
-        const result = matchRuleTable(
-            ['claude_max'],
-            ['gpt-4-turbo', 'claude-opus-4-6', 'random-model']
-        );
+        const result = matchRuleTable(['gpt-4-turbo', 'claude-opus-4-6', 'random-model'], max);
         expect(result).not.toBeNull();
         expect(result.limit).toBe(1000000);
+    });
+
+    describe('credits caveat', () => {
+        it('withholds Opus 1M from Pro when credits are known off', () => {
+            expect(matchRuleTable(['claude-opus-5'], { ...pro, creditsEnabled: false })).toBeNull();
+        });
+
+        it('grants Opus 1M to Pro when credits are on', () => {
+            const result = matchRuleTable(['claude-opus-5'], { ...pro, creditsEnabled: true });
+            expect(result.limit).toBe(1000000);
+        });
+
+        // A signal we cannot read must not cost the user their window - that
+        // failure mode is the whole of #55.
+        it('grants Opus 1M to Pro when the credit state is unknown', () => {
+            expect(matchRuleTable(['claude-opus-5'], pro).limit).toBe(1000000);
+        });
+
+        it('never applies the Opus caveat to Max', () => {
+            const result = matchRuleTable(['claude-opus-5'], { ...max, creditsEnabled: false });
+            expect(result.limit).toBe(1000000);
+        });
+
+        it('applies the Sonnet 4.6 caveat to Max as well as Pro', () => {
+            expect(matchRuleTable(['claude-sonnet-4-6'], { ...max, creditsEnabled: false })).toBeNull();
+            expect(matchRuleTable(['claude-sonnet-4-6'], { ...pro, creditsEnabled: false })).toBeNull();
+        });
+
+        it('exempts Enterprise from the Sonnet 4.6 caveat', () => {
+            const result = matchRuleTable(['claude-sonnet-4-6'], {
+                planTokens: ['claude_enterprise'], creditsEnabled: false,
+            });
+            expect(result.limit).toBe(1000000);
+        });
+
+        it('does not let the Sonnet 4.6 caveat reach Sonnet 5', () => {
+            const result = matchRuleTable(['claude-sonnet-5'], { ...pro, creditsEnabled: false });
+            expect(result.limit).toBe(1000000);
+            expect(result.source).toBe('rule:sonnet-5+');
+        });
     });
 });
 
@@ -313,7 +346,7 @@ describe('resolveContextWindow — rule table overrides a high observed floor', 
         expect(result.limit).toBe(1000000);
     });
 
-    it('macOS current builds (#51): organizationType alone resolves Max', () => {
+    it('macOS current builds (#51): resolves with organizationType alone', () => {
         // The environment issue #51 describes: no .credentials.json (tokens
         // in the Keychain, so subscriptionType is null), no s1mAccessCache,
         // no live capabilities yet - only oauthAccount.organizationType.
@@ -326,11 +359,11 @@ describe('resolveContextWindow — rule table overrides a high observed floor', 
             observedFloor: 0,
         });
         expect(result.limit).toBe(1000000);
-        expect(result.source).toBe('rule:max-fable-5+-local');
+        expect(result.source).toBe('rule:fable-5+');
         expect(result.confidence).toBe('inferred');
     });
 
-    it('organizationType matches even when legacy subscriptionType is a non-token', () => {
+    it('resolves even when the legacy subscriptionType is a non-token', () => {
         const result = resolveContextWindow({
             organizationType: 'claude_max',
             subscriptionType: 'free',
@@ -339,14 +372,14 @@ describe('resolveContextWindow — rule table overrides a high observed floor', 
         expect(result.limit).toBe(1000000);
     });
 
-    it('unrecognised organizationType token falls through harmlessly', () => {
+    it('an unrecognised plan token does not block the model rule', () => {
         const result = resolveContextWindow({
             organizationType: 'claude_free_tier_of_the_future',
             subscriptionType: null,
             modelIds: ['claude-opus-4-6'],
         });
-        expect(result.limit).toBe(STANDARD_LIMIT);
-        expect(result.source).toBe('standard');
+        expect(result.limit).toBe(1000000);
+        expect(result.source).toBe('rule:opus-4.6+');
     });
 
     it('fable detection: Max + fable-5 + observed < 200K -> 1M', () => {
@@ -416,7 +449,7 @@ describe('resolveContextWindow — priority order', () => {
     it('s1m cache fires when rule table has no match', () => {
         const result = resolveContextWindow({
             capabilities: ['claude_pro'],
-            modelIds: ['claude-opus-4-6'],
+            modelIds: ['claude-haiku-4-5-20251001'],
             s1mHasAccess: true,
             observedFloor: 0,
         });
@@ -426,11 +459,49 @@ describe('resolveContextWindow — priority order', () => {
     });
 });
 
+// The reported symptom of #55: a 1M session reads 200K from its first turn and
+// only corrects itself once usage climbs past 200K and observedFloor snaps.
+describe('resolveContextWindow — issue #55 regression', () => {
+    for (const model of ['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5']) {
+        it(`${model} with no plan signal resolves 1M from the first turn`, () => {
+            const result = resolveContextWindow({ modelIds: [model], observedFloor: 12000 });
+            expect(result.limit).toBe(1000000);
+            expect(result.source).toMatch(/^rule:/);
+        });
+
+        it(`${model} on Pro resolves 1M`, () => {
+            const result = resolveContextWindow({
+                subscriptionType: 'pro',
+                modelIds: [model],
+                observedFloor: 12000,
+            });
+            expect(result.limit).toBe(1000000);
+        });
+    }
+
+    it('does not need observedFloor to reach 1M', () => {
+        const low = resolveContextWindow({ modelIds: ['claude-opus-5'], observedFloor: 0 });
+        const high = resolveContextWindow({ modelIds: ['claude-opus-5'], observedFloor: 900000 });
+        expect(low.limit).toBe(high.limit);
+        expect(low.source).toBe(high.source);
+    });
+
+    it('Pro on Opus without credits still reads 200K (Anthropic caveat)', () => {
+        const result = resolveContextWindow({
+            subscriptionType: 'pro',
+            creditsEnabled: false,
+            modelIds: ['claude-opus-5'],
+            observedFloor: 0,
+        });
+        expect(result.limit).toBe(STANDARD_LIMIT);
+    });
+});
+
 describe('resolveContextWindow — fallback behaviour', () => {
-    it('Free user with no signals → standard 200K', () => {
+    it('unmatched model with no other signal → standard 200K', () => {
         const result = resolveContextWindow({
             capabilities: ['chat'],
-            modelIds: ['claude-opus-4-6'],
+            modelIds: ['claude-haiku-4-5-20251001'],
             observedFloor: 0,
         });
         expect(result.limit).toBe(200000);
@@ -438,10 +509,10 @@ describe('resolveContextWindow — fallback behaviour', () => {
         expect(result.confidence).toBe('unknown');
     });
 
-    it('Free user with observed > 200K → snap to 1M, inferred', () => {
+    it('unmatched model with observed > 200K → snap to 1M, inferred', () => {
         const result = resolveContextWindow({
             capabilities: ['chat'],
-            modelIds: ['claude-opus-4-6'],
+            modelIds: ['claude-haiku-4-5-20251001'],
             observedFloor: 250000,
         });
         expect(result.limit).toBe(1000000);
@@ -449,9 +520,10 @@ describe('resolveContextWindow — fallback behaviour', () => {
         expect(result.confidence).toBe('inferred');
     });
 
-    it('Pro + Opus 4.6 + no alias + low observed → standard 200K', () => {
+    it('Pro + Opus 4.6 + credits off + low observed → standard 200K', () => {
         const result = resolveContextWindow({
             capabilities: ['claude_pro'],
+            creditsEnabled: false,
             modelIds: ['claude-opus-4-6'],
             observedFloor: 0,
         });
@@ -459,10 +531,11 @@ describe('resolveContextWindow — fallback behaviour', () => {
         expect(result.source).toBe('standard');
     });
 
-    it('Pro + explicit [1m] alias wins → 1M authoritative', () => {
+    it('Pro + credits off + explicit [1m] alias wins → 1M authoritative', () => {
         const result = resolveContextWindow({
             aliasDeclaredLimit: 1000000,
             capabilities: ['claude_pro'],
+            creditsEnabled: false,
             modelIds: ['claude-opus-4-6'],
             observedFloor: 0,
         });

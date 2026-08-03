@@ -224,11 +224,11 @@ function renderWeeklyBlock(state) {
     const weeklyResetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTimeWeek);
     const lines = ['', `**Weekly - ${weeklyPercent}%**`];
 
-    if (usageData.usagePercentSonnet !== null && usageData.usagePercentSonnet !== undefined) {
-        lines.push(`Sonnet ${usageData.usagePercentSonnet}%`);
-    }
-    if (usageData.usagePercentOpus !== null && usageData.usagePercentOpus !== undefined) {
-        lines.push(`Opus ${usageData.usagePercentOpus}%`);
+    // Every model-scoped weekly cap the payload reports, including any the
+    // status bar has no slot for.
+    for (const scoped of usageData.scopedWeekly || []) {
+        if (typeof scoped.percent !== 'number') continue;
+        lines.push(`${scoped.label} ${scoped.percent}%`);
     }
 
     lines.push(`Resets ${weeklyResetTimeExpanded}`);

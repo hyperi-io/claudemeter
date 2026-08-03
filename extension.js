@@ -652,7 +652,9 @@ async function updateTokensFromJsonl(silent = false) {
                     modelIds: usage.modelIds,
                     observedFloor: usage.totalTokens,
                     capabilities: liveAccountInfo?.capabilities || null,
+                    organizationType: liveAccountInfo?.organizationType || credentialsInfo?.organizationType || null,
                     subscriptionType: liveAccountInfo?.subscriptionType || credentialsInfo?.subscriptionType || null,
+                    creditsEnabled: liveAccountInfo?.creditsEnabled ?? null,
                 });
                 if (!silent) {
                     debugLog(`Context window resolved: ${resolved.limit.toLocaleString()} (source=${resolved.source}, confidence=${resolved.confidence})`);

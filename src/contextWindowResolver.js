@@ -24,19 +24,31 @@
 // to the next known tier (200K -> 1M -> 2M) rather than returned raw. That
 // result is always labelled `inferred` so the UI can say so.
 //
+// Why the rule table keys on the model, not the plan:
+//
+// The window is a property of the model and the surface, not of the plan -
+// support.claude.com article 8606394 lists Sonnet 5, Fable 5 and Opus 4.6
+// through 5 at 1M on Pro, Max, Team and Enterprise alike. Keying on a plan
+// token loses the window wherever the plan cannot be read (no
+// .credentials.json on macOS, no oauthAccount on older builds, no live fetch in
+// tokenOnlyMode), leaving the session at 200K until `observedFloor` snaps it up
+// mid-conversation (#55).
+//
+// The plan is consulted only for the two credit caveats Anthropic applies: Pro
+// needs usage credits for 1M on Opus, and Sonnet 4.6 needs them on every paid
+// plan bar usage-based Enterprise. `creditsRequiredPlans` expresses these, and
+// withholds a rule only when the plan is known to be one of them AND credits
+// are known to be off. An unknown plan or unknown credit state grants the
+// window.
+//
 // Plan detection:
 //
 // In practice the plan comes from LOCAL signals: `organizationType` from
 // ~/.claude.json oauthAccount (current builds write the capability token
 // verbatim, e.g. "claude_max" - the only local signal on macOS, where
 // .credentials.json does not exist, #51), then the legacy `subscriptionType`
-// field from ~/.claude/.credentials.json for older builds.
-//
-// `capabilities` is kept as an input but no caller supplies one: it came from
-// /api/bootstrap, which the OAuth-token fetch path does not use, so the live
-// rule-table step never fires today. It stays because the shape is the plan
-// signal we would want if an endpoint offers it again, and because removing it
-// would collapse two differently-labelled sources into one.
+// field from ~/.claude/.credentials.json for older builds. `capabilities` is
+// the same vocabulary from a live endpoint; nothing supplies one today.
 
 const STANDARD_LIMIT = 200000;
 
@@ -46,60 +58,61 @@ const STANDARD_LIMIT = 200000;
 // AND add a matching rule to CONTEXT_WINDOW_RULES below.
 const KNOWN_CONTEXT_TIERS = [200000, 1000000, 2000000];
 
-// Rule table mapping (plan, model family, model version) -> default
-// context window. First match wins. Each rule encodes a product
-// fact from Anthropic's defaults; sources should cite the release
-// announcement or observed behaviour.
+// Rule table mapping (model family, model version) -> default context window,
+// with `creditsRequiredPlans` naming the plans that reach it only with usage
+// credits enabled. First match wins, so a narrower rule must precede the wider
+// one it overlaps. Each rule encodes a product fact from Anthropic's defaults;
+// sources should cite the release announcement or observed behaviour.
 //
 // Future-proofing:
 //   - `minVersion` uses a numeric >= comparison so new point releases
 //     (Opus 4.7, 5.0, ...) automatically qualify without code changes.
-//   - Adding a new plan tier is a one-line edit (extend the `plans`
-//     array on an existing rule).
 //   - Adding a new family or limit is one new rule entry.
 //   - Removing a rule (if Anthropic reverts a default) is one deletion.
 //
-// What this CANNOT handle: non-(plan, family, version, limit)-shaped
-// rules. E.g., "Max gets 2M on Opus but only during business hours"
+// What this CANNOT handle: rules not shaped as (family, version, limit) plus a
+// plan-and-credits caveat. E.g. "2M on Opus but only during business hours"
 // would require a code change.
 const CONTEXT_WINDOW_RULES = [
-    // Max / Team / Enterprise default to 1M on current-generation
-    // Opus (4.6 and later). Confirmed by observing claude-opus-4-6[1m]
-    // as the runtime model on a Max Personal account with no explicit
-    // [1m] suffix configured. Source: Anthropic March 2026 GA announcement.
+    // 1M on current-generation Opus (4.6 and later) on every paid plan. Pro
+    // reaches it only with usage credits enabled; Max, Team and Enterprise get
+    // it automatically. Source: support.claude.com 8606394.
     {
-        plans: ['claude_max', 'claude_team', 'claude_enterprise'],
         family: 'opus',
         minVersion: 4.6,
         limit: 1_000_000,
-        source: 'rule:max-opus-4.6+',
+        creditsRequiredPlans: ['claude_pro'],
+        source: 'rule:opus-4.6+',
     },
-    // Same defaults for current-generation Sonnet (4.6 and later).
-    // Observed as claude-sonnet-4-6 being the running model in the
-    // same Max session.
+    // 1M on Sonnet 5+ on every paid plan, no credits condition. Listed ahead of
+    // the Sonnet 4.6 rule below, which carries one.
     {
-        plans: ['claude_max', 'claude_team', 'claude_enterprise'],
         family: 'sonnet',
-        minVersion: 4.6,
+        minVersion: 5,
         limit: 1_000_000,
-        source: 'rule:max-sonnet-4.6+',
+        source: 'rule:sonnet-5+',
     },
-    // Max/Team/Enterprise get 1M on Fable 5+ (ships 1M by default, listed with
-    // Opus 4.6-4.8). Source: Fable 5 launch 9 Jun 2026, support.claude.com 8606394.
+    // 1M on Fable 5+ on every paid plan. Source: Fable 5 launch 9 Jun 2026,
+    // support.claude.com 8606394.
     {
-        plans: ['claude_max', 'claude_team', 'claude_enterprise'],
         family: 'fable',
         minVersion: 5,
         limit: 1_000_000,
-        source: 'rule:max-fable-5+',
+        source: 'rule:fable-5+',
     },
-    // Deliberately no rule for Haiku on any plan: Anthropic has
-    // never offered extended context on Haiku as far as we can
-    // verify. Falls through to STANDARD_LIMIT on all plans.
-    //
-    // Deliberately no rule for Pro: Pro users get 1M only via
-    // explicit [1m] alias or pay-as-you-go top-ups, which are
-    // handled by the alias/JSONL paths upstream of this table.
+    // Sonnet 4.6 reaches 1M on every paid plan, but only with usage credits
+    // enabled - except on usage-based Enterprise, which claudemeter cannot
+    // distinguish from seat-based Enterprise, so Enterprise is left off the
+    // credits list and always granted.
+    {
+        family: 'sonnet',
+        minVersion: 4.6,
+        limit: 1_000_000,
+        creditsRequiredPlans: ['claude_pro', 'claude_max', 'claude_team'],
+        source: 'rule:sonnet-4.6+',
+    },
+    // Deliberately no rule for Haiku: Anthropic has never offered extended
+    // context on it. Falls through to STANDARD_LIMIT.
 ];
 
 // Snap an observed-token count to the smallest known tier that
@@ -148,21 +161,20 @@ function parseFamilyAndVersion(modelId) {
     };
 }
 
-// Find a rule in CONTEXT_WINDOW_RULES whose plans include at least
-// one of the caller's capability tokens, AND whose (family, minVersion)
-// matches at least one of the caller's detected model IDs. Returns
-// {limit, source} on match, or null otherwise.
+// Find the first rule in CONTEXT_WINDOW_RULES whose (family, minVersion)
+// matches one of the caller's detected model IDs and whose credits caveat is
+// not blocking. Returns {limit, source} on match, or null otherwise.
 //
 // Parameters:
-//   capabilities - array of capability tokens from /api/bootstrap
-//                  (e.g. ['claude_max', 'chat']). A single token
-//                  like 'claude_max' is enough to match a rule whose
-//                  plans array contains it.
-//   modelIds     - array of model IDs from JSONL scan (Claude Code
-//                  strips [Nm] suffixes so these are usually bare,
-//                  e.g. ['claude-opus-4-6', 'claude-sonnet-4-6']).
-function matchRuleTable(capabilities, modelIds) {
-    if (!Array.isArray(capabilities) || capabilities.length === 0) return null;
+//   modelIds       - array of model IDs from JSONL scan (Claude Code strips
+//                    [Nm] suffixes so these are usually bare, e.g.
+//                    ['claude-opus-4-6', 'claude-sonnet-4-6']).
+//   planTokens     - capability tokens for the account ('claude_max',
+//                    'claude_pro', ...). Empty or unknown tokens simply mean
+//                    no credits caveat can apply.
+//   creditsEnabled - true / false / null when unknown. Only an explicit false
+//                    can withhold a rule.
+function matchRuleTable(modelIds, { planTokens = [], creditsEnabled = null } = {}) {
     if (!Array.isArray(modelIds) || modelIds.length === 0) return null;
 
     const parsed = modelIds
@@ -170,13 +182,17 @@ function matchRuleTable(capabilities, modelIds) {
         .filter(Boolean);
     if (parsed.length === 0) return null;
 
+    const plans = Array.isArray(planTokens) ? planTokens : [];
+
     for (const rule of CONTEXT_WINDOW_RULES) {
-        const planMatch = capabilities.some(cap => rule.plans.includes(cap));
-        if (!planMatch) continue;
         const modelMatch = parsed.some(
             m => m.family === rule.family && m.version >= rule.minVersion
         );
         if (!modelMatch) continue;
+        if (creditsEnabled === false && Array.isArray(rule.creditsRequiredPlans)
+            && plans.some(p => rule.creditsRequiredPlans.includes(p))) {
+            continue;
+        }
         return { limit: rule.limit, source: rule.source };
     }
 
@@ -208,12 +224,10 @@ function subscriptionTypeToCapability(subscriptionType) {
 //   1. userOverride           -> authoritative
 //   2. aliasDeclaredLimit     -> authoritative (explicit [1m] alias)
 //   3. jsonlDeclaredLimit     -> authoritative (model ID with suffix)
-//   4. rule table (live API)  -> inferred (capabilities + modelIds)
-//   5. rule table (local)     -> inferred (organizationType, then
-//                                subscriptionType, + modelIds)
-//   6. s1mHasAccess === true  -> configured (Claude Code's own cache)
-//   7. observedFloor snap     -> inferred (fallback with explicit label)
-//   8. STANDARD_LIMIT         -> unknown
+//   4. rule table             -> inferred (modelIds, plan + credits as caveat)
+//   5. s1mHasAccess === true  -> configured (Claude Code's own cache)
+//   6. observedFloor snap     -> inferred (fallback with explicit label)
+//   7. STANDARD_LIMIT         -> unknown
 //
 // Input:
 //   userOverride       - from claudemeter.tokenLimit setting; 0 = none
@@ -223,6 +237,8 @@ function subscriptionTypeToCapability(subscriptionType) {
 //   organizationType   - local ~/.claude.json oauthAccount.organizationType,
 //                        a verbatim capability token ("claude_max"); null if unavailable
 //   subscriptionType   - local .credentials.json subscriptionType (legacy builds); null if unavailable
+//   creditsEnabled     - usage credits (extra usage) on for the org; bool or
+//                        null when unknown
 //   s1mHasAccess       - Claude Code's s1mAccessCache[org].hasAccess; bool or null
 //   modelIds           - JSONL model IDs detected in the active session
 //   observedFloor      - max cache_read_input_tokens observed in session
@@ -236,6 +252,7 @@ function resolveContextWindow(input = {}) {
         capabilities = null,
         organizationType = null,
         subscriptionType = null,
+        creditsEnabled = null,
         s1mHasAccess = null,
         modelIds = null,
         observedFloor = 0,
@@ -269,49 +286,37 @@ function resolveContextWindow(input = {}) {
         };
     }
 
-    // 4. Rule table match using live capabilities. Nothing supplies these
-    // today (see the header), so this falls through to the local match below.
-    const liveRule = matchRuleTable(capabilities, modelIds);
-    if (liveRule) {
+    // 4. Rule table match on the session's model. The plan tokens are
+    // gathered from every source that has one - live capabilities, then
+    // oauthAccount.organizationType (the only local signal on macOS, #51),
+    // then the legacy subscriptionType of older builds - and are used solely
+    // to evaluate a rule's credits caveat.
+    const planTokens = [];
+    if (Array.isArray(capabilities)) {
+        planTokens.push(...capabilities.filter(c => typeof c === 'string'));
+    }
+    if (organizationType && typeof organizationType === 'string'
+        && !planTokens.includes(organizationType)) {
+        planTokens.push(organizationType);
+    }
+    const legacyCap = subscriptionTypeToCapability(subscriptionType);
+    if (legacyCap && !planTokens.includes(legacyCap)) {
+        planTokens.push(legacyCap);
+    }
+
+    const rule = matchRuleTable(modelIds, { planTokens, creditsEnabled });
+    if (rule) {
         return {
-            limit: liveRule.limit,
-            source: liveRule.source,
+            limit: rule.limit,
+            source: rule.source,
             confidence: 'inferred',
         };
     }
 
-    // 5. Rule table match using local plan signals. Useful in
-    // tokenOnlyMode where the /api/bootstrap fetch never runs, or
-    // before the first fetch completes on startup.
-    //
-    // oauthAccount.organizationType is tried first: current builds
-    // write the capability token verbatim ("claude_max"), and on
-    // macOS it is the ONLY local plan signal (.credentials.json does
-    // not exist there - #51). The legacy subscriptionType synthesis
-    // remains as the fallback for older builds.
-    const localCaps = [];
-    if (organizationType && typeof organizationType === 'string') {
-        localCaps.push(organizationType);
-    }
-    const legacyCap = subscriptionTypeToCapability(subscriptionType);
-    if (legacyCap && !localCaps.includes(legacyCap)) {
-        localCaps.push(legacyCap);
-    }
-    if (localCaps.length > 0) {
-        const localRule = matchRuleTable(localCaps, modelIds);
-        if (localRule) {
-            return {
-                limit: localRule.limit,
-                source: `${localRule.source}-local`,
-                confidence: 'inferred',
-            };
-        }
-    }
-
-    // 6. Claude Code's own eligibility cache corroborates extended
-    // context. Only fires when the rule table DIDN'T match -
-    // meaning we trust the cache as a last-resort "configured"
-    // signal rather than a primary source.
+    // 5. Claude Code's own eligibility cache corroborates extended
+    // context. Only fires when the rule table did not match, so it
+    // serves as a last-resort "configured" signal rather than a
+    // primary source.
     if (s1mHasAccess === true) {
         return {
             limit: 1_000_000,
@@ -320,7 +325,7 @@ function resolveContextWindow(input = {}) {
         };
     }
 
-    // 7. observed-floor fallback: snap to the next known tier so
+    // 6. observed-floor fallback: snap to the next known tier so
     // the "limit" is always a plausible Anthropic context size,
     // never a raw mid-tier value. Labelled `inferred` so the
     // tooltip can say so.
@@ -332,7 +337,7 @@ function resolveContextWindow(input = {}) {
         };
     }
 
-    // 8. Nothing to go on - default to standard.
+    // 7. Nothing to go on - default to standard.
     return {
         limit: STANDARD_LIMIT,
         source: 'standard',

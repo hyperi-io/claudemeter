@@ -183,9 +183,16 @@ describe('getModelContextWindow', () => {
 });
 
 describe('resolveSessionContextWindow', () => {
+    // Models the rule table covers resolve to their own window with no other
+    // signal, so the no-signal cases here use one it does not cover.
     it('returns 200K when no signals', () => {
-        const models = ['claude-opus-4-6', 'claude-sonnet-4-6'];
+        const models = ['claude-haiku-4-5-20251001'];
         expect(resolveSessionContextWindow(models, 50000)).toBe(STANDARD_LIMIT);
+    });
+
+    it('returns the model rule window with no other signal', () => {
+        expect(resolveSessionContextWindow(['claude-opus-4-6'], 50000)).toBe(1000000);
+        expect(resolveSessionContextWindow(['claude-sonnet-5'], 50000)).toBe(1000000);
     });
 
     it('returns 1M from alias declared limit', () => {
@@ -233,13 +240,13 @@ describe('resolveSessionContextWindow', () => {
     });
 
     it('returns 200K when observed tokens exactly at boundary', () => {
-        expect(resolveSessionContextWindow(['claude-opus-4-6'], 200000)).toBe(STANDARD_LIMIT);
+        expect(resolveSessionContextWindow(['claude-haiku-4-5-20251001'], 200000)).toBe(STANDARD_LIMIT);
     });
 
     it('snaps to 1M when observed is just over 200K', () => {
         // Snaps to the next known tier because 200001 is not itself a valid
         // context window size.
-        expect(resolveSessionContextWindow(['claude-opus-4-6'], 200001)).toBe(1000000);
+        expect(resolveSessionContextWindow(['claude-haiku-4-5-20251001'], 200001)).toBe(1000000);
     });
 
     it('returns 200K for empty model list with low tokens', () => {
@@ -284,7 +291,7 @@ describe('resolveSessionContextWindow', () => {
     });
 
     it('zero eligibility is treated as no signal', () => {
-        expect(resolveSessionContextWindow(['claude-opus-4-6'], 0, 0, 0)).toBe(STANDARD_LIMIT);
+        expect(resolveSessionContextWindow(['claude-haiku-4-5-20251001'], 0, 0, 0)).toBe(STANDARD_LIMIT);
     });
 });
 

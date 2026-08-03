@@ -55,6 +55,36 @@ function quickPickCommand({ id, items, placeHolder, onPick, performFetch }) {
  * @param {vscode.ExtensionContext} context
  * @param {(silent: boolean) => Promise<void>} performFetch
  */
+const CONTEXT_WINDOW_CHOICES = {
+    '200k': 200_000,
+    '1m': 1_000_000,
+    '2m': 2_000_000,
+};
+
+// The plan-and-credits combinations the context-window rules distinguish.
+const PLAN_SIGNAL_CHOICES = {
+    'live': null,
+    'max': { organizationType: 'claude_max', subscriptionType: 'max', creditsEnabled: null },
+    'pro, credits on': { organizationType: 'claude_pro', subscriptionType: 'pro', creditsEnabled: true },
+    'pro, credits off': { organizationType: 'claude_pro', subscriptionType: 'pro', creditsEnabled: false },
+    'enterprise': { organizationType: 'claude_enterprise', subscriptionType: null, creditsEnabled: false },
+    'no plan signal': { organizationType: null, subscriptionType: null, creditsEnabled: null },
+};
+
+// Parse "Fable=72, Opus=15" into the scoped-gauge list, or null if any pair is
+// malformed so the input box can reject it.
+function parseScopedInput(text) {
+    const entries = [];
+    for (const part of String(text).split(',')) {
+        const [label, percent] = part.split('=');
+        const name = (label || '').trim();
+        const value = Number((percent || '').trim());
+        if (!name || !Number.isFinite(value) || value < 0 || value > 100) return null;
+        entries.push({ label: name, percent: value });
+    }
+    return entries.length > 0 ? entries : null;
+}
+
 function registerSimulatorCommands(context, performFetch) {
     context.subscriptions.push(
         // Tier-quickpick: snap the Tk gauge to a specific level
@@ -88,16 +118,48 @@ function registerSimulatorCommands(context, performFetch) {
             setter: simulator.setWeeklyPercent,
             performFetch,
         }),
-        percentCommand({
-            id: 'claudemeter.simulate.sonnetPercent',
-            prompt: 'Force Sonnet % (0-100, blank to clear). Requires claudemeter.statusBar.showSonnet=true.',
-            setter: simulator.setSonnetPercent,
+        // Scoped gauges take a whole list rather than one model's percent, so
+        // a simulated set can cover models this account has never used.
+        vscode.commands.registerCommand('claudemeter.simulate.scopedWeekly', async () => {
+            const v = await vscode.window.showInputBox({
+                prompt: 'Force scoped weekly caps as "Label=percent" pairs, comma separated (e.g. "Fable=72, Opus=15"). Blank to clear.',
+                validateInput: (s) => s === '' || parseScopedInput(s) !== null
+                    ? null : 'Enter Label=percent pairs, or leave blank',
+            });
+            if (v === undefined) return;
+            simulator.setScopedWeekly(v === '' ? null : parseScopedInput(v));
+            await performFetch(false);
+        }),
+        // Forces the resolved context window so the Tk gauge can be driven at
+        // any window size from any account.
+        quickPickCommand({
+            id: 'claudemeter.simulate.contextWindow',
+            items: ['live', '200k', '1m', '2m'],
+            placeHolder: 'Force the context window',
+            onPick: (choice) => simulator.setContextWindow(
+                choice === 'live' ? null : CONTEXT_WINDOW_CHOICES[choice]
+            ),
             performFetch,
         }),
-        percentCommand({
-            id: 'claudemeter.simulate.opusPercent',
-            prompt: 'Force Opus % (0-100, blank to clear). Requires claudemeter.statusBar.showOpus=true.',
-            setter: simulator.setOpusPercent,
+        // Forces the plan signals the context-window rules read, so the credits
+        // caveat can be seen without a second account.
+        quickPickCommand({
+            id: 'claudemeter.simulate.planSignals',
+            items: Object.keys(PLAN_SIGNAL_CHOICES),
+            placeHolder: 'Force the plan signals the window rules read',
+            onPick: (choice) => simulator.setPlanSignals(PLAN_SIGNAL_CHOICES[choice]),
+            performFetch,
+        }),
+        // Stands in for the global threshold-icon setting for this session
+        // only. Every other simulate command is in-memory and cleared by
+        // Clear All; writing the real setting would outlive the dev host.
+        quickPickCommand({
+            id: 'claudemeter.simulate.thresholdIcons',
+            items: ['live', 'on', 'off'],
+            placeHolder: 'Show threshold glyphs on the usage gauges?',
+            onPick: (choice) => simulator.setThresholdIcons(
+                choice === 'live' ? null : choice === 'on'
+            ),
             performFetch,
         }),
         percentCommand({

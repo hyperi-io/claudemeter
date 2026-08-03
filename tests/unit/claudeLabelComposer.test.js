@@ -31,6 +31,8 @@ describe('composeClaudeLabel - baseline', () => {
 });
 
 describe('composeClaudeLabel - service status icons', () => {
+    // Platform-status icons are not opt-in, unlike the usage gauges: an
+    // outage is not a threshold being approached.
     it('degraded (minor) shows $(warning) yellow, no background', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'minor' } });
         expect(r.text).toContain('$(warning)');
@@ -63,10 +65,19 @@ describe('composeClaudeLabel - service status icons', () => {
         }
     });
 
-    it('unknown shows $(question) with no colour or background', () => {
+    // Unreachable is not a severity, so it says nothing in the status bar and
+    // explains itself in the tooltip.
+    it('unknown shows no status-bar icon, colour or background', () => {
         const r = composeClaudeLabel({ serviceStatus: { indicator: 'unknown' } });
-        expect(r.text).toContain('$(question)');
+        expect(r.text).toBe('Claude');
+        expect(r.color).toBeUndefined();
         expect(r.backgroundColor).toBeUndefined();
+    });
+
+    it('unknown keeps $(question) in the tooltip line', () => {
+        const r = composeClaudeLabel({ serviceStatus: { indicator: 'unknown' } });
+        expect(r.tooltipLines[0]).toContain('$(question)');
+        expect(r.tooltipLines[0]).toContain('Status unknown');
     });
 
     it('appends description when different from label', () => {

@@ -14,8 +14,10 @@ let simulatedTokenLevel = null;
 let simulatedTokenUsed = null;          // raw token count, lets simulator drive 'used'
 let simulatedSessionPercent = null;
 let simulatedWeeklyPercent = null;
-let simulatedSonnetPercent = null;      // 0..100, overrides usageData.usagePercentSonnet
-let simulatedOpusPercent = null;        // 0..100, overrides usageData.usagePercentOpus
+let simulatedScopedWeekly = null;       // [{label, percent}], overrides usageData.scopedWeekly
+let simulatedThresholdIcons = null;     // null | true | false, stands in for the global setting
+let simulatedContextWindow = null;      // token count, overrides the resolved window
+let simulatedPlanSignals = null;        // {subscriptionType, organizationType, creditsEnabled}
 let simulatedCreditsPercent = null;     // 0..100, overrides monthlyCredits.percent
 let simulatedHappyHour = null;          // null | true | false
 let simulatedColorMode = null;          // null | 'color' | 'basic'
@@ -62,21 +64,52 @@ function setWeeklyPercent(p) {
 }
 function getWeeklyPercent() { return simulatedWeeklyPercent; }
 
-function setSonnetPercent(p) {
-    if (p === null) { simulatedSonnetPercent = null; return; }
-    const v = clamp01_100(p);
-    if (v === null) return;
-    simulatedSonnetPercent = v;
+// Scoped weekly gauges are model-agnostic: the simulator takes the same
+// [{label, percent}] list the payload produces, so a new model needs no
+// simulator change.
+function setScopedWeekly(entries) {
+    if (entries === null) { simulatedScopedWeekly = null; return; }
+    if (!Array.isArray(entries)) return;
+    const cleaned = entries
+        .map(e => ({ label: String(e?.label ?? ''), percent: clamp01_100(e?.percent) }))
+        .filter(e => e.label.length > 0 && e.percent !== null)
+        .map(e => ({ ...e, modelId: null, resetsAt: null, severity: null }));
+    simulatedScopedWeekly = cleaned;
 }
-function getSonnetPercent() { return simulatedSonnetPercent; }
+function getScopedWeekly() { return simulatedScopedWeekly; }
 
-function setOpusPercent(p) {
-    if (p === null) { simulatedOpusPercent = null; return; }
-    const v = clamp01_100(p);
-    if (v === null) return;
-    simulatedOpusPercent = v;
+// Stand in for the global threshold-icon setting. Sits at the GLOBAL tier of
+// the cascade, so a per-gauge override still wins over it and the real
+// precedence is what gets tested.
+function setThresholdIcons(on) {
+    if (on === null) { simulatedThresholdIcons = null; return; }
+    simulatedThresholdIcons = !!on;
 }
-function getOpusPercent() { return simulatedOpusPercent; }
+function getThresholdIcons() { return simulatedThresholdIcons; }
+
+// Force the resolved context window, so the Tk gauge can be driven against a
+// 1M or 200K window without an account on that plan.
+function setContextWindow(limit) {
+    if (limit === null) { simulatedContextWindow = null; return; }
+    const v = clampNonNegative(limit);
+    if (v === null || v === 0) return;
+    simulatedContextWindow = v;
+}
+function getContextWindow() { return simulatedContextWindow; }
+
+// Force the plan signals the context-window rules read, so the credits caveat
+// can be exercised without switching accounts. `creditsEnabled` is tri-state:
+// null means unknown, which grants the window.
+function setPlanSignals(signals) {
+    if (signals === null) { simulatedPlanSignals = null; return; }
+    if (!signals || typeof signals !== 'object') return;
+    simulatedPlanSignals = {
+        subscriptionType: typeof signals.subscriptionType === 'string' ? signals.subscriptionType : null,
+        organizationType: typeof signals.organizationType === 'string' ? signals.organizationType : null,
+        creditsEnabled: typeof signals.creditsEnabled === 'boolean' ? signals.creditsEnabled : null,
+    };
+}
+function getPlanSignals() { return simulatedPlanSignals; }
 
 function setCreditsPercent(p) {
     if (p === null) { simulatedCreditsPercent = null; return; }
@@ -111,8 +144,10 @@ function clearAll() {
     simulatedTokenUsed = null;
     simulatedSessionPercent = null;
     simulatedWeeklyPercent = null;
-    simulatedSonnetPercent = null;
-    simulatedOpusPercent = null;
+    simulatedScopedWeekly = null;
+    simulatedThresholdIcons = null;
+    simulatedContextWindow = null;
+    simulatedPlanSignals = null;
     simulatedCreditsPercent = null;
     simulatedHappyHour = null;
     simulatedColorMode = null;
@@ -124,8 +159,10 @@ module.exports = {
     setTokenUsed, getTokenUsed,
     setSessionPercent, getSessionPercent,
     setWeeklyPercent, getWeeklyPercent,
-    setSonnetPercent, getSonnetPercent,
-    setOpusPercent, getOpusPercent,
+    setScopedWeekly, getScopedWeekly,
+    setThresholdIcons, getThresholdIcons,
+    setContextWindow, getContextWindow,
+    setPlanSignals, getPlanSignals,
     setCreditsPercent, getCreditsPercent,
     setHappyHour, getHappyHour,
     setColorMode, getColorMode,
