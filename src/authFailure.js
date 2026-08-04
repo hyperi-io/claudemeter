@@ -114,6 +114,48 @@ function summariseAuthFailure(reason, context) {
 const AUTH_REASONS = Object.freeze(Object.keys(AUTH_FAILURES)
     .reduce((acc, name) => ({ ...acc, [name]: name }), {}));
 
+// Whether a login launched from this window would reach the machine whose
+// credential store the meter actually reads.
+//
+// Claudemeter declares `extensionKind: ui`, so its host is the CLIENT, and it
+// resolves the CLI and reads the credential store there. VS Code's terminals
+// follow the window's remote authority instead, so in a Remote-SSH, WSL or
+// container window a login command lands on the REMOTE machine - a different
+// host from the one being metered, and one where a client path is meaningless
+// (#58).
+function loginReachesMeteredMachine(remoteName) {
+    return !remoteName;
+}
+
+// What to tell someone in a remote window, where claudemeter cannot start the
+// login for them. `cliPath` is the client-side CLI the resolver found, quoted
+// so it can be pasted as-is.
+function describeRemoteLogin(remoteName, cliPath) {
+    const where = REMOTE_LABELS[remoteName] || 'a remote window';
+    const command = cliPath && /\s/.test(cliPath) ? `"${cliPath}"` : cliPath;
+    return {
+        title: 'Log in on your local machine',
+        lines: [
+            `This is ${where}, and Claudemeter reads Claude Code's login on the machine VS Code is running ON, not the one you are connected to.`,
+            'A terminal here would run on the remote host, so it cannot complete this login.',
+            command
+                ? `Run this in a local terminal: ${command} auth login`
+                : 'Run `claude auth login` in a local terminal.',
+        ],
+    };
+}
+
+// VS Code's remote authority names, for wording the message in the user's own
+// terms. An unlisted authority still resolves to the generic phrasing.
+const REMOTE_LABELS = {
+    'ssh-remote': 'a Remote-SSH window',
+    wsl: 'a WSL window',
+    'dev-container': 'a Dev Container window',
+    'attached-container': 'an attached container window',
+    codespaces: 'a Codespaces window',
+    tunnel: 'a Remote Tunnel window',
+};
+
 // Which failure a rejected request represents. A 403 on the usage endpoints is
 // a scope the token lacks, which a token refresh can silently drop; a 401 is an
 // invalid token, and an already-expired one is stale rather than wrong.
@@ -128,4 +170,6 @@ module.exports = {
     describeAuthFailure,
     summariseAuthFailure,
     classifyRejection,
+    loginReachesMeteredMachine,
+    describeRemoteLogin,
 };

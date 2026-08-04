@@ -22,7 +22,14 @@ const { execFileSync } = require('child_process');
 const oauthFetcher = require('./src/oauthFetcher');
 const { cachedFetchUsage } = require('./src/usageCache');
 const { readToken, watchToken, detectAuthOverride, describeStores } = require('./src/tokenSource');
-const { AUTH_REASONS, AUTH_FAILURES, describeAuthFailure, summariseAuthFailure } = require('./src/authFailure');
+const {
+    AUTH_REASONS,
+    AUTH_FAILURES,
+    describeAuthFailure,
+    summariseAuthFailure,
+    loginReachesMeteredMachine,
+    describeRemoteLogin,
+} = require('./src/authFailure');
 const { redactIdentity } = require('./src/redact');
 const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
 const { getStats: getActivityStats } = require('./src/activityMonitor');
@@ -145,6 +152,23 @@ async function beginLoginOrInstall() {
         }
         return;
     }
+    // In a remote window the terminal we would launch runs on the remote host,
+    // while the CLI we resolved and the credential store we read are both on
+    // the client. Say so instead of issuing a command that cannot work (#58).
+    if (!loginReachesMeteredMachine(vscode.env.remoteName)) {
+        const remote = describeRemoteLogin(vscode.env.remoteName, cli);
+        fileLog(`Remote window (${vscode.env.remoteName}) - login must run on the client`);
+        const pick = await vscode.window.showWarningMessage(
+            `${remote.title}. ${remote.lines.join(' ')}`,
+            'Copy command',
+            'Later'
+        );
+        if (pick === 'Copy command') {
+            await vscode.env.clipboard.writeText(`${cli.includes(' ') ? `"${cli}"` : cli} auth login`);
+        }
+        return;
+    }
+
     const action = await vscode.window.showInformationMessage(
         'Claudemeter: log into Claude Code to see your usage limits.',
         'Log in',
@@ -156,6 +180,12 @@ async function beginLoginOrInstall() {
 // Run `claude auth login` in an integrated terminal (real shell PATH), then
 // poll for the token so we refresh as soon as it lands.
 function launchClaudeLogin(cli) {
+    // The terminal follows the window's remote authority, so this must never
+    // run in a remote window whatever route reached it (#58).
+    if (!loginReachesMeteredMachine(vscode.env.remoteName)) {
+        fileLog('Refused to launch a login terminal in a remote window');
+        return;
+    }
     let bin = cli || resolveClaudeCli() || 'claude';
     // The which/where branch of resolveClaudeCli resolves via PATH, which an
     // attacker could seed with a directory whose name contains shell
@@ -550,6 +580,10 @@ function buildStateDump() {
         timestamp: new Date().toISOString(),
         version: getExtensionVersion(),
         mode: 'oauth',
+        // The window's remote authority, or null when local. Claudemeter runs
+        // on the client, so this is what tells a remote report which machine
+        // the CLI and credential store were read from (#58).
+        remoteName: vscode.env.remoteName || null,
         workspacePath: currentWorkspacePath,
         identityPresent: !!getIdentityKey(creds),
         credentials: safeCreds,
