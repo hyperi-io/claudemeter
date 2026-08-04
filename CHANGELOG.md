@@ -1,3 +1,10 @@
+## [2.5.15](https://github.com/hyperi-io/claudemeter/compare/v2.5.14...v2.5.15) (2026-08-04)
+
+
+### Bug Fixes
+
+* stop offering a login that lands on the wrong machine ([c4cc3cb](https://github.com/hyperi-io/claudemeter/commit/c4cc3cb426236652fc169c8b6ab457abaa7d0222)), closes [#57](https://github.com/hyperi-io/claudemeter/issues/57) [#58](https://github.com/hyperi-io/claudemeter/issues/58)
+
 ## [2.5.14](https://github.com/hyperi-io/claudemeter/compare/v2.5.13...v2.5.14) (2026-08-04)
 
 
