@@ -456,6 +456,20 @@ async function setupTokenMonitoring(context) {
         fileLog('Extension activated (no workspace)');
     }
 
+    // The Tk gauge is per-workspace and reads Claude Code's transcripts off
+    // disk. A `ui` extension runs on the CLIENT, so in a remote window the
+    // workspace path names a directory on the REMOTE host while every lookup
+    // resolves against the client, matching whatever the client happens to
+    // have at that path - a same-named local project then supplies someone
+    // else's context (#58). No correct answer is reachable from this side, so
+    // the gauge stays blank rather than confidently wrong. Web usage is
+    // account-global and unaffected.
+    if (vscode.env.remoteName) {
+        debugLog(`Remote window (${vscode.env.remoteName}) - Tk gauge disabled`);
+        fileLog(`Remote window (${vscode.env.remoteName}) - Tk gauge disabled, the transcripts are on the remote host`);
+        return;
+    }
+
     claudeDataLoader = new ClaudeDataLoader(currentWorkspacePath, debugLog);
 
     const claudeDir = await claudeDataLoader.findClaudeDataDirectory();
@@ -738,6 +752,9 @@ function scheduleJsonlUpdate() {
 }
 
 async function updateTokensFromJsonl(silent = false) {
+    // Absent wherever the Tk pipeline was never set up, which includes a
+    // remote window (#58). The refresh timer fires regardless of that.
+    if (!claudeDataLoader) return;
     try {
         const usage = await claudeDataLoader.getCurrentSessionUsage();
 
@@ -1156,8 +1173,12 @@ async function activate(context) {
 
     autoRefreshTimer = createAutoRefreshTimer(config.get('usageRefreshSeconds', 120));
 
+    // The local timer exists only to refresh Tk, which a remote window has no
+    // readable source for.
     const localRefreshSeconds = config.get('localRefreshSeconds', 15);
-    localRefreshTimer = createLocalRefreshTimer(localRefreshSeconds);
+    if (!vscode.env.remoteName) {
+        localRefreshTimer = createLocalRefreshTimer(localRefreshSeconds);
+    }
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(async (e) => {
@@ -1178,7 +1199,9 @@ async function activate(context) {
 
                 const newConfig = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
                 const newLocalRefresh = newConfig.get('localRefreshSeconds', 15);
-                localRefreshTimer = createLocalRefreshTimer(newLocalRefresh);
+                if (!vscode.env.remoteName) {
+                    localRefreshTimer = createLocalRefreshTimer(newLocalRefresh);
+                }
             }
 
             if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.statusBar`)) {

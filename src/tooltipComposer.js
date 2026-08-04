@@ -186,7 +186,13 @@ function renderSessionBlock(state) {
 }
 
 function renderCurrentContextBlock(state) {
-    const { sessionData, tokensInfo } = state;
+    const { sessionData, tokensInfo, remoteName } = state;
+    // A gauge that is absent for a structural reason has to say so, or it
+    // reads as broken (#58).
+    if (remoteName) {
+        return ['', '**Current context - unavailable here**',
+            '_Claude Code\'s transcripts are on the remote host, and Claudemeter runs on this machine._'];
+    }
     if (!sessionData || !sessionData.tokenUsage) return [];
 
     const tokenPercent = Math.round(

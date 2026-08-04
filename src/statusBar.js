@@ -1163,6 +1163,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         marketplaceUrl,
         brandIconDataUri: getBrandIconDataUri(),
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
+        remoteName: vscode.env.remoteName || null,
         tokensInfo,
         config: {
             tokenLimitOverride: config.get('tokenLimit', 0),
