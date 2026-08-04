@@ -1,3 +1,11 @@
+## [2.5.16](https://github.com/hyperi-io/claudemeter/compare/v2.5.15...v2.5.16) (2026-08-04)
+
+
+### Bug Fixes
+
+* **deps:** clear the seven open advisories in the dev tree ([29ec938](https://github.com/hyperi-io/claudemeter/commit/29ec938af308c42fa4f071673e84dfd5e4cfba61))
+* hide the context gauge in a remote window instead of guessing ([58996a8](https://github.com/hyperi-io/claudemeter/commit/58996a8358958c9dffa12e2de814877e5caa4ae7)), closes [#58](https://github.com/hyperi-io/claudemeter/issues/58)
+
 ## [2.5.15](https://github.com/hyperi-io/claudemeter/compare/v2.5.14...v2.5.15) (2026-08-04)
 
 
