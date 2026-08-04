@@ -226,6 +226,23 @@ function processApiResponse(apiResponse, creditsData, overageData, accountInfo, 
     };
 }
 
+// Recompute derived fields missing from a cached usageData. The cross-window
+// cache can be written by an older resident bundle whose shape predates a
+// field, so anything derivable is recomputed from the cached rawData rather
+// than trusted absent. An empty scopedWeekly array is a real value (the
+// payload reported no scoped caps) and is left alone.
+function upgradeCachedUsage(usageData) {
+    if (!usageData || !usageData.rawData) return usageData;
+    if (usageData.scopedWeekly === undefined) {
+        const data = extractFromSchema(usageData.rawData, USAGE_API_SCHEMA);
+        usageData.scopedWeekly = normaliseScopedWeekly(resolveGauges(usageData.rawData), data);
+    }
+    if (usageData.limits === undefined) {
+        usageData.limits = usageData.rawData.limits || null;
+    }
+    return usageData;
+}
+
 function getSchemaInfo() {
     return {
         version: '2.0',
@@ -244,5 +261,6 @@ module.exports = {
     processPrepaidData,
     calculateResetTime,
     processApiResponse,
+    upgradeCachedUsage,
     getSchemaInfo,
 };

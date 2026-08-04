@@ -25,12 +25,17 @@ const fs = require('fs').promises;
 const path = require('path');
 const { PATHS } = require('./utils');
 const { acquireFileLock, releaseFileLock, atomicWriteJson } = require('./sessionTracker');
+const { upgradeCachedUsage } = require('./apiSchema');
 
 const CACHE_FILE = path.join(PATHS.CONFIG_DIR, 'usage-cache.json');
 
+// The cache may have been written by a different resident claudemeter version,
+// so derived fields the writer never stored are recomputed on the way out.
 async function readCache() {
     try {
-        return JSON.parse(await fs.readFile(CACHE_FILE, 'utf8'));
+        const cache = JSON.parse(await fs.readFile(CACHE_FILE, 'utf8'));
+        if (cache && cache.usageData) upgradeCachedUsage(cache.usageData);
+        return cache;
     } catch {
         return null; // missing / unreadable / malformed
     }
