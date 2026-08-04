@@ -25,8 +25,11 @@ function describeOrgNameShape(orgName) {
 }
 
 // Identity fields dropped from any account-shaped object, reported as presence.
-const IDENTITY_FIELDS = ['email', 'emailAddress', 'displayName', 'fullName', 'accountUuid',
-    'organizationUuid', 'orgId', 'organizationName', 'name', 'orgName'];
+// Both spellings: the local config files are camelCase and the OAuth /profile
+// payload is snake_case, and either shape can reach the dump.
+const IDENTITY_FIELDS = ['email', 'emailAddress', 'email_address', 'displayName', 'display_name',
+    'fullName', 'full_name', 'accountUuid', 'account_uuid', 'organizationUuid', 'organization_uuid',
+    'orgId', 'org_id', 'organizationName', 'organization_name', 'name', 'orgName'];
 
 function presenceKey(field) {
     return `has${field.charAt(0).toUpperCase()}${field.slice(1)}`;

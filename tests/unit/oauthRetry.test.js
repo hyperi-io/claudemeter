@@ -39,8 +39,9 @@ describe('oauthFetcher.pickRetryCandidates', () => {
         expect(pickRetryCandidates('A', { keychain: null, file: null })).toEqual([]);
     });
 
-    it('caps the work at one attempt per store', () => {
+    it('returns each candidate at most once', () => {
         const stores = { keychain: tok('keychain', 'K'), file: tok('file', 'F') };
-        expect(pickRetryCandidates('A', stores).length).toBeLessThanOrEqual(2);
+        const tokens = pickRetryCandidates('A', stores).map((c) => c.token);
+        expect(new Set(tokens).size).toBe(tokens.length);
     });
 });

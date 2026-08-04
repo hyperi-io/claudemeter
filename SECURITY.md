@@ -77,9 +77,11 @@ fires:
 ## Credentials handling
 
 - Claudemeter reads Claude Code's existing OAuth token from the shared
-  store it writes - the macOS Keychain (`Claude Code-credentials`) or
-  `~/.claude/.credentials.json` on Linux/Windows (honouring
-  `CLAUDE_CONFIG_DIR`). It reads the token fresh per fetch and never
+  store it writes - the macOS Keychain, or `~/.claude/.credentials.json`
+  on Linux/Windows. Both are resolved the way Claude Code resolves them,
+  so `CLAUDE_CONFIG_DIR` moves the file and scopes the Keychain item to
+  that directory. Claudemeter reads only the item that directory maps to
+  and never searches the Keychain. It reads the token fresh per fetch and never
   copies, persists, or writes it back - so it cannot disturb Claude
   Code's own login.
 - The token is used only as the `Authorization: Bearer` header to

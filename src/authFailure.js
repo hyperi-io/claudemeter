@@ -41,10 +41,10 @@ const AUTH_FAILURES = {
         canRelogin: true,
     },
     SCOPE_MISSING: {
-        title: 'Login is missing a permission',
+        title: 'Claude refused this login for the usage data',
         lines: [
-            'The token works but lacks the scope the usage endpoint needs, which a token refresh can drop.',
-            'Run `claude auth login` for a token with current scopes - no need to log out first.',
+            'The token authenticates but is not permitted to read usage, which a token refresh can cause.',
+            'Run `claude auth login` for a token with current permissions - no need to log out first.',
         ],
         canRelogin: true,
     },
@@ -65,6 +65,14 @@ const AUTH_FAILURES = {
 
 const FALLBACK = AUTH_FAILURES.NO_TOKEN;
 
+// These lines are rendered into a trusted MarkdownString, where a `command:`
+// link executes on click. The values interpolated into them come from the
+// environment (a config dir a cloned repo's devcontainer can set) and from
+// network error text, so the link syntax is neutralised rather than trusted.
+function esc(value) {
+    return String(value).replace(/[[\]()`<>\\]/g, '\\$&');
+}
+
 // Resolve a reason into its description. Unknown reasons degrade to the
 // not-logged-in wording rather than throwing.
 //
@@ -73,15 +81,15 @@ const FALLBACK = AUTH_FAILURES.NO_TOKEN;
 //   override - the env var displacing the subscription login
 //   lookedIn - the config dir searched, for the store-absence reasons
 //   cause    - the underlying error, for the reasons a request produced
-function describeAuthFailure(reason, context = {}) {
+function describeAuthFailure(reason, context) {
     const spec = AUTH_FAILURES[reason] || FALLBACK;
     const { override, lookedIn, cause } = typeof context === 'string'
         ? { lookedIn: context }
-        : context;
+        : (context || {});
     const lines = [...spec.lines];
-    if (override) lines.unshift(`Claude Code is using ${override} instead of a subscription login.`);
-    if (lookedIn) lines.push(`Looked in: ${lookedIn}`);
-    if (cause) lines.push(`Reported by Claude: ${cause}`);
+    if (override) lines.unshift(`Claude Code is using ${esc(override)} instead of a subscription login.`);
+    if (lookedIn) lines.push(`Looked in: ${esc(lookedIn)}`);
+    if (cause) lines.push(`Reported by Claude: ${esc(cause)}`);
     return {
         reason: AUTH_FAILURES[reason] ? reason : 'NO_TOKEN',
         title: spec.title,
@@ -90,10 +98,14 @@ function describeAuthFailure(reason, context = {}) {
     };
 }
 
-// One-line form for the status-bar error and the debug log.
+// One-line form for the status-bar error and the debug log. The override is
+// named here as well as in the tooltip, because this is the whole of what a
+// toast shows and "subscription usage unavailable" alone does not say why.
 function summariseAuthFailure(reason, context) {
     const { title, canRelogin } = describeAuthFailure(reason, context);
-    return canRelogin ? `${title}. Click to log in.` : title;
+    if (canRelogin) return `${title}. Click to log in.`;
+    const override = context && typeof context === 'object' ? context.override : null;
+    return override ? `${title} - Claude Code is using ${override}.` : title;
 }
 
 // The reasons producers may emit. tokenSource raises the store ones and

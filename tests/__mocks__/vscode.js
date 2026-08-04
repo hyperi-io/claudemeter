@@ -78,6 +78,22 @@ class ThemeColor {
     constructor(id) { this.id = id; }
 }
 
+// Tooltips are MarkdownStrings. `value` is what a test reads back to assert on
+// rendered copy; `isTrusted` is what makes a `command:` link executable, so a
+// test asserting escaping needs both.
+class MarkdownString {
+    constructor(value = '') {
+        this.value = value;
+        this.isTrusted = false;
+        this.supportThemeIcons = false;
+    }
+
+    appendMarkdown(v) {
+        this.value += v;
+        return this;
+    }
+}
+
 module.exports = {
     workspace: {
         getConfiguration,
@@ -96,12 +112,17 @@ module.exports = {
             dispose: () => {},
         }),
         createStatusBarItem: () => ({
+            text: '',
+            tooltip: undefined,
+            color: undefined,
+            backgroundColor: undefined,
             show: () => {},
             hide: () => {},
             dispose: () => {},
         }),
         showInformationMessage: () => Promise.resolve(undefined),
         showErrorMessage: () => Promise.resolve(undefined),
+        showWarningMessage: () => Promise.resolve(undefined),
     },
     StatusBarAlignment: { Left: 1, Right: 2 },
     ProgressLocation: { Notification: 1 },
@@ -115,6 +136,7 @@ module.exports = {
         file: (p) => ({ fsPath: p }),
     },
     ThemeColor,
+    MarkdownString,
     ConfigurationTarget,
     _setConfigValues,
     _resetConfigValues,

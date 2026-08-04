@@ -178,9 +178,12 @@ async function fetchUsageData() {
     if (!tok.ok) {
         const err = new Error(tok.reason === 'ENV_OVERRIDE' ? 'AUTH_OVERRIDE' : 'NO_OAUTH_TOKEN');
         err.authReason = tok.reason;
+        // Name the store that was actually blank. On macOS the token lives in
+        // the Keychain and the config dir holds no credentials file at all, so
+        // reporting the directory there points at the wrong place.
         err.authContext = tok.reason === 'ENV_OVERRIDE'
             ? { override: tok.detail }
-            : { lookedIn: tok.detail };
+            : { lookedIn: tok.source === 'keychain' ? 'the macOS Keychain' : tok.detail };
         // Auth-absence, not a transient failure: the usage cache must NOT
         // serve stale subscription numbers over this - the user is logged
         // out / on an API key and should see that, not yesterday's usage.

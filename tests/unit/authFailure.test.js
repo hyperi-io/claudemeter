@@ -68,6 +68,43 @@ describe('authFailure - context renders by kind, not position', () => {
         const { lines } = describeAuthFailure(AUTH_REASONS.NO_TOKEN, '/x/.claude');
         expect(lines).toContain('Looked in: /x/.claude');
     });
+
+    it('degrades on a null context rather than throwing', () => {
+        expect(() => describeAuthFailure(AUTH_REASONS.NO_TOKEN, null)).not.toThrow();
+    });
+});
+
+// These lines are rendered into a trusted MarkdownString, where a `command:`
+// link executes on click, and the values come from the environment and from
+// network error text.
+describe('authFailure - markdown link syntax is neutralised', () => {
+    it('escapes a command link planted in the config dir', () => {
+        const { lines } = describeAuthFailure(AUTH_REASONS.NO_TOKEN, {
+            lookedIn: '/tmp/[PWNED](command:workbench.action.terminal.new)',
+        });
+        const rendered = lines.join(' ');
+        expect(rendered).not.toContain('[PWNED](command:');
+        expect(rendered).toContain('\\[PWNED\\]');
+    });
+
+    it('escapes link syntax in an error cause and an override name', () => {
+        expect(describeAuthFailure(AUTH_REASONS.TOKEN_EXPIRED, { cause: '[x](command:y)' })
+            .lines.join(' ')).not.toContain('](command:');
+        expect(describeAuthFailure(AUTH_REASONS.ENV_OVERRIDE, { override: '[x](command:y)' })
+            .lines.join(' ')).not.toContain('](command:');
+    });
+
+    it('leaves an ordinary path readable', () => {
+        const { lines } = describeAuthFailure(AUTH_REASONS.NO_TOKEN, { lookedIn: '/home/u/.claude' });
+        expect(lines).toContain('Looked in: /home/u/.claude');
+    });
+});
+
+describe('authFailure - the override is named where it is the whole message', () => {
+    it('names the displacing variable in the one-line summary', () => {
+        expect(summariseAuthFailure(AUTH_REASONS.ENV_OVERRIDE, { override: 'ANTHROPIC_API_KEY' }))
+            .toContain('ANTHROPIC_API_KEY');
+    });
 });
 
 describe('authFailure - one-line summary', () => {
@@ -80,9 +117,13 @@ describe('authFailure - one-line summary', () => {
 // A producer emitting a name with no entry degrades to the not-logged-in
 // wording, which is the failure this module exists to end.
 describe('authFailure - the vocabulary has one owner', () => {
-    it('has an entry for every reason a producer can emit', () => {
-        for (const name of Object.values(AUTH_REASONS)) {
+    // Spelled out rather than iterated over the table, so deleting a reason a
+    // producer still emits fails here instead of degrading silently at runtime.
+    it('has an entry for every reason the producers emit', () => {
+        for (const name of ['NO_TOKEN', 'TOKEN_BLANK', 'TOKEN_REJECTED',
+            'SCOPE_MISSING', 'TOKEN_EXPIRED', 'ENV_OVERRIDE']) {
             expect(AUTH_FAILURES[name]).toBeDefined();
+            expect(AUTH_REASONS[name]).toBe(name);
         }
     });
 

@@ -66,10 +66,45 @@ let fileLoggerInstance = null;
 // applied centrally to every line the file logger and diagnostic channels emit.
 // Project folder names may still appear (a project-scoped tool needs them to
 // diagnose "wrong project" issues) - but never the username. See SECURITY.md.
+// Replace the home directory with ~ and the OS username with <user>.
+//
+// Both forms of the home path are replaced: JSON.stringify escapes each
+// backslash, so a Windows home never matches its serialised form and a
+// raw-path-only scrub leaves the username in the state dump.
+//
+// The username is then replaced wherever else it appears, because a home
+// prefix is not the only place it shows up - WSL paths under /mnt/c/Users,
+// a config dir pointed outside home, and any case-insensitive filesystem
+// where the path case differs from homedir() all escape a prefix match.
 function scrubHome(message) {
     if (typeof message !== 'string') return message;
+    let out = message;
     const home = os.homedir();
-    return home ? message.split(home).join('~') : message;
+    if (home) {
+        for (const form of [home, home.split('\\').join('\\\\')]) {
+            out = out.split(form).join('~');
+        }
+    }
+    const user = currentUsername();
+    // Word-bounded so a username that is also a common substring cannot
+    // corrupt unrelated text: a user named "sam" must not turn "sample" into
+    // "<user>ple". A path separator is a word boundary, so real paths match.
+    if (user) {
+        out = out.replace(new RegExp(`\\b${escapeRegExp(user)}\\b`, 'gi'), '<user>');
+    }
+    return out;
+}
+
+function currentUsername() {
+    try {
+        return os.userInfo().username || null;
+    } catch {
+        return null; // no passwd entry (some containers)
+    }
+}
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 class FileLogger {

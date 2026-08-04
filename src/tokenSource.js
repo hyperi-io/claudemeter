@@ -72,12 +72,18 @@ function keychainServiceName() {
 
 // The single resolver for the Claude config dir; every other module defers to
 // it so the token and the identity read cannot land in different directories.
-// CLAUDE_CONFIG_DIR relocates .credentials.json on Linux and Windows, so it
-// wins. CLAUDE_CONFIG_HOME is claudemeter's own test hook for pointing the
-// home dir at a fixture, not a Claude Code variable.
+// CLAUDE_CONFIG_DIR is Claude Code's own variable and relocates the store.
+//
+// Only that variable is honoured. An earlier revision also read a
+// CLAUDE_CONFIG_HOME test hook here, which let any environment that can set an
+// env var - a cloned repo's devcontainer, say - redirect the Bearer token read
+// at a file it supplies. Tests redirect through CLAUDE_CONFIG_DIR instead.
+// NFC-normalised because Claude Code normalises this value before both using
+// it as a path and hashing it into the Keychain service name. A decomposed
+// accent - what copying a path out of the shell on APFS gives you - would
+// otherwise hash differently and miss the item.
 function getConfigDir() {
-    return process.env.CLAUDE_CONFIG_DIR
-        || path.join(process.env.CLAUDE_CONFIG_HOME || os.homedir(), '.claude');
+    return (process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')).normalize('NFC');
 }
 
 function credentialsFilePath() {
@@ -205,7 +211,10 @@ function readToken(opts = {}) {
 // A store that is merely unparseable or some other shape is NOT that - it must
 // stay NO_TOKEN so the user is still offered the login that would fix it.
 function classifyEmptyRead(fileBlob, kcBlob) {
-    const blank = (b) => !!b && Object.prototype.hasOwnProperty.call(b, 'accessToken');
+    // Specifically a STRING that is empty. A null, a number or an object under
+    // that key is a store of some other shape, not the failed-persist state,
+    // and must not inherit its "re-login will not help" advice.
+    const blank = (b) => !!b && typeof b.accessToken === 'string' && b.accessToken.trim() === '';
     const source = (blank(kcBlob) && 'keychain') || (blank(fileBlob) && 'file') || null;
     return source ? { reason: 'TOKEN_BLANK', source } : { reason: 'NO_TOKEN' };
 }

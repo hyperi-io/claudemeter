@@ -1,9 +1,10 @@
 // Integration tests for claudeConfigReader + credentialsReader.
 //
 // These tests exercise the readers against a real filesystem (not mocks),
-// using CLAUDE_CONFIG_HOME to redirect ~ to a tmp directory. The goal is
-// to catch regressions in the "v1 vs v2 credentials file format" handling
-// and to prove that file-missing cases return null rather than throwing.
+// using CLAUDE_CONFIG_DIR to redirect the config dir to a tmp directory. The
+// goal is to catch regressions in the "v1 vs v2 credentials file format"
+// handling and to prove that file-missing cases return null rather than
+// throwing.
 //
 // Scenarios covered:
 //   - v2 format: oauthAccount in .claude.json, tokens in .credentials.json
@@ -18,11 +19,10 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// Require the modules LAZILY inside each test so the CLAUDE_CONFIG_HOME
-// env var is picked up at call time. Top-level requires would snapshot the
-// module-load constants against the real home dir.
+// Require the modules LAZILY inside each test so CLAUDE_CONFIG_DIR is picked
+// up at call time rather than at module load.
 function loadReaders() {
-    // Bust require cache so getters re-resolve CLAUDE_CONFIG_HOME
+    delete require.cache[require.resolve('../../src/tokenSource')];
     delete require.cache[require.resolve('../../src/claudeConfigReader')];
     delete require.cache[require.resolve('../../src/credentialsReader')];
     return {
@@ -32,28 +32,20 @@ function loadReaders() {
 }
 
 let tmpHome;
-let originalHome;
 let originalConfigDir;
 
 beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'claudemeter-test-'));
-    originalHome = process.env.CLAUDE_CONFIG_HOME;
-    process.env.CLAUDE_CONFIG_HOME = tmpHome;
-    // CLAUDE_CONFIG_DIR outranks the test hook in the resolver, so a developer
-    // who has it set would otherwise run these against their real config dir.
+    // CLAUDE_CONFIG_DIR is Claude Code's real relocation variable and is the
+    // only one the readers honour, so it is what redirects these fixtures.
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    delete process.env.CLAUDE_CONFIG_DIR;
-    // Ensure ~/.claude subdir exists (credentials live there)
-    fs.mkdirSync(path.join(tmpHome, '.claude'), { recursive: true });
+    process.env.CLAUDE_CONFIG_DIR = tmpHome;
 });
 
 afterEach(() => {
-    if (originalHome === undefined) {
-        delete process.env.CLAUDE_CONFIG_HOME;
+    if (originalConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
     } else {
-        process.env.CLAUDE_CONFIG_HOME = originalHome;
-    }
-    if (originalConfigDir !== undefined) {
         process.env.CLAUDE_CONFIG_DIR = originalConfigDir;
     }
     fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -63,7 +55,7 @@ function writeClaudeConfig(json) {
     fs.writeFileSync(path.join(tmpHome, '.claude.json'), JSON.stringify(json));
 }
 function writeCredentials(json) {
-    fs.writeFileSync(path.join(tmpHome, '.claude', '.credentials.json'), JSON.stringify(json));
+    fs.writeFileSync(path.join(tmpHome, '.credentials.json'), JSON.stringify(json));
 }
 
 describe('claudeConfigReader.getOAuthAccount', () => {
@@ -304,7 +296,7 @@ describe('credentialsReader.readCredentials (merged view)', () => {
 
 describe('claudeConfigReader.findSessionForWorkspace', () => {
     beforeEach(() => {
-        fs.mkdirSync(path.join(tmpHome, '.claude', 'sessions'), { recursive: true });
+        fs.mkdirSync(path.join(tmpHome, 'sessions'), { recursive: true });
     });
 
     it('returns null when no sessions exist', () => {
@@ -314,7 +306,7 @@ describe('claudeConfigReader.findSessionForWorkspace', () => {
 
     it('matches session by cwd', () => {
         fs.writeFileSync(
-            path.join(tmpHome, '.claude', 'sessions', '1234.json'),
+            path.join(tmpHome, 'sessions', '1234.json'),
             JSON.stringify({
                 pid: 1234,
                 sessionId: 'sess-1',
@@ -333,11 +325,11 @@ describe('claudeConfigReader.findSessionForWorkspace', () => {
 
     it('prefers the most recently started session when multiple match', () => {
         fs.writeFileSync(
-            path.join(tmpHome, '.claude', 'sessions', '1111.json'),
+            path.join(tmpHome, 'sessions', '1111.json'),
             JSON.stringify({ pid: 1111, sessionId: 'older', cwd: '/w', startedAt: 100 })
         );
         fs.writeFileSync(
-            path.join(tmpHome, '.claude', 'sessions', '2222.json'),
+            path.join(tmpHome, 'sessions', '2222.json'),
             JSON.stringify({ pid: 2222, sessionId: 'newer', cwd: '/w', startedAt: 500 })
         );
         const { claudeConfig } = loadReaders();
@@ -347,7 +339,7 @@ describe('claudeConfigReader.findSessionForWorkspace', () => {
 
     it('ignores workspaces that don\'t match', () => {
         fs.writeFileSync(
-            path.join(tmpHome, '.claude', 'sessions', '1.json'),
+            path.join(tmpHome, 'sessions', '1.json'),
             JSON.stringify({ pid: 1, sessionId: 'x', cwd: '/other', startedAt: 1 })
         );
         const { claudeConfig } = loadReaders();
@@ -355,9 +347,9 @@ describe('claudeConfigReader.findSessionForWorkspace', () => {
     });
 
     it('tolerates corrupt session files', () => {
-        fs.writeFileSync(path.join(tmpHome, '.claude', 'sessions', 'bad.json'), 'not json');
+        fs.writeFileSync(path.join(tmpHome, 'sessions', 'bad.json'), 'not json');
         fs.writeFileSync(
-            path.join(tmpHome, '.claude', 'sessions', 'good.json'),
+            path.join(tmpHome, 'sessions', 'good.json'),
             JSON.stringify({ pid: 2, sessionId: 'g', cwd: '/w', startedAt: 1 })
         );
         const { claudeConfig } = loadReaders();

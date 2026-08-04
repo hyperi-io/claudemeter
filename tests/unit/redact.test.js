@@ -63,8 +63,29 @@ describe('redactIdentity - nothing identifying survives', () => {
 
     it('leaves no identity field name in the output', () => {
         const out = redactIdentity(REAL_ACCOUNT);
-        for (const field of IDENTITY_FIELDS) {
+        for (const field of ['emailAddress', 'displayName', 'organizationName', 'accountUuid', 'organizationUuid']) {
             expect(Object.prototype.hasOwnProperty.call(out, field)).toBe(false);
+        }
+    });
+
+    // The local config files are camelCase and the OAuth /profile payload is
+    // snake_case; either shape can reach the dump.
+    it('covers the snake_case spellings the OAuth profile payload uses', () => {
+        const out = redactIdentity({
+            email_address: 'snake@example.com',
+            display_name: 'Snake Case',
+            organization_name: 'Snake Org',
+            account_uuid: 'aaaa-bbbb',
+        });
+        const serialised = JSON.stringify(out);
+        for (const leak of ['snake@example.com', 'Snake Case', 'Snake Org', 'aaaa-bbbb']) {
+            expect(serialised).not.toContain(leak);
+        }
+    });
+
+    it('lists both spellings of every field it claims to cover', () => {
+        for (const field of ['email_address', 'display_name', 'organization_name', 'account_uuid']) {
+            expect(IDENTITY_FIELDS).toContain(field);
         }
     });
 });

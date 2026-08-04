@@ -23,10 +23,10 @@ const os = require('os');
 
 const { getConfigDir } = require('./tokenSource');
 
-// Home directory is resolved per-call (not at module load) so the test hook is
-// honoured without re-importing.
+// Resolved per-call (not at module load) so CLAUDE_CONFIG_DIR is honoured
+// without re-importing.
 function getHomeDir() {
-    return process.env.CLAUDE_CONFIG_HOME || os.homedir();
+    return os.homedir();
 }
 
 // Mirrors Claude Code's own resolution: a `.config.json` inside the config dir

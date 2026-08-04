@@ -1302,14 +1302,11 @@ function stopSpinner(webError = null, tokenError = null) {
             statusBarItems.label.text = `${getLabelTextWithStatus()} ⚠`;
             statusBarItems.label.color = new vscode.ThemeColor('charts.yellow');
         }
-    } else {
-        if (isCompactMode && statusBarItems.compact) {
-            statusBarItems.compact.color = getServiceStatusColor();
-        } else if (statusBarItems.label) {
-            statusBarItems.label.text = getLabelTextWithStatus();
-            statusBarItems.label.color = getServiceStatusColor();
-        }
     }
+    // No error: nothing to decorate. updateStatusBar runs immediately before
+    // this and owns the normal text and colour, including the compact panel's
+    // threshold and rot colours, so re-applying the service-status colour here
+    // would erase them on every successful fetch.
 }
 
 module.exports = {

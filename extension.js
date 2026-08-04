@@ -179,6 +179,10 @@ function launchClaudeLogin(cli) {
 // the token lands (the macOS Keychain can't be fs.watched). Best-effort,
 // self-limiting: ~90s at 3s intervals. Held in a module var so a second
 // login launch replaces (not stacks) the poll, and deactivate() can clear it.
+// How long a login is given before a blank store counts as the failed-persist
+// state rather than the store the user is part way through replacing.
+const BLANK_STORE_GRACE_MS = 30000;
+
 function awaitTokenThenFetch() {
     if (awaitTokenTimer) clearInterval(awaitTokenTimer);
     let elapsed = 0;
@@ -194,8 +198,11 @@ function awaitTokenThenFetch() {
         }
         // A login that reports success and stores a blank token is the state
         // the poll would otherwise sit through in silence (#57), so stop and
-        // say so rather than time out with no message.
-        if (tok.reason === AUTH_REASONS.TOKEN_BLANK) {
+        // say so rather than time out with no message. Only after a grace
+        // window: a store that was ALREADY blank reads that way on the first
+        // tick, seconds after the browser opened and long before the user has
+        // finished authorising.
+        if (tok.reason === AUTH_REASONS.TOKEN_BLANK && elapsed >= BLANK_STORE_GRACE_MS) {
             clearInterval(awaitTokenTimer);
             awaitTokenTimer = null;
             fileLog('Login completed but the credential store holds a blank token');
@@ -315,7 +322,14 @@ async function performFetchInner(isManual = false) {
         if (!currentSessionData?.tokenUsage) tokenError = new Error('No token data available');
         // Order matters: updateStatusBar rewrites every tooltip unconditionally,
         // so stopSpinner has to run second for an error state to survive.
-        updateStatusBarWithAllData();
+        // Guarded because stopSpinner owns the spinner: letting a render fault
+        // skip it would pin the spinner on forever, since startSpinner
+        // early-returns while isSpinnerActive is true.
+        try {
+            updateStatusBarWithAllData();
+        } catch (renderError) {
+            fileLog(`Status bar render failed: ${renderError.message}`);
+        }
         stopSpinner(webError, tokenError);
     }
 

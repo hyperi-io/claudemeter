@@ -92,6 +92,20 @@ describe('tokenSource.classifyEmptyRead - blank store vs no store', () => {
         }
     });
 
+    // Only an empty STRING is the failed-persist state. Any other type under
+    // that key is a store of some other shape and must not inherit the
+    // "logging in again will not help" advice.
+    it('does not call a non-string accessToken blank', () => {
+        for (const value of [null, undefined, 12345, {}, [], false]) {
+            expect(classifyEmptyRead({ accessToken: value }, null))
+                .toEqual({ reason: 'NO_TOKEN' });
+        }
+    });
+
+    it('treats a whitespace-only token as the blank state', () => {
+        expect(classifyEmptyRead({ accessToken: '  ' }, null).reason).toBe('TOKEN_BLANK');
+    });
+
     it('prefers the Keychain when both stores are blank', () => {
         const both = classifyEmptyRead({ accessToken: '' }, { accessToken: '' });
         expect(both.source).toBe('keychain');
@@ -123,14 +137,11 @@ describe('tokenSource.keychainServiceName - derived, never searched', () => {
         expect(keychainServiceName()).toBe(KEYCHAIN_SERVICE);
     });
 
+    // Pinned to a literal rather than recomputed with the implementation's own
+    // algorithm, so changing the hash function fails this test.
     it('appends the config dir hash when CLAUDE_CONFIG_DIR is set', () => {
         process.env.CLAUDE_CONFIG_DIR = '/tmp/work-claude';
-        expect(keychainServiceName()).toBe(`${KEYCHAIN_SERVICE}-${sha8('/tmp/work-claude')}`);
-    });
-
-    it('never falls back to the bare name when a config dir is set', () => {
-        process.env.CLAUDE_CONFIG_DIR = '/tmp/work-claude';
-        expect(keychainServiceName()).not.toBe(KEYCHAIN_SERVICE);
+        expect(keychainServiceName()).toBe('Claude Code-credentials-f58c28f9');
     });
 
     it('gives two different config dirs two different items', () => {
@@ -140,13 +151,33 @@ describe('tokenSource.keychainServiceName - derived, never searched', () => {
         expect(keychainServiceName()).not.toBe(first);
     });
 
-    it('prefers CLAUDE_SECURESTORAGE_CONFIG_DIR, NFC-normalised', () => {
-        process.env.CLAUDE_CONFIG_DIR = '/tmp/ignored';
-        process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = '/tmp/secure';
-        expect(keychainServiceName()).toBe(`${KEYCHAIN_SERVICE}-${sha8('/tmp/secure'.normalize('NFC'))}`);
+    // Claude Code normalises the config dir before hashing it, so a decomposed
+    // path and its composed form must resolve to the SAME item. A path copied
+    // out of the shell on APFS arrives decomposed.
+    it('resolves a decomposed path to the same item as its composed form', () => {
+        const composed = '/tmp/café-claude';
+        const decomposed = '/tmp/café-claude';
+        expect(decomposed).not.toBe(composed);
+        process.env.CLAUDE_CONFIG_DIR = composed;
+        const fromComposed = keychainServiceName();
+        process.env.CLAUDE_CONFIG_DIR = decomposed;
+        expect(keychainServiceName()).toBe(fromComposed);
     });
 
-    it('treats an empty secure-storage dir as the default, suffix and all', () => {
+    it('prefers CLAUDE_SECURESTORAGE_CONFIG_DIR over the config dir', () => {
+        process.env.CLAUDE_CONFIG_DIR = '/tmp/ignored';
+        process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = '/tmp/secure';
+        expect(keychainServiceName()).toBe(`${KEYCHAIN_SERVICE}-${sha8('/tmp/secure')}`);
+    });
+
+    it('normalises the secure-storage dir too', () => {
+        process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = '/tmp/café';
+        expect(keychainServiceName()).toBe(`${KEYCHAIN_SERVICE}-${sha8('/tmp/café')}`);
+    });
+
+    // An empty CLAUDE_SECURESTORAGE_CONFIG_DIR means the default store in
+    // Claude Code's own resolution, so the unsuffixed item is the right one.
+    it('treats an empty secure-storage dir as the default store', () => {
         process.env.CLAUDE_CONFIG_DIR = '/tmp/ignored';
         process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR = '';
         expect(keychainServiceName()).toBe(KEYCHAIN_SERVICE);
