@@ -1,3 +1,12 @@
+## [2.5.14](https://github.com/hyperi-io/claudemeter/compare/v2.5.13...v2.5.14) (2026-08-04)
+
+
+### Bug Fixes
+
+* close the leaks and the regression the auth-failure review found ([a0fdc9a](https://github.com/hyperi-io/claudemeter/commit/a0fdc9a8a760a4360f984399fc594eda009298ec)), closes [#57](https://github.com/hyperi-io/claudemeter/issues/57)
+* stop gauges flickering when mixed extension versions share the cache ([914c4fb](https://github.com/hyperi-io/claudemeter/commit/914c4fb11c9dbd22a532e2e9d2204ef35efba9c8))
+* tell the truth about why a Claude login failed ([da4b4c4](https://github.com/hyperi-io/claudemeter/commit/da4b4c4c28e1b62fbd6abde34df0734285ea9fb9)), closes [#57](https://github.com/hyperi-io/claudemeter/issues/57) [anthropics/claude-code#83345](https://github.com/anthropics/claude-code/issues/83345) [#83464](https://github.com/hyperi-io/claudemeter/issues/83464) [#83639](https://github.com/hyperi-io/claudemeter/issues/83639) [#57](https://github.com/hyperi-io/claudemeter/issues/57)
+
 ## [2.5.13](https://github.com/hyperi-io/claudemeter/compare/v2.5.12...v2.5.13) (2026-08-03)
 
 
