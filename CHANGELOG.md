@@ -1,3 +1,10 @@
+## [2.5.17](https://github.com/hyperi-io/claudemeter/compare/v2.5.16...v2.5.17) (2026-08-05)
+
+
+### Bug Fixes
+
+* **ci:** mint the App token from the client ID, not the app ID ([#59](https://github.com/hyperi-io/claudemeter/issues/59)) ([ebaceed](https://github.com/hyperi-io/claudemeter/commit/ebaceed50068b5763c7f9e190bbd3e67a381e2b8)), closes [hyperi-io/hyperi-ci#100](https://github.com/hyperi-io/hyperi-ci/issues/100)
+
 ## [2.5.16](https://github.com/hyperi-io/claudemeter/compare/v2.5.15...v2.5.16) (2026-08-04)
 
 
