@@ -27,8 +27,10 @@ const AUTH_FAILURES = {
         title: 'Claude Code stored an empty login',
         lines: [
             'The credential store is there but holds a blank token, so the login did not persist.',
-            'Logging in again usually reproduces it - this one is Claude Code\'s to fix.',
-            'Worth a try: `claude auth logout`, then `claude auth login`.',
+            'Logging in again reproduces it, and so does `claude auth logout` - this one is Claude Code\'s to fix.',
+            'What has cleared it for others is deleting the store outright, then logging in.',
+            'macOS: `security delete-generic-password -s "Claude Code-credentials"`. Elsewhere: delete `~/.claude/.credentials.json`.',
+            'That also discards any MCP server logins, which have to be re-authorised.',
         ],
         canRelogin: false,
     },

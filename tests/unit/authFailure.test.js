@@ -25,9 +25,13 @@ describe('authFailure - the prompt is gated on whether login can help', () => {
         expect(describeAuthFailure(AUTH_REASONS.ENV_OVERRIDE).canRelogin).toBe(false);
     });
 
-    it('tells the blank-token user what to try instead of logging in', () => {
+    it('tells the blank-token user to delete the store, not to log out', () => {
         const { lines } = describeAuthFailure(AUTH_REASONS.TOKEN_BLANK);
-        expect(lines.join(' ')).toContain('claude auth logout');
+        const text = lines.join(' ');
+        expect(text).toContain('security delete-generic-password');
+        expect(text).toContain('~/.claude/.credentials.json');
+        // logout is named only as a thing that does not clear it
+        expect(text).toContain('so does `claude auth logout`');
     });
 
     it('degrades an unknown reason to not-logged-in rather than throwing', () => {
