@@ -1,3 +1,10 @@
+## [2.5.18](https://github.com/hyperi-io/claudemeter/compare/v2.5.17...v2.5.18) (2026-08-12)
+
+
+### Bug Fixes
+
+* ship happy hour disabled by default ([17387b7](https://github.com/hyperi-io/claudemeter/commit/17387b7bcf8bf75f84e7517a8d29e04ca92097df))
+
 ## [2.5.17](https://github.com/hyperi-io/claudemeter/compare/v2.5.16...v2.5.17) (2026-08-05)
 
 
