@@ -199,7 +199,9 @@ function resolveHappyHourState() {
     }
 
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    if (!config.get('happyHour.enabled', true)) {
+    // Default false - mirrors the manifest. The peak-throttling policy
+    // this panel tracks was withdrawn (see happyHour.js header).
+    if (!config.get('happyHour.enabled', false)) {
         return { active: false, icon: null, endsAt: null };
     }
     const peakWindow = validatePeakWindow(config.get('happyHour.peakWindow'));

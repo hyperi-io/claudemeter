@@ -1,7 +1,7 @@
 {
   "name": "claudemeter",
   "displayName": "Claudemeter - Claude AI Usage Monitor",
-  "description": "Monitor your Claude Code usage as you go. Session, weekly and context usage live in your status bar, so you pace yourself instead of simply reacting. Context-rot and happy-hour awareness across every Claude plan.",
+  "description": "Monitor your Claude Code usage as you go. Session, weekly and context usage live in your status bar, so you pace yourself instead of simply reacting. Context-rot awareness across every Claude plan.",
   "version": "2.5.17",
   "publisher": "hypersec",
   "author": {
@@ -517,8 +517,8 @@
         },
         "claudemeter.happyHour.enabled": {
           "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show a 'happy hour' icon on the Claude status-bar panel during Anthropic's off-peak window (when their peak-throttling policy is not active).\n\nPeak window defaults to Mon-Fri 05:00-23:00 America/Los_Angeles, per Anthropic's 2026-03-26 announcement. Configurable via `claudemeter.happyHour.peakWindow`.\n\nAnthropic throttling is driven by LA-local peak load — this icon appears outside that window regardless of your own timezone."
+          "default": false,
+          "markdownDescription": "Show a 'happy hour' icon on the Claude status-bar panel during Anthropic's off-peak window (when their peak-throttling policy is not active).\n\n**Off by default — the policy this tracks is gone.** Anthropic removed the peak-hours limit reduction on Claude Code for Pro and Max on 2026-05-06, alongside the SpaceX Colossus 1 compute deal ([announcement](https://www.anthropic.com/news/higher-limits-spacex)). The panel is kept, and turning this on restores it, in case peak-hour throttling returns.\n\nPeak window defaults to Mon-Fri 05:00-23:00 America/Los_Angeles, per Anthropic's 2026-03-26 announcement. Configurable via `claudemeter.happyHour.peakWindow`.\n\nAnthropic throttling is driven by LA-local peak load — this icon appears outside that window regardless of your own timezone."
         },
         "claudemeter.happyHour.icon": {
           "type": "string",

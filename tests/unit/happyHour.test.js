@@ -4,6 +4,8 @@
 // UTC-8 in PST; 2026-04-15 is Wed PDT, 2026-01-15 is Thu PST.
 
 import { describe, it, expect } from 'vitest';
+const fs = require('fs');
+const path = require('path');
 const {
     DEFAULT_PEAK_WINDOW,
     HAPPY_HOUR_ICONS,
@@ -195,5 +197,24 @@ describe('HAPPY_HOUR_ICONS', () => {
 
     it('is frozen', () => {
         expect(Object.isFrozen(HAPPY_HOUR_ICONS)).toBe(true);
+    });
+});
+
+// The peak-throttling policy this panel tracked was withdrawn, so the
+// panel ships off. Two defaults must agree or the manifest and a
+// fresh install disagree about whether it draws.
+describe('happyHour.enabled default', () => {
+    it('is false in the manifest', () => {
+        const pkg = require('../../package.json');
+        const props = pkg.contributes.configuration.properties;
+        expect(props['claudemeter.happyHour.enabled'].default).toBe(false);
+    });
+
+    it('is false in the statusBar config fallback', () => {
+        const src = fs.readFileSync(
+            path.join(__dirname, '..', '..', 'src', 'statusBar.js'),
+            'utf8'
+        );
+        expect(src).toContain("config.get('happyHour.enabled', false)");
     });
 });

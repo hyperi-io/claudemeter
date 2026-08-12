@@ -9,15 +9,23 @@
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 //
-// Anthropic's peak window (per 2026-03-26 announcement, GH issues
-// #41788, #41930): Monday-Friday 05:00-23:00 America/Los_Angeles -
-// i.e. all LA daytime + evening. Happy hour (off-peak) is weekday
-// overnight (23:00-05:00 LA) plus the whole weekend. During peak
-// hours, Claude Code session limits deplete faster than the 5-hour
-// window suggests.
+// DISABLED BY DEFAULT - the policy this tracks is gone.
+// claudemeter.happyHour.enabled defaults to false, so the panel never
+// draws unless a user turns it on.
+// Anthropic withdrew the peak-hours limit reduction on Claude Code for
+// Pro and Max on 2026-05-06, alongside the SpaceX Colossus 1 compute
+// deal (anthropic.com/news/higher-limits-spacex).
+// Retained rather than deleted: the removal is capacity-contingent, and
+// re-enabling the setting is the whole recovery path if a comparable
+// scheme returns.
+//
+// The window encoded below is the one that was in force (2026-03-26
+// announcement, GH issues #41788, #41930): peak was Monday-Friday
+// 05:00-23:00 America/Los_Angeles, so happy hour was weekday overnight
+// plus the whole weekend.
 //
 // Users can override the window via claudemeter.happyHour.peakWindow
-// if Anthropic changes the policy before we ship an update.
+// if throttling returns on a different schedule.
 
 const DEFAULT_PEAK_WINDOW = Object.freeze({
     days: [1, 2, 3, 4, 5],

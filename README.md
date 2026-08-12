@@ -5,7 +5,7 @@
 
 ![Claudemeter](assets/logo.png)
 > Monitor your Claude Code usage as you go.\
-> Session, weekly and context usage live in your status bar, so you pace yourself instead of simply reacting. Context-rot and happy-hour awareness across every Claude plan.
+> Session, weekly and context usage live in your status bar, so you pace yourself instead of simply reacting. Context-rot awareness across every Claude plan.
 
 
 ![Tooltip](assets/tooltip.png)
@@ -15,7 +15,6 @@
 - Weekly limits
 - Limit consumption and reset times
 - Claude service status (working, partial outage, major outage)
-- Happy hour indicator - lights up during Anthropic's off-peak window
 - Context rot indication
 - Claude session and login all local to device
 - Open source: <https://github.com/hyperi-io/claudemeter>
@@ -26,7 +25,7 @@
 
 ![Status Bar Default](assets/status-bar-default.png)
 
-## Status Bar All Warnings and Happy Hour
+## Status Bar All Warnings
 
 ![Status Bar All Warnings](assets/status-bar-all-warnings.png)
 
@@ -226,22 +225,6 @@ always is.
 The rationale above stays in the README so users understand the
 *why* even if they choose to switch the meter off.
 
-## Happy Hour
-
-Anthropic throttles Claude Code's 5-hour session window harder during their **peak hours** (Mon-Fri 05:00-23:00 America/Los_Angeles, per the 2026-03-26 announcement - see [claude-code#41788](https://github.com/anthropics/claude-code/issues/41788) / [#41930](https://github.com/anthropics/claude-code/issues/41930)). Outside that window - weekday overnight and all weekend - the session token allowance burns at its expected rate.
-
-Claudemeter lights up a dedicated status-bar panel when you're in that off-peak window, with a countdown to when peak kicks back in:
-
-```
-Claude ✨ 4h 17m  Se ●●○○○ ⌚ 1h 28m  Wk ●●○○○ ⌚ 4d 17h  Tk ●○○○○ 1m
-```
-
-Default icon is VS Code's monochrome `$(sparkle)` codicon - it inherits the status-bar text colour so it doesn't stand out. Shown as `✨` above because GitHub-rendered markdown can't display VS Code codicons directly. The real panel renders a small monochrome four-point star, not an emoji. You can swap it for a full-colour emoji (`🍺`, `🍹`, `☕`, etc.) via [`claudemeter.happyHour.icon`](#claudemeterhappyhouricon).
-
-The panel disappears entirely during peak - no empty slot. The countdown respects [`claudemeter.statusBar.timeFormat`](#claudemeterstatusbartimeformat) (default `countdown` -> `4h 17m`, or `12hour` / `24hour` for a clock time).
-
-Window is LA-local so the icon lines up with Anthropic's infrastructure peak, regardless of your own timezone. Override via [`claudemeter.happyHour.peakWindow`](#claudemeterhappyhourpeakwindow) if policy changes before a claudemeter release ships. Choose a different icon (or disable the panel entirely) via [`claudemeter.happyHour.icon`](#claudemeterhappyhouricon) / [`claudemeter.happyHour.enabled`](#claudemeterhappyhourenabled).
-
 ## How It Works
 
 Claudemeter reads the OAuth token Claude Code already stores and calls the same usage endpoints Claude Code's own `/usage` uses (`api.anthropic.com/api/oauth/usage` + `/profile`). Claude Code has evolved, so from 2.5 onwards no browser, no scraping, and no separate login are needed - if you use Claude Code, it just works.
@@ -387,8 +370,8 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
 ### `claudemeter.happyHour.enabled`
 
 - **Type**: Boolean
-- **Default**: `true`
-- **Description**: Show the happy-hour status-bar panel during Anthropic's off-peak window. Set `false` to hide the panel entirely.
+- **Default**: `false`
+- **Description**: Show the happy-hour status-bar panel during Anthropic's off-peak window. Off by default: Anthropic removed the peak-hour limit reduction on Claude Code for Pro and Max on 2026-05-06, so there is no off-peak bonus left to mark. The panel is kept in case peak-hour throttling returns - set `true` and it comes back, and use `claudemeter.happyHour.peakWindow` if the schedule differs.
 
 ### `claudemeter.happyHour.icon`
 
