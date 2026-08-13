@@ -552,9 +552,13 @@ describe('vscode mock — inspect / update / write-tracking', () => {
         expect(cfg.inspect('foo.bar')).toEqual({ globalValue: 42, defaultValue: 0 });
     });
 
-    it('inspect returns undefined for unrecorded key', () => {
+    it('inspect returns an all-undefined record for an unregistered key', () => {
+        // Real VS Code always returns a record, so presence proves nothing -
+        // only defaultValue distinguishes a registered setting.
         const cfg = vscode.workspace.getConfiguration();
-        expect(cfg.inspect('missing.key')).toBeUndefined();
+        const record = cfg.inspect('missing.key');
+        expect(record).toBeDefined();
+        expect(record.defaultValue).toBeUndefined();
     });
 
     it('update records writes for assertion', async () => {
@@ -586,7 +590,7 @@ describe('vscode mock — inspect / update / write-tracking', () => {
 
         vscode._resetConfigValues();
         expect(cfg.get('a', null)).toBe(null);
-        expect(cfg.inspect('b')).toBeUndefined();
+        expect(cfg.inspect('b').globalValue).toBeUndefined();
         expect(vscode._getWrittenValues()).toEqual([]);
     });
 

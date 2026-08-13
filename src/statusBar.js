@@ -26,6 +26,7 @@ const { gaugeLabels, scopedShortLabel, resolveGauges, mergeDefinitions, isGeneri
 const { composeClaudeLabel } = require('./claudeLabelComposer');
 const { describeAuthFailure } = require('./authFailure');
 const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = require('./happyHour');
+const { isCoreApplied, globalScopeReader } = require('./declutter/state');
 const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolver');
 const simulator = require('./simulator');
 const { selectProfile } = require('./tk/profileSelector');
@@ -169,6 +170,15 @@ function resolveHappyHourIcon(config) {
         return (typeof custom === 'string' && custom.length > 0) ? custom : null;
     }
     return HAPPY_HOUR_ICONS[choice] || HAPPY_HOUR_ICONS.sparkle;
+}
+
+// Nopilot offer: due until the Copilot group is applied or the user turns the
+// feature off.
+function resolveNopilotOffer() {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    if (!config.get('nopilot.enabled', true)) return false;
+    const root = vscode.workspace.getConfiguration();
+    return !isCoreApplied(globalScopeReader(root));
 }
 
 /**
@@ -1160,6 +1170,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         platformTooltipLines,
         activityQuipOverride: getActivityQuipOverride(),
         happyHourState: resolveHappyHourState(),
+        showNopilotOffer: resolveNopilotOffer(),
         extensionVersion: extVersion,
         repositoryUrl,
         marketplaceUrl,

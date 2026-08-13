@@ -481,3 +481,30 @@ describe('composeTooltip - plain rendering (regression guards)', () => {
         expect(out).not.toMatch(/<[^>]*>\*\*(Session|Weekly|Current context)/);
     });
 });
+
+describe('composeTooltip - Nopilot offer', () => {
+    const withOffer = (showNopilotOffer) => composeTooltip({
+        config: baseConfig,
+        usageData: { timestamp: new Date('2026-08-13T02:30:00Z') },
+        showNopilotOffer,
+    });
+
+    it('is absent unless the caller says it is due', () => {
+        expect(withOffer(false)).not.toContain('Nopilot');
+        expect(composeTooltip({ config: baseConfig })).not.toContain('Nopilot');
+    });
+
+    it('renders both links as command URIs', () => {
+        const out = withOffer(true);
+        expect(out).toContain('[Nopilot - disable copilot upsell and telemetry](command:claudemeter.nopilot)');
+        expect(out).toContain('[(hide)](command:claudemeter.nopilot.dismiss)');
+    });
+
+    it('sits on the line directly above Updated', () => {
+        const lines = withOffer(true).split('\n').filter((l) => l.trim().length > 0);
+        const offer = lines.findIndex((l) => l.includes('Nopilot'));
+        const updated = lines.findIndex((l) => l.startsWith('Updated'));
+        expect(offer).toBeGreaterThanOrEqual(0);
+        expect(updated).toBe(offer + 1);
+    });
+});

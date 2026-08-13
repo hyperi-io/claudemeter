@@ -56,15 +56,28 @@ const ConfigurationTarget = Object.freeze({
 function getConfiguration() {
     return {
         get(key, defaultValue) {
+            // Effective value: a recorded workspace value outranks anything
+            // written at Global, matching VS Code's scope precedence.
+            const record = _inspectRecords[key];
+            if (record && record.workspaceValue !== undefined) return record.workspaceValue;
             if (key in _configValues) return _configValues[key];
             return defaultValue;
         },
         inspect(key) {
-            return _inspectRecords[key];  // undefined if not recorded
+            // Real VS Code ALWAYS returns a record - Configuration.inspect()
+            // constructs one unconditionally - so an unrecorded key must come
+            // back as an all-undefined record, not as undefined. Returning
+            // undefined here would let a test prove a defence production does
+            // not have.
+            return _inspectRecords[key] || { key, defaultValue: undefined };
         },
         async update(key, value, target) {
             _writtenValues.push({ key, value, target });
-            // Mirror writes into _configValues for subsequent get() in same test
+            // Mirror the write into BOTH the effective store and the inspect
+            // record's globalValue, so a read-back sees what production sees.
+            if (target === ConfigurationTarget.Global) {
+                _setConfigInspectValues(key, { globalValue: value });
+            }
             if (value === undefined) {
                 delete _configValues[key];
             } else {

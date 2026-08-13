@@ -19,6 +19,11 @@ function splitLines(text) {
     return text.split(/\r?\n/);
 }
 
+// "1 setting" / "2 settings" - regular plurals only.
+function plural(n, word) {
+    return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
 // Command IDs (must match package.json contributes.commands)
 const COMMANDS = {
     FETCH_NOW: 'claudemeter.fetchNow',
@@ -32,6 +37,11 @@ const COMMANDS = {
     LOGIN_CLI: 'claudemeter.login',
     DUMP_STATE: 'claudemeter.dumpState',
     SIMULATE_STATUS: 'claudemeter.simulateStatus',
+    // Nopilot: applies the VS Code settings that switch off the built-in
+    // Copilot surfaces, telemetry, nags and self-opening panels.
+    NOPILOT: 'claudemeter.nopilot',
+    NOPILOT_DISMISS: 'claudemeter.nopilot.dismiss',
+    NOPILOT_UNDO: 'claudemeter.nopilot.undo',
 };
 
 // Claudemeter's OWN config directory, following OS conventions. Named apart
@@ -514,6 +524,7 @@ function formatCompact(value) {
 module.exports = {
     CONFIG_NAMESPACE,
     COMMANDS,
+    plural,
     PATHS,
     DEFAULT_TOKEN_LIMIT,
     getTokenLimit,

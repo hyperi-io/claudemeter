@@ -1142,6 +1142,11 @@ async function activate(context) {
     const { registerSimulatorCommands } = require('./src/commands/simulator');
     registerSimulatorCommands(context, performFetch);
 
+    // Nopilot - see src/commands/declutter.js. The callback redraws the
+    // tooltip so the offer line goes as soon as it is answered.
+    const { registerDeclutterCommands } = require('./src/commands/declutter');
+    registerDeclutterCommands(context, updateStatusBarWithAllData);
+
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
 
     if (config.get('fetchOnStartup', true) && !config.get('tokenOnlyMode', false)) {

@@ -36,6 +36,7 @@ const {
     calculateResetClockTimeExpanded,
     getCurrencySymbol,
     formatCompact,
+    COMMANDS,
 } = require('./utils');
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
@@ -324,9 +325,20 @@ function renderPlatformBlock(state) {
 // manifest carries no company URL - read it from there if one is added.
 const HYPERI_URL = 'https://hyperi.io';
 
+// The Nopilot offer sits immediately above the Updated line. Whether it is due
+// is the caller's decision (resolveNopilotOffer in statusBar.js). The
+// `command:` URIs rely on the tooltip's isTrusted flag.
+function renderNopilotOffer(state) {
+    if (!state.showNopilotOffer) return [];
+    return [
+        `[Nopilot - disable copilot upsell and telemetry](command:${COMMANDS.NOPILOT})`
+        + ` [(hide)](command:${COMMANDS.NOPILOT_DISMISS})`,
+    ];
+}
+
 function renderFooter(state) {
     const { usageData, extensionVersion, repositoryUrl, marketplaceUrl, brandIconDataUri, config } = state;
-    const lines = [''];
+    const lines = ['', ...renderNopilotOffer(state)];
     if (usageData?.timestamp) {
         const ts = usageData.timestamp instanceof Date ? usageData.timestamp : new Date(usageData.timestamp);
         lines.push(`Updated ${ts.toLocaleTimeString(undefined, { hour12: !config?.use24HourTime })}`);

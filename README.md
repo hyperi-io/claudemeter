@@ -235,11 +235,39 @@ Two independent streams feed the status bar. **Web usage** (session / weekly / o
 
 > **Why not a browser?** An earlier build tried this same OAuth approach first, but back then the Claude Code token wasn't authorised for the usage/account API - so the only option was a `sessionKey` cookie from a real browser login, which meant shipping browser automation and hitting Google's anti-automation SSO block. Anthropic has since granted the token that access, so browserless works now. The browser, the cookie, and `playwright-core` are gone. The extension ships with zero runtime dependencies.
 
+## Nopilot
+
+Optional quality-of-life extra. Turns off the VSCode Copilot upsell and telemetry. The following settings change:
+
+| Group | Setting | To |
+| --- | --- | --- |
+| Built-in AI surfaces | `chat.disableAIFeatures` | `true` |
+| | `chat.agent.enabled` | `false` |
+| | `chat.titleBar.signIn.enabled` | `false` |
+| | `chat.titleBar.openInAgentsWindow.enabled` | `false` |
+| | `chat.detectParticipant.enabled` | `false` |
+| | `editor.inlineSuggest.enabled` | `false` |
+| Panels that open themselves | `workbench.secondarySideBar.defaultVisibility` | `hidden` |
+| | `workbench.startupEditor` | `none` |
+| | `workbench.welcomePage.walkthroughs.openOnInstall` | `false` |
+| Telemetry and experiments | `telemetry.telemetryLevel` | `off` |
+| | `telemetry.feedback.enabled` | `false` |
+| | `workbench.enableExperiments` | `false` |
+| | `workbench.settings.enableNaturalLanguageSearch` | `false` |
+| Nags | `extensions.ignoreRecommendations` | `true` |
+| | `workbench.tips.enabled` | `false` |
+| | `update.showReleaseNotes` | `false` |
+| | `terminal.integrated.initialHint` | `false` |
+
+`chat.disableAIFeatures` also turns off VS Code's native agent host, so skip that group if you run Claude in the built-in chat view rather than the Claude Code panel. The offer stops once that master switch is set, and `(hide)` turns it off for good via [`claudemeter.nopilot.enabled`](#claudemeternopilotenabled).
+
+Settings are written at user scope. A workspace or folder setting outranks that, so anything pinned there is reported as overridden rather than silently re-written. The confirm lists every key and value before anything is written, and flags any you had already set yourself. **Undo** is offered afterwards and is also a command - it restores each key to the value it held before, including unsetting the ones that were unset.
+
 ## Installation
 
 ### Prerequisites
 
-- VS Code 1.110.0 or higher
+- VS Code at or above the floor in `engines.vscode` (`package.json`). The Marketplace enforces it, so an older build simply will not offer the install.
 - Claude Code installed and logged in (the CLI or the official VS Code extension - they share one login). Claudemeter reads that login to show your usage.
 
 ## First-Time Setup

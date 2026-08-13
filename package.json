@@ -120,6 +120,21 @@
         "category": "Claudemeter"
       },
       {
+        "command": "claudemeter.nopilot",
+        "title": "Nopilot - Declutter Built-in AI Surfaces",
+        "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.nopilot.dismiss",
+        "title": "Nopilot - Hide the Tooltip Offer",
+        "category": "Claudemeter"
+      },
+      {
+        "command": "claudemeter.nopilot.undo",
+        "title": "Nopilot - Undo the Last Apply",
+        "category": "Claudemeter"
+      },
+      {
         "command": "claudemeter.simulate.tokenLevel",
         "title": "Claudemeter: Simulate Token Level",
         "enablement": "config.claudemeter.debug",
@@ -515,6 +530,11 @@
           "default": false,
           "description": "Enable debug logging to output channel (for troubleshooting)"
         },
+        "claudemeter.nopilot.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Offer Nopilot in the tooltip - a one-click way to switch off the editor's built-in AI upsell, telemetry, nags and self-opening panels.\n\nYou choose which groups to apply and nothing is written without confirmation. The offer stops once the main group is applied. Set `false` to hide it."
+        },
         "claudemeter.happyHour.enabled": {
           "type": "boolean",
           "default": false,
@@ -651,14 +671,16 @@
     "brace-expansion": ">=5.0.8",
     "vite": ">=8.0.5",
     "postcss": "^8.5.23",
-    "fast-uri": "^3.1.5",
-    "lodash": ">=4.18.0"
+    "fast-uri": "^4.0.0",
+    "lodash": ">=4.18.0",
+    "js-yaml": "^5.2.3",
+    "nanoid": "^3.3.18"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.28.1",
-    "eslint": "^10.8.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.8.1",
     "vitest": "^4.1.10"
   }
 }
