@@ -1,3 +1,11 @@
+## [2.5.20](https://github.com/hyperi-io/claudemeter/compare/v2.5.19...v2.5.20) (2026-08-13)
+
+
+### Bug Fixes
+
+* **deps:** update dependency nanoid to v6 ([021758b](https://github.com/hyperi-io/claudemeter/commit/021758bde7db0cc9788122c3d616c2b48a41ab1b))
+* tell a store missing its login apart from no store at all ([4a561fa](https://github.com/hyperi-io/claudemeter/commit/4a561fa6663bd6d584c0c0662c5784f8a3c3a8a6)), closes [#61](https://github.com/hyperi-io/claudemeter/issues/61)
+
 ## [2.5.19](https://github.com/hyperi-io/claudemeter/compare/v2.5.18...v2.5.19) (2026-08-13)
 
 
