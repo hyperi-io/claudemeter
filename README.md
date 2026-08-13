@@ -261,8 +261,6 @@ Optional quality-of-life extra. Turns off the VSCode Copilot upsell and telemetr
 
 `chat.disableAIFeatures` also turns off VS Code's native agent host, so skip that group if you run Claude in the built-in chat view rather than the Claude Code panel. The offer stops once that master switch is set, and `(hide)` turns it off for good via [`claudemeter.nopilot.enabled`](#claudemeternopilotenabled).
 
-Settings are written at user scope. A workspace or folder setting outranks that, so anything pinned there is reported as overridden rather than silently re-written. The confirm lists every key and value before anything is written, and flags any you had already set yourself. **Undo** is offered afterwards and is also a command - it restores each key to the value it held before, including unsetting the ones that were unset.
-
 ## Installation
 
 ### Prerequisites
