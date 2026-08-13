@@ -1,3 +1,12 @@
+## [2.5.19](https://github.com/hyperi-io/claudemeter/compare/v2.5.18...v2.5.19) (2026-08-13)
+
+
+### Bug Fixes
+
+* add Nopilot, an opt-in declutter for the built-in AI surfaces ([eba9dbe](https://github.com/hyperi-io/claudemeter/commit/eba9dbea8c98d79d03e101e5e4e1654f3f0cb054))
+* point the blank-token remedy at deleting the store, not logout ([833e7d6](https://github.com/hyperi-io/claudemeter/commit/833e7d6d036b300349919540d1c38b2f4594677d)), closes [#57](https://github.com/hyperi-io/claudemeter/issues/57) [anthropics/claude-code#84331](https://github.com/anthropics/claude-code/issues/84331) [#83345](https://github.com/hyperi-io/claudemeter/issues/83345) [#83464](https://github.com/hyperi-io/claudemeter/issues/83464)
+* trim the Nopilot scope note from the README ([4f8ed88](https://github.com/hyperi-io/claudemeter/commit/4f8ed889af80758b1221ec7f45fca84d691651e5))
+
 ## [2.5.18](https://github.com/hyperi-io/claudemeter/compare/v2.5.17...v2.5.18) (2026-08-12)
 
 
