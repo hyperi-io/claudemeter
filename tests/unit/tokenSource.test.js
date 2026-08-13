@@ -84,21 +84,23 @@ describe('tokenSource.classifyEmptyRead - blank store vs no store', () => {
         expect(classifyEmptyRead(null, null)).toEqual({ reason: 'NO_TOKEN' });
     });
 
-    // A store that is merely unparseable or some other shape is not the
-    // blank-token state, and must keep the login offer that would fix it.
-    it('does not call a non-oauth store blank', () => {
-        for (const shape of [{}, [], { mcpOAuth: {} }, { refreshToken: 'x' }]) {
-            expect(classifyEmptyRead(shape, null)).toEqual({ reason: 'NO_TOKEN' });
+    // Present but login-less (#61): not blank (login stays offered), not
+    // absent (the store may need deleting).
+    it('calls a store with no login entry STORE_NO_LOGIN, naming which one', () => {
+        for (const shape of [{}, { mcpOAuth: {} }, { refreshToken: 'x' }]) {
+            expect(classifyEmptyRead(shape, null))
+                .toEqual({ reason: 'STORE_NO_LOGIN', source: 'file' });
+            expect(classifyEmptyRead(null, shape))
+                .toEqual({ reason: 'STORE_NO_LOGIN', source: 'keychain' });
         }
     });
 
-    // Only an empty STRING is the failed-persist state. Any other type under
-    // that key is a store of some other shape and must not inherit the
-    // "logging in again will not help" advice.
+    // Only an empty STRING is the failed-persist state; any other type is a
+    // store missing its login.
     it('does not call a non-string accessToken blank', () => {
         for (const value of [null, undefined, 12345, {}, [], false]) {
             expect(classifyEmptyRead({ accessToken: value }, null))
-                .toEqual({ reason: 'NO_TOKEN' });
+                .toEqual({ reason: 'STORE_NO_LOGIN', source: 'file' });
         }
     });
 
@@ -109,6 +111,12 @@ describe('tokenSource.classifyEmptyRead - blank store vs no store', () => {
     it('prefers the Keychain when both stores are blank', () => {
         const both = classifyEmptyRead({ accessToken: '' }, { accessToken: '' });
         expect(both.source).toBe('keychain');
+    });
+
+    // The blank state is the stronger diagnosis and wins across stores.
+    it('prefers TOKEN_BLANK over STORE_NO_LOGIN across stores', () => {
+        expect(classifyEmptyRead({ accessToken: '' }, { mcpOAuth: {} }))
+            .toEqual({ reason: 'TOKEN_BLANK', source: 'file' });
     });
 });
 

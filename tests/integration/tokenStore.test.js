@@ -104,9 +104,14 @@ describe('tokenSource.readToken - the states behind "not logged in" (#57)', () =
         expect(loadTokenSource().readToken().reason).toBe('NO_TOKEN');
     });
 
-    it('does not call a store holding only mcpOAuth blank', () => {
+    // Only an MCP grant survived (#61): neither blank nor absent.
+    it('reports a store holding only mcpOAuth as STORE_NO_LOGIN', () => {
         writeStore({ mcpOAuth: { some: 'thing' } });
-        expect(loadTokenSource().readToken().reason).toBe('NO_TOKEN');
+        const tok = loadTokenSource().readToken();
+        expect(tok.ok).toBe(false);
+        expect(tok.reason).toBe('STORE_NO_LOGIN');
+        expect(tok.source).toBe('file');
+        expect(tok.detail).toBe(tmpDir);
     });
 });
 

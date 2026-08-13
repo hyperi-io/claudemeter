@@ -34,6 +34,16 @@ const AUTH_FAILURES = {
         ],
         canRelogin: false,
     },
+    STORE_NO_LOGIN: {
+        title: 'Claude Code\'s credential store holds no login',
+        lines: [
+            'The store exists but has no Claude login in it - other entries (e.g. MCP server logins) can outlive the login itself.',
+            'Run `claude auth login` to restore it.',
+            'If that does not stick, delete the store first. macOS: `security delete-generic-password -s "Claude Code-credentials"`. Elsewhere: delete `~/.claude/.credentials.json`.',
+            'Deleting the store discards MCP server logins too, which have to be re-authorised.',
+        ],
+        canRelogin: true,
+    },
     TOKEN_REJECTED: {
         title: 'Claude rejected the stored login',
         lines: [

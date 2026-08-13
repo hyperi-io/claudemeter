@@ -25,6 +25,15 @@ describe('authFailure - the prompt is gated on whether login can help', () => {
         expect(describeAuthFailure(AUTH_REASONS.ENV_OVERRIDE).canRelogin).toBe(false);
     });
 
+    // A login-less store (#61) is not the blank state: login can still fix it.
+    it('offers login for a store with no login entry, plus the delete fallback', () => {
+        const described = describeAuthFailure(AUTH_REASONS.STORE_NO_LOGIN);
+        expect(described.canRelogin).toBe(true);
+        const text = described.lines.join(' ');
+        expect(text).toContain('security delete-generic-password');
+        expect(text).toContain('~/.claude/.credentials.json');
+    });
+
     it('tells the blank-token user to delete the store, not to log out', () => {
         const { lines } = describeAuthFailure(AUTH_REASONS.TOKEN_BLANK);
         const text = lines.join(' ');
@@ -124,7 +133,7 @@ describe('authFailure - the vocabulary has one owner', () => {
     // Spelled out rather than iterated over the table, so deleting a reason a
     // producer still emits fails here instead of degrading silently at runtime.
     it('has an entry for every reason the producers emit', () => {
-        for (const name of ['NO_TOKEN', 'TOKEN_BLANK', 'TOKEN_REJECTED',
+        for (const name of ['NO_TOKEN', 'TOKEN_BLANK', 'STORE_NO_LOGIN', 'TOKEN_REJECTED',
             'SCOPE_MISSING', 'TOKEN_EXPIRED', 'ENV_OVERRIDE']) {
             expect(AUTH_FAILURES[name]).toBeDefined();
             expect(AUTH_REASONS[name]).toBe(name);

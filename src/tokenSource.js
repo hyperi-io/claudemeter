@@ -206,17 +206,19 @@ function readToken(opts = {}) {
 }
 
 // Which failure a pair of raw store blobs represents once neither yielded a
-// usable token. A store carrying an accessToken key that is blank means the
-// login worked and the persist did not, so logging in again reproduces it.
-// A store that is merely unparseable or some other shape is NOT that - it must
-// stay NO_TOKEN so the user is still offered the login that would fix it.
+// usable token. An accessToken that is an empty STRING is the failed-persist
+// state (#57), which re-login reproduces. Any other store present without a
+// usable token has lost its login entry (#61) - login can still fix that, so
+// the offer survives. An absent or unparseable store stays plain NO_TOKEN.
 function classifyEmptyRead(fileBlob, kcBlob) {
-    // Specifically a STRING that is empty. A null, a number or an object under
-    // that key is a store of some other shape, not the failed-persist state,
-    // and must not inherit its "re-login will not help" advice.
     const blank = (b) => !!b && typeof b.accessToken === 'string' && b.accessToken.trim() === '';
-    const source = (blank(kcBlob) && 'keychain') || (blank(fileBlob) && 'file') || null;
-    return source ? { reason: 'TOKEN_BLANK', source } : { reason: 'NO_TOKEN' };
+    const noLogin = (b) => !!b && !hasUsableToken(b);
+    const pick = (test) => (test(kcBlob) && 'keychain') || (test(fileBlob) && 'file') || null;
+    const blankSource = pick(blank);
+    if (blankSource) return { reason: 'TOKEN_BLANK', source: blankSource };
+    const noLoginSource = pick(noLogin);
+    if (noLoginSource) return { reason: 'STORE_NO_LOGIN', source: noLoginSource };
+    return { reason: 'NO_TOKEN' };
 }
 
 // Watch the credential FILE for changes and invoke onChange (debounced).

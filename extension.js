@@ -245,6 +245,16 @@ function awaitTokenThenFetch() {
         if (elapsed >= 90000) {
             clearInterval(awaitTokenTimer);
             awaitTokenTimer = null;
+            // A login-less store (#61) reads that way from the first tick, so
+            // only the poll running dry proves the login never landed.
+            if (tok.reason === AUTH_REASONS.STORE_NO_LOGIN) {
+                fileLog('Login did not add a login entry to the existing credential store');
+                vscode.window.showWarningMessage(
+                    `Claudemeter: ${AUTH_FAILURES.STORE_NO_LOGIN.lines.join(' ')}`
+                );
+                updateStatusBarWithAllData();
+                return;
+            }
             fileLog('No token appeared within the post-login poll window');
         }
     }, 3000);
