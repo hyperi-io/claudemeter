@@ -321,7 +321,7 @@
         "claudemeter.statusBar.showServiceStatus": {
           "type": "boolean",
           "default": true,
-          "description": "Show Claude service status indicator. When enabled, displays a warning/error icon if Claude services are degraded or experiencing an outage."
+          "description": "Show the Claude Code service status indicator. When enabled, displays a warning/error icon if Claude Code or the Claude API it calls is degraded or experiencing an outage. Incidents on other Claude services (claude.ai, the Console) are not shown."
         },
         "claudemeter.statusBar.timeFormat": {
           "type": "string",

@@ -8,8 +8,30 @@
 
 const https = require('https');
 
-const STATUS_API_URL = 'https://status.claude.com/api/v2/status.json';
+// summary.json rather than status.json: the page-wide indicator rolls up every
+// component, so a Console or claude.ai incident would read as Claude Code down.
+const STATUS_API_URL = 'https://status.claude.com/api/v2/summary.json';
 const STATUS_PAGE_URL = 'https://status.claude.com';
+
+// The components Claude Code depends on, in tie-break order. Matched by id
+// first because a Statuspage id survives a rename, by name if the component
+// is ever recreated.
+const WATCHED_COMPONENTS = [
+    { id: 'yyzkbfz2thpt', name: 'Claude Code', label: 'Claude Code' },
+    { id: 'k8w3r06qmzrp', name: 'Claude API (api.anthropic.com)', label: 'Claude API' }
+];
+
+// Worst wins when the watched components disagree.
+const INDICATOR_SEVERITY = { none: 0, unknown: 1, minor: 2, major: 3, critical: 4 };
+
+// Statuspage component status -> the page-level indicator the renderers use.
+const COMPONENT_INDICATOR = {
+    operational: 'none',
+    degraded_performance: 'minor',
+    under_maintenance: 'minor',
+    partial_outage: 'major',
+    major_outage: 'critical'
+};
 
 // Status indicators from Atlassian Statuspage
 // none = operational, minor = degraded, major = partial outage, critical = major outage
@@ -66,8 +88,63 @@ const CACHE_TTL_MS = 60000; // Cache for 1 minute
 let currentStatus = null;
 let currentError = null;
 
+function humaniseComponentStatus(status) {
+    const words = String(status).split('_');
+    const sentence = words.join(' ');
+    return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+function findComponent(components, watched) {
+    return components.find(c => c?.id === watched.id)
+        || components.find(c => c?.name === watched.name);
+}
+
 /**
- * Fetch service status from status.claude.com API
+ * Reduce a Statuspage summary.json payload to the worst status across the
+ * watched components (Claude Code and the API it calls). The description
+ * names that component, then the open incident naming it, else its status
+ * in words.
+ * @param {object} summary - Parsed summary.json
+ * @returns {{indicator: string, description: string, updatedAt: string|null, pageUrl: string}}
+ */
+function parseServiceStatus(summary) {
+    const components = Array.isArray(summary?.components) ? summary.components : [];
+    const incidents = Array.isArray(summary?.incidents) ? summary.incidents : [];
+
+    let worst = null;
+    for (const watched of WATCHED_COMPONENTS) {
+        const component = findComponent(components, watched);
+        if (!component) continue;
+        const indicator = COMPONENT_INDICATOR[component.status] || 'unknown';
+        if (!worst || INDICATOR_SEVERITY[indicator] > INDICATOR_SEVERITY[worst.indicator]) {
+            worst = { watched, component, indicator };
+        }
+    }
+
+    if (!worst) {
+        return {
+            indicator: 'unknown',
+            description: 'Claude Code status not reported',
+            updatedAt: summary?.page?.updated_at || null,
+            pageUrl: STATUS_PAGE_URL
+        };
+    }
+
+    const { watched, component, indicator } = worst;
+    const incident = incidents.find(i =>
+        Array.isArray(i?.components) && i.components.some(c => c?.id === component.id));
+    const detail = incident?.name || humaniseComponentStatus(component.status || 'unknown');
+
+    return {
+        indicator,
+        description: `${watched.label}: ${detail}`,
+        updatedAt: component.updated_at || summary?.page?.updated_at || null,
+        pageUrl: STATUS_PAGE_URL
+    };
+}
+
+/**
+ * Fetch the watched component status from status.claude.com
  * @returns {Promise<{indicator: string, description: string, updatedAt: string}>}
  */
 async function fetchServiceStatus() {
@@ -97,13 +174,7 @@ async function fetchServiceStatus() {
                         throw new Error(`HTTP ${response.statusCode}`);
                     }
 
-                    const json = JSON.parse(data);
-                    const result = {
-                        indicator: json.status?.indicator || 'unknown',
-                        description: json.status?.description || 'Status unknown',
-                        updatedAt: json.page?.updated_at || null,
-                        pageUrl: STATUS_PAGE_URL
-                    };
+                    const result = parseServiceStatus(JSON.parse(data));
 
                     // Update cache
                     cachedStatus = result;
@@ -245,6 +316,7 @@ function resetState() {
 
 module.exports = {
     fetchServiceStatus,
+    parseServiceStatus,
     getStatusDisplay,
     formatStatusTime,
     clearStatusCache,
