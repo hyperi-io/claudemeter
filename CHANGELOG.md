@@ -1,3 +1,10 @@
+## [2.5.21](https://github.com/hyperi-io/claudemeter/compare/v2.5.20...v2.5.21) (2026-10-12)
+
+
+### Bug Fixes
+
+* report only Claude Code and API service status ([a90b3d7](https://github.com/hyperi-io/claudemeter/commit/a90b3d7de823baeb90e441002671ab8c852cc692))
+
 ## [2.5.20](https://github.com/hyperi-io/claudemeter/compare/v2.5.19...v2.5.20) (2026-08-13)
 
 
