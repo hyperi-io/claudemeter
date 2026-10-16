@@ -98,3 +98,46 @@ describe('selectProfile — unknown warning behaviour', () => {
         expect(() => selectProfile({})).not.toThrow();
     });
 });
+
+describe('selectProfile - the plan token the code actually receives', () => {
+    beforeEach(() => resetUnknownWarning());
+
+    // organizationType arrives verbatim from ~/.claude.json oauthAccount and
+    // from the /api/oauth/profile organization_type field.
+    it('organizationType claude_enterprise -> enterprise', () => {
+        expect(selectProfile({ organizationType: 'claude_enterprise' }).name).toBe('enterprise');
+    });
+
+    it('organizationType claude_team -> team-standard', () => {
+        expect(selectProfile({ organizationType: 'claude_team' }).name).toBe('team-standard');
+    });
+
+    it('max still outranks an enterprise plan token', () => {
+        expect(selectProfile({
+            subscriptionType: 'max',
+            rateLimitTier: 'default_claude_max_20x',
+            organizationType: 'claude_enterprise',
+        }).name).toBe('max-20x');
+    });
+
+    it('enterprise outranks pro, as the documented chain orders them', () => {
+        expect(selectProfile({ subscriptionType: 'pro', organizationType: 'claude_enterprise' }).name)
+            .toBe('enterprise');
+    });
+
+    it('a personal plan token alone does not pick an org profile', () => {
+        expect(selectProfile({ organizationType: 'claude_max' }).name).toBe('unknown');
+        expect(selectProfile({ subscriptionType: 'pro', organizationType: 'claude_pro' }).name).toBe('pro');
+    });
+
+    it('compares verbatim, so a case variant does not match', () => {
+        expect(selectProfile({ organizationType: 'Claude_Enterprise' }).name).toBe('unknown');
+    });
+
+    it('names organizationType in the fall-through warning', () => {
+        const calls = [];
+        selectProfile({ organizationType: 'claude_future' }, { appendLine: (m) => calls.push(m) });
+        expect(calls[0]).toContain('claude_future');
+        expect(calls[0]).toMatch(/^[\x20-\x7E]*$/);
+    });
+});

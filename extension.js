@@ -35,7 +35,8 @@ const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refresh
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
-const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, scrubHome, getDefaultDebugLogPath } = require('./src/utils');
+const { selectProfile, resetUnknownWarning } = require('./src/tk/profileSelector');
+const { CONFIG_NAMESPACE, COMMANDS, getTokenLimit, resolveTokenLimit, setDevMode, isDebugEnabled, getDebugChannel, disposeDebugChannel, initFileLogger, fileLog, scrubHome, getDefaultDebugLogPath, clientSideRemoteName } = require('./src/utils');
 const {
     getCredentialsPath,
     readCredentials,
@@ -58,10 +59,9 @@ let statusBarItem;
 //                        shown in ANY window whenever a fetch has succeeded.
 //   currentSessionData - the LIVE Tk context for THIS window's workspace, or
 //                        null when there is no workspace or no active session.
-//                        Set only by updateTokensFromJsonl. NEVER the global
-//                        sessionTracker.getCurrentSession() (that returns the
-//                        most-recent session from ANY project and leaks another
-//                        project's Tk into an empty/other window).
+//                        Set only by updateTokensFromJsonl, from this window's
+//                        own transcript read. The session tracker is history
+//                        only and never feeds the display.
 let usageData = null;
 let currentSessionData = null;
 let credentialsInfo = null;
@@ -72,8 +72,6 @@ let sessionTracker;
 let claudeDataLoader;
 let jsonlWatcher;
 let jsonlUpdateTimer = null;
-let credentialsWatcher;
-let claudeConfigWatcher;
 let tokenWatcherDispose = null;
 let awaitTokenTimer = null;
 let currentWorkspacePath = null;
@@ -82,6 +80,7 @@ let currentWorkspacePath = null;
 let lastAuthFailure = null;
 
 let tokenDiagnosticChannel = null;
+let stateDumpChannel = null;
 
 function getTokenDiagnosticChannel() {
     if (!tokenDiagnosticChannel) {
@@ -152,10 +151,10 @@ async function beginLoginOrInstall() {
         }
         return;
     }
-    // In a remote window the terminal we would launch runs on the remote host,
-    // while the CLI we resolved and the credential store we read are both on
-    // the client. Say so instead of issuing a command that cannot work (#58).
-    if (!loginReachesMeteredMachine(vscode.env.remoteName)) {
+    // When claudemeter runs on the client of a remote window, the terminal we
+    // would launch runs on the remote host while the CLI and credential store
+    // are on the client. Say so instead of issuing a command that cannot work (#58).
+    if (!loginReachesMeteredMachine(clientSideRemoteName())) {
         const remote = describeRemoteLogin(vscode.env.remoteName, cli);
         fileLog(`Remote window (${vscode.env.remoteName}) - login must run on the client`);
         const pick = await vscode.window.showWarningMessage(
@@ -181,8 +180,8 @@ async function beginLoginOrInstall() {
 // poll for the token so we refresh as soon as it lands.
 function launchClaudeLogin(cli) {
     // The terminal follows the window's remote authority, so this must never
-    // run in a remote window whatever route reached it (#58).
-    if (!loginReachesMeteredMachine(vscode.env.remoteName)) {
+    // run from the client of a remote window whatever route reached it (#58).
+    if (!loginReachesMeteredMachine(clientSideRemoteName())) {
         fileLog('Refused to launch a login terminal in a remote window');
         return;
     }
@@ -205,23 +204,27 @@ function launchClaudeLogin(cli) {
     awaitTokenThenFetch();
 }
 
-// Poll the credential store after a login launch so we refresh as soon as
-// the token lands (the macOS Keychain can't be fs.watched). Best-effort,
-// self-limiting: ~90s at 3s intervals. Held in a module var so a second
-// login launch replaces (not stacks) the poll, and deactivate() can clear it.
 // How long a login is given before a blank store counts as the failed-persist
 // state rather than the store the user is part way through replacing.
 const BLANK_STORE_GRACE_MS = 30000;
 
+function stopAwaitToken() {
+    clearInterval(awaitTokenTimer);
+    awaitTokenTimer = null;
+}
+
+// Poll the credential store after a login launch so we refresh as soon as
+// the token lands (the macOS Keychain can't be fs.watched). Best-effort,
+// self-limiting: ~90s at 3s intervals. Held in a module var so a second
+// login launch replaces (not stacks) the poll, and deactivate() can clear it.
 function awaitTokenThenFetch() {
-    if (awaitTokenTimer) clearInterval(awaitTokenTimer);
+    stopAwaitToken();
     let elapsed = 0;
     awaitTokenTimer = setInterval(async () => {
         elapsed += 3000;
         const tok = readToken();
         if (tok.ok) {
-            clearInterval(awaitTokenTimer);
-            awaitTokenTimer = null;
+            stopAwaitToken();
             fileLog('Token appeared after login - fetching');
             await performFetch(true);
             return;
@@ -233,8 +236,7 @@ function awaitTokenThenFetch() {
         // tick, seconds after the browser opened and long before the user has
         // finished authorising.
         if (tok.reason === AUTH_REASONS.TOKEN_BLANK && elapsed >= BLANK_STORE_GRACE_MS) {
-            clearInterval(awaitTokenTimer);
-            awaitTokenTimer = null;
+            stopAwaitToken();
             fileLog('Login completed but the credential store holds a blank token');
             vscode.window.showWarningMessage(
                 `Claudemeter: ${AUTH_FAILURES.TOKEN_BLANK.lines.join(' ')}`
@@ -243,8 +245,7 @@ function awaitTokenThenFetch() {
             return;
         }
         if (elapsed >= 90000) {
-            clearInterval(awaitTokenTimer);
-            awaitTokenTimer = null;
+            stopAwaitToken();
             // A login-less store (#61) reads that way from the first tick, so
             // only the poll running dry proves the login never landed.
             if (tok.reason === AUTH_REASONS.STORE_NO_LOGIN) {
@@ -260,26 +261,18 @@ function awaitTokenThenFetch() {
     }, 3000);
 }
 
-// Prompt to log into Claude Code (or to install it if the CLI is missing).
-// Called only on an explicit user action (status-bar click / first startup) --
-// auto-refresh passes isManual=false and never reaches here, so no throttle is
-// needed. Every explicit click re-offers login, keeping the "click to log in"
-// tooltip honest.
-async function promptClaudeLogin() {
-    await beginLoginOrInstall();
-}
-
 // Single-flight guard. performFetch is triggered by the auto-refresh timer,
 // the credential-store watcher, the post-login poll, account-switch, and
 // manual commands -- these overlap and would race the global usageData and
 // the spinner (an early finisher hides the spinner while a later fetch is
 // still running). Coalesce concurrent runs into one promise; a manual caller
 // waits for any in-flight run then does its own, so the no-token login prompt
-// still fires on demand.
+// still fires on demand. fresh does the same for a caller whose state the
+// in-flight run predates, such as an account switch.
 let fetchInFlight = null;
-async function performFetch(isManual = false) {
+async function performFetch(isManual = false, { fresh = false } = {}) {
     if (fetchInFlight) {
-        if (!isManual) return fetchInFlight;
+        if (!isManual && !fresh) return fetchInFlight;
         try { await fetchInFlight; } catch { /* the in-flight run handled its own error */ }
     }
     const run = performFetchInner(isManual);
@@ -315,13 +308,19 @@ async function performFetchInner(isManual = false) {
         // Share the account-global usage across windows: fetch at most once per
         // usageRefreshSeconds, others read the cache. Avoids N windows tripping
         // the api.anthropic.com rate limit (429). Floor 30s.
-        const maxAgeMs = Math.max(30, config.get('usageRefreshSeconds', 120)) * 1000;
-        const res = await cachedFetchUsage(() => oauthFetcher.fetchUsageData(), maxAgeMs);
-        // Only a clean fetch clears the recorded failure; a cache hit that
-        // masked a live error must keep it, or the dump reports all-well.
-        if (!res.error) lastAuthFailure = null;
-        usageData = res.usageData;
-        applyProfileSignals(usageData.accountInfo);
+        const maxAgeMs = getUsageRefreshSeconds() * 1000;
+        const account = accountKey(credentialsInfo);
+        const res = await cachedFetchUsage(() => oauthFetcher.fetchUsageData(), maxAgeMs, { account });
+        if (accountKey(credentialsInfo) !== account) {
+            // The account switched while this ran; its own fetch follows.
+            fileLog('Discarded usage fetched for the previous account');
+        } else {
+            // Only a clean fetch clears the recorded failure; a cache hit that
+            // masked a live error must keep it, or the dump reports all-well.
+            if (!res.error) lastAuthFailure = null;
+            usageData = res.usageData;
+            applyProfileSignals(usageData.accountInfo);
+        }
         if (res.fromCache) {
             fileLog(res.error
                 ? `Web usage from cache (live fetch failed: ${describeFetchError(res.error)})`
@@ -349,9 +348,10 @@ async function performFetchInner(isManual = false) {
                 + (error.httpStatus ? ` (HTTP ${error.httpStatus})` : '')
                 + (context.cause ? ` - ${context.cause}` : '')
                 + (context.lookedIn ? ` - looked in ${context.lookedIn}` : ''));
-            // Offer login only where it can help. Prompting on a blank stored
-            // token is the loop #57 reported.
-            if (isManual && canRelogin) await promptClaudeLogin();
+            // Offer login only where it can help, and only on an explicit
+            // action, so every click re-offers it with no throttle. Prompting
+            // on a blank stored token is the loop #57 reported.
+            if (isManual && canRelogin) await beginLoginOrInstall();
             // An auth override is informational, not an error toast.
             handled = reason === 'ENV_OVERRIDE' || (isManual && canRelogin);
         } else {
@@ -360,20 +360,24 @@ async function performFetchInner(isManual = false) {
         }
     } finally {
         if (!currentSessionData?.tokenUsage) tokenError = new Error('No token data available');
-        // Order matters: updateStatusBar rewrites every tooltip unconditionally,
-        // so stopSpinner has to run second for an error state to survive.
-        // Guarded because stopSpinner owns the spinner: letting a render fault
-        // skip it would pin the spinner on forever, since startSpinner
-        // early-returns while isSpinnerActive is true.
+        // stopSpinner records the outcome the render then draws, so a success
+        // clears a previous failure in the same tick. It runs first so a render
+        // fault cannot pin the spinner on.
+        stopSpinner(webError, tokenError);
         try {
             updateStatusBarWithAllData();
         } catch (renderError) {
             fileLog(`Status bar render failed: ${renderError.message}`);
         }
-        stopSpinner(webError, tokenError);
     }
 
     return { webError, tokenError, handled };
+}
+
+// The identity the shared usage cache is keyed by, so one account's usage is
+// never served to a window on another.
+function accountKey(creds) {
+    return creds?.accountUuid || creds?.orgId || null;
 }
 
 // A fetch error's coarse message alone reads as "logged out" for the auth
@@ -404,15 +408,13 @@ function seedTierFromToken() {
 
 // After a web fetch, refine those signals with the authoritative OAuth
 // /profile response (rate_limit_tier is the org's, more accurate than the
-// token blob's), and fill in display identity.
+// token blob's). Identity is never copied in: credentialsInfo's identity
+// fields drive account-switch detection and must come from disk alone.
 function applyProfileSignals(accountInfo) {
     seedTierFromToken();
     if (!accountInfo) return;
     if (!credentialsInfo) credentialsInfo = {};
     if (accountInfo.rateLimitTier) credentialsInfo.rateLimitTier = accountInfo.rateLimitTier;
-    if (accountInfo.name && !credentialsInfo.displayName) credentialsInfo.displayName = accountInfo.name;
-    if (accountInfo.email && !credentialsInfo.email) credentialsInfo.email = accountInfo.email;
-    if (accountInfo.orgName && !credentialsInfo.organizationName) credentialsInfo.organizationName = accountInfo.orgName;
 }
 
 function updateStatusBarWithAllData() {
@@ -420,24 +422,67 @@ function updateStatusBarWithAllData() {
     updateStatusBar(statusBarItem, usageData, activityStats, currentSessionData, credentialsInfo);
 }
 
-// Web-usage refresh cadence, in seconds. Also the shared-cache max-age (see
-// usageRefreshSeconds), so the timer and the cache agree: a tick fetches only
+// Matches the declared default of claudemeter.localRefreshSeconds.
+const DEFAULT_LOCAL_REFRESH_SECONDS = 10;
+
+// Watch the credential store so a Claude Code token rotation or fresh login is
+// picked up at once. File platforms only; the macOS Keychain relies on the
+// per-fetch re-read and the post-login poll.
+function startTokenWatcher() {
+    if (tokenWatcherDispose) return;
+    tokenWatcherDispose = watchToken(() => {
+        fileLog('Credential store changed - refetching');
+        performFetch(false).catch((err) => fileLog(`Watcher refetch failed: ${err.message}`));
+    });
+}
+
+function stopTokenWatcher() {
+    if (!tokenWatcherDispose) return;
+    try { tokenWatcherDispose(); } catch { /* already gone */ }
+    tokenWatcherDispose = null;
+}
+
+// tokenOnlyMode on drops the web usage it no longer refreshes; off starts the
+// watcher and fetches, so neither waits for a reload.
+function applyTokenOnlyMode(on) {
+    if (on) {
+        stopTokenWatcher();
+        usageData = null;
+        return;
+    }
+    startTokenWatcher();
+    performFetch(false).catch((err) => fileLog(`tokenOnlyMode-off fetch failed: ${err.message}`));
+}
+
+// Web-usage refresh cadence, in seconds, clamped to 30..3600. Also the
+// shared-cache max-age, so the timer and the cache agree: a tick fetches only
 // when the shared cache has gone stale, and only one window actually hits the
-// network. Floor 30s.
-function createAutoRefreshTimer(seconds) {
-    const clamped = Math.max(30, Math.min(3600, seconds));
+// network.
+function getUsageRefreshSeconds() {
+    const seconds = vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get('usageRefreshSeconds', 120);
+    return Math.max(30, Math.min(3600, seconds));
+}
+
+function restartAutoRefreshTimer() {
+    clearInterval(autoRefreshTimer);
+    const clamped = getUsageRefreshSeconds();
     console.log(`Web auto-refresh enabled: every ${clamped}s (shared across windows)`);
-    return setInterval(async () => {
+    autoRefreshTimer = setInterval(async () => {
         await performFetch();
     }, clamped * 1000);
 }
 
-function createLocalRefreshTimer(seconds) {
+// The local timer exists only to refresh Tk, which the client of a remote
+// window has no readable source for.
+function restartLocalRefreshTimer() {
+    clearInterval(localRefreshTimer);
+    localRefreshTimer = null;
+    if (clientSideRemoteName()) return;
+    const seconds = vscode.workspace.getConfiguration(CONFIG_NAMESPACE)
+        .get('localRefreshSeconds', DEFAULT_LOCAL_REFRESH_SECONDS);
     const clampedSeconds = Math.max(5, Math.min(60, seconds));
-
     console.log(`Local refresh enabled: polling token data every ${clampedSeconds} seconds`);
-
-    return setInterval(async () => {
+    localRefreshTimer = setInterval(async () => {
         await updateTokensFromJsonl(true);
     }, clampedSeconds * 1000);
 }
@@ -466,17 +511,13 @@ async function setupTokenMonitoring(context) {
         fileLog('Extension activated (no workspace)');
     }
 
-    // The Tk gauge is per-workspace and reads Claude Code's transcripts off
-    // disk. A `ui` extension runs on the CLIENT, so in a remote window the
-    // workspace path names a directory on the REMOTE host while every lookup
-    // resolves against the client, matching whatever the client happens to
-    // have at that path - a same-named local project then supplies someone
-    // else's context (#58). No correct answer is reachable from this side, so
-    // the gauge stays blank rather than confidently wrong. Web usage is
-    // account-global and unaffected.
-    if (vscode.env.remoteName) {
-        debugLog(`Remote window (${vscode.env.remoteName}) - Tk gauge disabled`);
-        fileLog(`Remote window (${vscode.env.remoteName}) - Tk gauge disabled, the transcripts are on the remote host`);
+    // On the client of a remote window the workspace path names a remote
+    // directory, and a same-named local project would supply another
+    // session's context (#58), so Tk stays blank.
+    const remote = clientSideRemoteName();
+    if (remote) {
+        debugLog(`Remote window (${remote}) on the client - Tk gauge disabled`);
+        fileLog(`Remote window (${remote}) on the client - Tk gauge disabled, the transcripts are on the remote host`);
         return;
     }
 
@@ -540,42 +581,32 @@ async function setupTokenMonitoring(context) {
 // right now?". Reports with a dump attached are triagable; reports without
 // one typically require a round trip to reproduce.
 function buildStateDump() {
-    const creds = (() => {
-        try { return readCredentials(); } catch { return null; }
-    })();
+    // Each probe is independent: one that throws reports its fallback and the
+    // rest of the dump still renders.
+    const attempt = (probe, fallback = null) => {
+        try { return probe(); } catch { return fallback; }
+    };
 
-    const oauthAccount = (() => {
-        try { return getOAuthAccount(); } catch { return null; }
-    })();
-
-    const s1mAccess = (() => {
-        try { return hasMaxContextAccess(); } catch { return null; }
-    })();
-
-    const liveSessions = (() => {
-        try { return getLiveSessions(); } catch { return []; }
-    })();
-
-    const workspaceSession = (() => {
-        try { return findSessionForWorkspace(currentWorkspacePath); } catch { return null; }
-    })();
+    const creds = attempt(readCredentials);
+    const oauthAccount = attempt(getOAuthAccount);
+    const s1mAccess = attempt(hasMaxContextAccess);
+    const liveSessions = attempt(getLiveSessions, []);
+    const workspaceSession = attempt(() => findSessionForWorkspace(currentWorkspacePath));
 
     // Token state (no secrets - only presence, source, expiry, scopes).
-    const tokenState = (() => {
-        try {
-            const t = readToken();
-            if (!t.ok) return { ok: false, reason: t.reason, authOverride: detectAuthOverride() };
-            return {
-                ok: true,
-                source: t.source,
-                expiresAt: t.expiresAt,
-                expired: t.expired,
-                scopes: t.scopes,
-                subscriptionType: t.subscriptionType,
-                rateLimitTier: t.rateLimitTier,
-            };
-        } catch { return null; }
-    })();
+    const tokenState = attempt(() => {
+        const t = readToken();
+        if (!t.ok) return { ok: false, reason: t.reason, authOverride: detectAuthOverride() };
+        return {
+            ok: true,
+            source: t.source,
+            expiresAt: t.expiresAt,
+            expired: t.expired,
+            scopes: t.scopes,
+            subscriptionType: t.subscriptionType,
+            rateLimitTier: t.rateLimitTier,
+        };
+    });
 
     // Redact anything that looks sensitive. The dump is safe to paste into
     // public issue trackers: SECURITY.md commits to no account name, no email
@@ -592,22 +623,20 @@ function buildStateDump() {
         hasAvailableSubscription: creds.hasAvailableSubscription,
         subscriptionType: creds.subscriptionType,
         rateLimitTier: creds.rateLimitTier,
-        hasAccessToken: !!creds.accessToken,
-        hasRefreshToken: !!creds.refreshToken,
+        hasAccessToken: creds.hasAccessToken,
+        hasRefreshToken: creds.hasRefreshToken,
     }) : null;
 
-    const tokenLimitResolved = (() => {
-        try { return getTokenLimit(); } catch { return null; }
-    })();
+    const tokenLimitResolved = attempt(() => getTokenLimit());
 
     return {
         timestamp: new Date().toISOString(),
         version: getExtensionVersion(),
         mode: 'oauth',
-        // The window's remote authority, or null when local. Claudemeter runs
-        // on the client, so this is what tells a remote report which machine
-        // the CLI and credential store were read from (#58).
+        // Which machine the CLI and credential store were read from (#58):
+        // remoteHost true means the remote, false the client.
         remoteName: vscode.env.remoteName || null,
+        remoteHost: !!vscode.env.remoteName && !clientSideRemoteName(),
         workspacePath: currentWorkspacePath,
         identityPresent: !!getIdentityKey(creds),
         credentials: safeCreds,
@@ -627,9 +656,7 @@ function buildStateDump() {
         // Which stores were probed and what was in them. A config-dir mismatch
         // between the extension host and the shell that ran `claude auth login`
         // is invisible without it (#57).
-        tokenStores: (() => {
-            try { return describeStores(); } catch { return null; }
-        })(),
+        tokenStores: attempt(describeStores),
         lastAuthFailure,
         usage: usageData ? {
             timestamp: usageData.timestamp,
@@ -682,63 +709,58 @@ function setupCredentialsMonitoring(context) {
 
     const handleIdentityMaybeChanged = async (sourceLabel) => {
         const previous = credentialsInfo;
-        credentialsInfo = readCredentials();
-
-        if (!credentialsInfo) return;
+        const current = readCredentials();
+        if (!current) return;
+        credentialsInfo = current;
 
         const previousKey = getIdentityKey(previous);
         const currentKey = getIdentityKey(credentialsInfo);
         const hadPrevious = previousKey !== null;
         const switched = hadPrevious && identityChanged(previousKey, currentKey);
 
+        if (switched) {
+            // The old account's usage must not stay on screen as the new one's.
+            usageData = null;
+            resetUnknownWarning();
+        }
+        // The re-read replaced the token-seeded plan (null on macOS) and the
+        // /profile rate-limit tier, so both are applied again.
+        applyProfileSignals(usageData?.accountInfo);
+
         if (!switched) {
-            await updateStatusBarWithAllData();
+            updateStatusBarWithAllData();
             return;
         }
 
-        const fmt = (key) => {
-            if (!key) return '(none)';
-            const id = key.accountUuid || key.email || key.orgId;
-            return id ? `${String(id).slice(0, 8)}...` : '(none)';
-        };
-        fileLog(`Account switched via ${sourceLabel} (${fmt(previousKey)} → ${fmt(currentKey)})`);
+        // Presence only - SECURITY.md promises no email in logs.
+        fileLog(`Account switched via ${sourceLabel} (identity ${currentKey ? 'present' : 'absent'})`);
         fileLog(`New plan: ${formatSubscriptionType(credentialsInfo.subscriptionType)} (${formatRateLimitTier(credentialsInfo.rateLimitTier)})`);
+        updateStatusBarWithAllData();
 
-        // No session to clear -- the OAuth token in the store already belongs
-        // to the new account (that's what changed). Just re-fetch; the new
-        // account's usage comes back automatically.
-        performFetch(false).catch(err => {
+        // The token store already holds the new account's token, so a fetch
+        // is all a switch needs. fresh keeps it out of a run started with the
+        // old token.
+        performFetch(false, { fresh: true }).catch(err => {
             fileLog(`Post-switch fetch failed: ${err.message}`);
         });
     };
 
-    // Watcher 1: the credentials file in whichever config dir is in force
-    const credentialsDir = path.dirname(getCredentialsPath());
-    if (fs.existsSync(credentialsDir)) {
-        credentialsWatcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(credentialsDir, '.credentials.json')
+    const watchIdentityFile = (filePath, sourceLabel, shownPath) => {
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) return;
+        const watcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(dir, path.basename(filePath))
         );
-        const handler = () => handleIdentityMaybeChanged('.credentials.json');
-        credentialsWatcher.onDidChange(handler);
-        credentialsWatcher.onDidCreate(handler);
-        context.subscriptions.push(credentialsWatcher);
-        fileLog('Watching ~/.claude/.credentials.json for account changes');
-    }
-
-    // Watcher 2: ~/.claude.json (new source of truth for account identity)
-    const claudeConfigPath = getClaudeConfigPath();
-    const claudeConfigDir = path.dirname(claudeConfigPath);
-    const claudeConfigName = path.basename(claudeConfigPath);
-    if (fs.existsSync(claudeConfigDir)) {
-        claudeConfigWatcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(claudeConfigDir, claudeConfigName)
-        );
-        const handler = () => handleIdentityMaybeChanged('.claude.json');
-        claudeConfigWatcher.onDidChange(handler);
-        claudeConfigWatcher.onDidCreate(handler);
-        context.subscriptions.push(claudeConfigWatcher);
-        fileLog('Watching ~/.claude.json for account changes');
-    }
+        const handler = () => handleIdentityMaybeChanged(sourceLabel);
+        watcher.onDidChange(handler);
+        watcher.onDidCreate(handler);
+        context.subscriptions.push(watcher);
+        fileLog(`Watching ${shownPath} for account changes`);
+    };
+    // The credentials file in whichever config dir is in force, then
+    // ~/.claude.json, the source of truth for account identity.
+    watchIdentityFile(getCredentialsPath(), '.credentials.json', '~/.claude/.credentials.json');
+    watchIdentityFile(getClaudeConfigPath(), '.claude.json', '~/.claude.json');
 }
 
 // Coalesce a burst of JSONL filesystem events into a single update.
@@ -770,7 +792,7 @@ async function updateTokensFromJsonl(silent = false) {
 
         if (!silent) {
             if (usage.isActive) {
-                debugLog(`Active session: ${usage.totalTokens.toLocaleString()} tokens (${usage.messageCount} messages)`);
+                debugLog(`Active session: ${usage.totalTokens.toLocaleString()} tokens`);
                 debugLog(`   Cache read: ${usage.cacheReadTokens.toLocaleString()}, Cache creation: ${usage.cacheCreationTokens.toLocaleString()}`);
             } else {
                 debugLog(`No active session detected (no recent JSONL activity)`);
@@ -795,19 +817,8 @@ async function updateTokensFromJsonl(silent = false) {
                 if (!silent) {
                     debugLog(`Context window resolved: ${resolved.limit.toLocaleString()} (source=${resolved.source}, confidence=${resolved.confidence})`);
                 }
-                if (sessionTracker) {
-                    // Persist for history; this window owns its own session so
-                    // this never reads another project's data.
-                    let s = await sessionTracker.getCurrentSession();
-                    if (!s) {
-                        s = await sessionTracker.startSession('Claude Code session (auto-created)');
-                        debugLog(`Created new session: ${s.sessionId}`);
-                    }
-                    await sessionTracker.updateTokens(usage.totalTokens, resolved.limit, resolved);
-                }
-
                 // The Tk display value is built straight from THIS window's live
-                // read - not the global tracker - so it can never show another
+                // read - not the tracker - so it can never show another
                 // project's context.
                 currentSessionData = {
                     tokenUsage: {
@@ -823,81 +834,51 @@ async function updateTokensFromJsonl(silent = false) {
                 // No active session for this workspace (or no workspace at all).
                 currentSessionData = null;
             }
-            const activityStats = getActivityStats(usageData, currentSessionData);
-            updateStatusBar(statusBarItem, usageData, activityStats, currentSessionData, credentialsInfo);
+            updateStatusBarWithAllData();
+
+            // History only, written to this window's own session. Nothing reads
+            // it for display, so a stalled lock or a failed write never holds
+            // up the redraw above.
+            if (sessionTracker && currentSessionData) {
+                const { current, limit, limitSource, limitConfidence } = currentSessionData.tokenUsage;
+                sessionTracker.recordTokens(current, limit, { source: limitSource, confidence: limitConfidence })
+                    .catch((err) => debugLog(`Session history write failed: ${err.message}`));
+            }
         }
     } catch (error) {
         debugLog(`Error updating tokens: ${error.message}`);
     }
 }
 
-// Auto-populate debugLogFile setting on first run
-async function initializeDebugLogPath() {
+// The default log path is resolved at runtime. A copy of it persisted in user
+// settings carries the OS username into Settings Sync, so it is removed.
+async function clearPersistedDefaultLogPath() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    const currentPath = config.get('debugLogFile', '');
-
-    if (!currentPath || !currentPath.trim()) {
-        const defaultPath = getDefaultDebugLogPath();
-        try {
-            await config.update('debugLogFile', defaultPath, vscode.ConfigurationTarget.Global);
-            console.log(`Claudemeter: Initialized debugLogFile to ${defaultPath}`);
-        } catch (error) {
-            console.error('Failed to initialize debugLogFile setting:', error);
-        }
-    }
+    const persisted = config.inspect('debugLogFile')?.globalValue;
+    if (!persisted || persisted !== getDefaultDebugLogPath()) return;
+    await config.update('debugLogFile', undefined, vscode.ConfigurationTarget.Global);
 }
 
-// Migrate deprecated boolean settings to new enum settings
+// Retired settings and their replacements. A `from` equal to `to` is a renamed
+// enum value: 'both' became 'extended', which renders the same.
+const DEPRECATED_SETTINGS = [
+    { from: 'statusBar.use24HourTime', when: true, to: 'statusBar.timeFormat', value: '24hour', log: 'use24HourTime=true -> timeFormat=24hour' },
+    { from: 'statusBar.useCountdownTimer', when: true, to: 'statusBar.timeFormat', value: 'countdown', log: 'useCountdownTimer=true -> timeFormat=countdown' },
+    { from: 'statusBar.useProgressBars', when: true, to: 'statusBar.usageFormat', value: 'barLight', log: 'useProgressBars=true -> usageFormat=barLight' },
+    { from: 'statusBar.tokensDisplay', when: 'both', to: 'statusBar.tokensDisplay', value: 'extended', log: 'tokensDisplay=both -> extended' },
+];
+
 async function migrateDeprecatedSettings() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-
-    // Migrate use24HourTime (boolean) -> timeFormat (enum)
-    const use24Hour = config.inspect('statusBar.use24HourTime');
-    if (use24Hour?.globalValue === true) {
-        await config.update('statusBar.timeFormat', '24hour', vscode.ConfigurationTarget.Global);
-        await config.update('statusBar.use24HourTime', undefined, vscode.ConfigurationTarget.Global);
-        console.log('Claudemeter: Migrated use24HourTime=true -> timeFormat=24hour');
-    }
-    if (use24Hour?.workspaceValue === true) {
-        await config.update('statusBar.timeFormat', '24hour', vscode.ConfigurationTarget.Workspace);
-        await config.update('statusBar.use24HourTime', undefined, vscode.ConfigurationTarget.Workspace);
-    }
-
-    // Migrate useCountdownTimer (boolean) -> timeFormat (enum)
-    const useCountdown = config.inspect('statusBar.useCountdownTimer');
-    if (useCountdown?.globalValue === true) {
-        await config.update('statusBar.timeFormat', 'countdown', vscode.ConfigurationTarget.Global);
-        await config.update('statusBar.useCountdownTimer', undefined, vscode.ConfigurationTarget.Global);
-        console.log('Claudemeter: Migrated useCountdownTimer=true -> timeFormat=countdown');
-    }
-    if (useCountdown?.workspaceValue === true) {
-        await config.update('statusBar.timeFormat', 'countdown', vscode.ConfigurationTarget.Workspace);
-        await config.update('statusBar.useCountdownTimer', undefined, vscode.ConfigurationTarget.Workspace);
-    }
-
-    // Migrate useProgressBars (boolean) -> usageFormat (enum)
-    const useProgressBars = config.inspect('statusBar.useProgressBars');
-    if (useProgressBars?.globalValue === true) {
-        await config.update('statusBar.usageFormat', 'barLight', vscode.ConfigurationTarget.Global);
-        await config.update('statusBar.useProgressBars', undefined, vscode.ConfigurationTarget.Global);
-        console.log('Claudemeter: Migrated useProgressBars=true -> usageFormat=barLight');
-    }
-    if (useProgressBars?.workspaceValue === true) {
-        await config.update('statusBar.usageFormat', 'barLight', vscode.ConfigurationTarget.Workspace);
-        await config.update('statusBar.useProgressBars', undefined, vscode.ConfigurationTarget.Workspace);
-    }
-
-    // Migrate tokensDisplay='both' (the old pre-2.3.3 default) to 'extended'.
-    // 'both' was renamed when the enum gained 'value' / 'limit' variants so
-    // that enum values describe what content shows, not a layout mode.
-    // 'extended' produces the same rendering as the old 'both'.
-    const tokensDisplay = config.inspect('statusBar.tokensDisplay');
-    if (tokensDisplay?.globalValue === 'both') {
-        await config.update('statusBar.tokensDisplay', 'extended', vscode.ConfigurationTarget.Global);
-        console.log('Claudemeter: Migrated tokensDisplay=both -> extended');
-    }
-    if (tokensDisplay?.workspaceValue === 'both') {
-        await config.update('statusBar.tokensDisplay', 'extended', vscode.ConfigurationTarget.Workspace);
+    const { Global, Workspace } = vscode.ConfigurationTarget;
+    for (const m of DEPRECATED_SETTINGS) {
+        const inspected = config.inspect(m.from);
+        for (const [value, target] of [[inspected?.globalValue, Global], [inspected?.workspaceValue, Workspace]]) {
+            if (value !== m.when) continue;
+            await config.update(m.to, m.value, target);
+            if (m.from !== m.to) await config.update(m.from, undefined, target);
+            if (target === Global) console.log(`Claudemeter: Migrated ${m.log}`);
+        }
     }
 }
 
@@ -908,25 +889,26 @@ async function migrateDeprecatedSettings() {
 //
 // Uses resolveTokenLimit() which is self-contained (reads credentials,
 // model IDs, etc. internally), so this is safe to call pre-first-fetch.
-// Profile selection uses credentials signals only (orgType is not yet
-// available - that requires a successful usageData fetch). The selector
-// handles missing orgType gracefully and falls through to 'unknown'.
+// Profile selection uses the local signals: the token's plan and tier, and
+// the organizationType plan token from ~/.claude.json.
 async function runLegacySettingsMigration() {
     try {
         const { migrateLegacySettings } = require('./src/tk/migrate');
-        const { selectProfile } = require('./src/tk/profileSelector');
 
         // No credentials -> no profile -> nothing to migrate against
         if (!credentialsInfo) {
             return;
         }
 
+        const logger = {
+            appendLine: (msg) => fileLog(msg),
+        };
+
         const profile = selectProfile({
             subscriptionType: credentialsInfo.subscriptionType,
             rateLimitTier: credentialsInfo.rateLimitTier,
-            // orgType omitted - not yet available pre-first-fetch, selector
-            // falls through gracefully and uses subscription/tier signals alone
-        });
+            organizationType: credentialsInfo.organizationType,
+        }, logger);
 
         // resolveTokenLimit() is self-contained: reads vscode settings,
         // model aliases, s1mAccessCache and credentials internally.
@@ -935,11 +917,6 @@ async function runLegacySettingsMigration() {
             return;
         }
 
-        // Logger adapter - proxy to fileLog (already set up by this point)
-        const logger = {
-            appendLine: (msg) => fileLog(msg),
-        };
-
         await migrateLegacySettings(vscode, contextWindow, profile, logger);
     } catch (err) {
         // Migration failures must never block extension activation
@@ -947,45 +924,9 @@ async function runLegacySettingsMigration() {
     }
 }
 
-async function activate(context) {
-    // Enable debug mode in Extension Development Host (F5)
-    if (context.extensionMode === vscode.ExtensionMode.Development) {
-        setDevMode(true);
-    }
-
-    // Migrate any deprecated boolean settings to new enum settings
-    await migrateDeprecatedSettings();
-
-    // Auto-populate debugLogFile setting if empty
-    await initializeDebugLogPath();
-
-    // Log version on startup for debugging
-    const version = context.extension.packageJSON.version;
-    fileLog(`Claudemeter v${version} starting`);
-
-    statusBarItem = createStatusBarItem(context);
-
-    // Fetch service status immediately and set up periodic refresh (every 5 minutes)
-    refreshServiceStatus().then(() => updateStatusBarWithAllData()).catch(err => {
-        console.log('Claudemeter: Initial service status fetch failed:', err.message);
-    });
-    serviceStatusTimer = setInterval(() => {
-        refreshServiceStatus().then(() => updateStatusBarWithAllData()).catch(err => {
-            console.log('Claudemeter: Service status refresh failed:', err.message);
-        });
-    }, 5 * 60 * 1000);  // 5 minutes
-
-    sessionTracker = new SessionTracker();
-
-    await setupTokenMonitoring(context);
-    setupCredentialsMonitoring(context);
-
-    // One-shot migration of legacy %-threshold settings to the new
-    // profile-driven token-runway model. Runs after credentials are loaded;
-    // idempotent on every activation once migration is complete.
-    await runLegacySettingsMigration();
-
-    // Register commands
+// Registered before anything fallible runs, so a failed setup step still
+// leaves the status bar's click targets and the palette working.
+function registerCommands(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.FETCH_NOW, async () => {
             const { webError, handled } = await performFetch(true);
@@ -1060,7 +1001,7 @@ async function activate(context) {
                 // dump is meant to be pasteable into a public bug report, and
                 // the name is PII (see README Privacy - "redacted bug reports").
                 const ai = usageData.accountInfo;
-                debugChannel.appendLine(`  Account: ${ai ? `present (${ai.orgType || 'Personal'})` : 'unknown'}`);
+                debugChannel.appendLine(`  Account: ${ai ? `present (${ai.organizationType || ai.orgType || 'plan unknown'})` : 'unknown'}`);
                 debugChannel.appendLine(`  Session Usage: ${usageData.usagePercent}%`);
                 debugChannel.appendLine(`  Weekly Usage: ${usageData.usagePercentWeek}%`);
                 debugChannel.appendLine(`  Has Monthly Credits: ${!!usageData.monthlyCredits}`);
@@ -1110,7 +1051,18 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.DUMP_STATE, async () => {
             const dump = buildStateDump();
-            const channel = vscode.window.createOutputChannel('Claudemeter - State Dump');
+            if (!stateDumpChannel) {
+                const created = vscode.window.createOutputChannel('Claudemeter - State Dump');
+                stateDumpChannel = created;
+                context.subscriptions.push({
+                    dispose: () => {
+                        created.dispose();
+                        if (stateDumpChannel === created) stateDumpChannel = null;
+                    },
+                });
+            }
+            const channel = stateDumpChannel;
+            channel.clear();
             channel.appendLine(`=== CLAUDEMETER STATE DUMP (${new Date().toLocaleString()}) ===`);
             channel.appendLine('');
             channel.appendLine('Copy everything below this line into a bug report:');
@@ -1147,7 +1099,7 @@ async function activate(context) {
     );
 
     // Dev-only simulator commands - see src/commands/simulator.js.
-    // All 12 are gated by `config.claudemeter.debug` in package.json
+    // All 13 are gated by `config.claudemeter.debug` in package.json
     // (enablement clause) so they only appear when claudemeter.debug=true.
     const { registerSimulatorCommands } = require('./src/commands/simulator');
     registerSimulatorCommands(context, performFetch);
@@ -1156,14 +1108,63 @@ async function activate(context) {
     // tooltip so the offer line goes as soon as it is answered.
     const { registerDeclutterCommands } = require('./src/commands/declutter');
     registerDeclutterCommands(context, updateStatusBarWithAllData);
+}
+
+// A failed step is logged and skipped, so one bad file or permission cannot
+// stop the rest of activation.
+async function runSetupStep(name, step) {
+    try {
+        await step();
+    } catch (err) {
+        fileLog(`Setup step failed (${name}): ${err && err.message}`);
+        console.error(`Claudemeter: setup step failed (${name}):`, err);
+    }
+}
+
+async function activate(context) {
+    // Enable debug mode in Extension Development Host (F5)
+    if (context.extensionMode === vscode.ExtensionMode.Development) {
+        setDevMode(true);
+    }
+
+    sessionTracker = new SessionTracker();
+    registerCommands(context);
+
+    await runSetupStep('deprecated settings', migrateDeprecatedSettings);
+    await runSetupStep('debug log path', clearPersistedDefaultLogPath);
+
+    // Log version on startup for debugging
+    const version = context.extension.packageJSON.version;
+    fileLog(`Claudemeter v${version} starting`);
+
+    statusBarItem = createStatusBarItem(context);
+
+    // Fetch service status immediately and set up periodic refresh (every 5 minutes)
+    refreshServiceStatus().then(() => updateStatusBarWithAllData()).catch(err => {
+        console.log('Claudemeter: Initial service status fetch failed:', err.message);
+    });
+    serviceStatusTimer = setInterval(() => {
+        refreshServiceStatus().then(() => updateStatusBarWithAllData()).catch(err => {
+            console.log('Claudemeter: Service status refresh failed:', err.message);
+        });
+    }, 5 * 60 * 1000);  // 5 minutes
+
+    await runSetupStep('token monitoring', () => setupTokenMonitoring(context));
+    await runSetupStep('credentials monitoring', () => setupCredentialsMonitoring(context));
+
+    // One-shot migration of legacy %-threshold settings to the new
+    // profile-driven token-runway model. Runs after credentials are loaded;
+    // idempotent on every activation once migration is complete.
+    await runLegacySettingsMigration();
 
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
 
     if (config.get('fetchOnStartup', true) && !config.get('tokenOnlyMode', false)) {
         console.log('Claudemeter: Scheduling fetch on startup...');
         setTimeout(async () => {
-            // isManual=true on startup so a first-run user with no token gets
-            // the one-time login prompt. With a token it just fetches quietly.
+            // isManual=true on startup so a user with no token is offered
+            // login, once per window per startup. With a token it just
+            // fetches quietly.
             try {
                 const result = await performFetch(true);
                 if (result.webError) {
@@ -1175,57 +1176,26 @@ async function activate(context) {
         }, 2000);
     }
 
-    // Watch the credential store so a Claude Code token rotation / fresh
-    // login is picked up instantly (file platforms; macOS Keychain relies
-    // on the per-fetch re-read + post-login poll). Skip in tokenOnlyMode.
-    if (!config.get('tokenOnlyMode', false)) {
-        tokenWatcherDispose = watchToken(() => {
-            fileLog('Credential store changed - refetching');
-            performFetch(false).catch((err) => fileLog(`Watcher refetch failed: ${err.message}`));
-        });
-        context.subscriptions.push({ dispose: () => { if (tokenWatcherDispose) tokenWatcherDispose(); } });
-    }
+    if (!config.get('tokenOnlyMode', false)) startTokenWatcher();
+    context.subscriptions.push({ dispose: stopTokenWatcher });
 
-    autoRefreshTimer = createAutoRefreshTimer(config.get('usageRefreshSeconds', 120));
-
-    // The local timer exists only to refresh Tk, which a remote window has no
-    // readable source for.
-    const localRefreshSeconds = config.get('localRefreshSeconds', 15);
-    if (!vscode.env.remoteName) {
-        localRefreshTimer = createLocalRefreshTimer(localRefreshSeconds);
-    }
+    restartAutoRefreshTimer();
+    restartLocalRefreshTimer();
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(async (e) => {
-            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.usageRefreshSeconds`)) {
-                if (autoRefreshTimer) {
-                    clearInterval(autoRefreshTimer);
-                    autoRefreshTimer = null;
-                }
-                const newConfig = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-                autoRefreshTimer = createAutoRefreshTimer(newConfig.get('usageRefreshSeconds', 120));
+            if (!e.affectsConfiguration(CONFIG_NAMESPACE)) return;
+
+            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.usageRefreshSeconds`)) restartAutoRefreshTimer();
+            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.localRefreshSeconds`)) restartLocalRefreshTimer();
+
+            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.tokenOnlyMode`)) {
+                applyTokenOnlyMode(vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get('tokenOnlyMode', false));
             }
 
-            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.localRefreshSeconds`)) {
-                if (localRefreshTimer) {
-                    clearInterval(localRefreshTimer);
-                    localRefreshTimer = null;
-                }
-
-                const newConfig = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-                const newLocalRefresh = newConfig.get('localRefreshSeconds', 15);
-                if (!vscode.env.remoteName) {
-                    localRefreshTimer = createLocalRefreshTimer(newLocalRefresh);
-                }
-            }
-
-            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.statusBar`)) {
-                await updateStatusBarWithAllData();
-            }
-
-            if (e.affectsConfiguration(`${CONFIG_NAMESPACE}.thresholds`)) {
-                await updateStatusBarWithAllData();
-            }
+            // Every claudemeter setting feeds the render, so any change redraws
+            // now rather than on the next refresh tick.
+            updateStatusBarWithAllData();
         })
     );
 
@@ -1235,35 +1205,16 @@ async function activate(context) {
 }
 
 async function deactivate() {
-    if (autoRefreshTimer) {
-        clearInterval(autoRefreshTimer);
-        autoRefreshTimer = null;
-    }
-
-    if (localRefreshTimer) {
-        clearInterval(localRefreshTimer);
-        localRefreshTimer = null;
-    }
-
-    if (serviceStatusTimer) {
-        clearInterval(serviceStatusTimer);
-        serviceStatusTimer = null;
-    }
-
-    if (jsonlUpdateTimer) {
-        clearTimeout(jsonlUpdateTimer);
-        jsonlUpdateTimer = null;
-    }
-
-    if (awaitTokenTimer) {
-        clearInterval(awaitTokenTimer);
-        awaitTokenTimer = null;
-    }
-
-    if (tokenWatcherDispose) {
-        try { tokenWatcherDispose(); } catch { /* already gone */ }
-        tokenWatcherDispose = null;
-    }
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+    clearInterval(localRefreshTimer);
+    localRefreshTimer = null;
+    clearInterval(serviceStatusTimer);
+    serviceStatusTimer = null;
+    clearTimeout(jsonlUpdateTimer);
+    jsonlUpdateTimer = null;
+    stopAwaitToken();
+    stopTokenWatcher();
 }
 
 module.exports = {

@@ -57,10 +57,30 @@ const HAPPY_HOUR_ICONS = Object.freeze({
 
 const TIME_RE = /^(\d{2}):(\d{2})$/;
 
+// Building an Intl.DateTimeFormat costs far more than using one, and
+// nextTransition asks up to 11,520 times per call. Only valid zones are cached,
+// because the constructor throws on an invalid one.
+const formatterCache = new Map();
+
+function formatterFor(tz) {
+    let fmt = formatterCache.get(tz);
+    if (!fmt) {
+        fmt = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz,
+            hour: '2-digit',
+            minute: '2-digit',
+            weekday: 'short',
+            hour12: false,
+        });
+        formatterCache.set(tz, fmt);
+    }
+    return fmt;
+}
+
 function isValidTz(tz) {
     if (typeof tz !== 'string' || tz.length === 0) return false;
     try {
-        new Intl.DateTimeFormat('en-US', { timeZone: tz });
+        formatterFor(tz);
         return true;
     } catch {
         return false;
@@ -96,13 +116,7 @@ function validatePeakWindow(raw) {
 
 // Convert a Date to { dayOfWeek (0-6), hour, minute } in the given tz.
 function partsInTz(date, tz) {
-    const fmt = new Intl.DateTimeFormat('en-US', {
-        timeZone: tz,
-        hour: '2-digit',
-        minute: '2-digit',
-        weekday: 'short',
-        hour12: false,
-    });
+    const fmt = formatterFor(tz);
     const parts = Object.fromEntries(
         fmt.formatToParts(date).map(p => [p.type, p.value])
     );
@@ -118,17 +132,18 @@ function toMinutes(hhmm) {
     return h * 60 + m;
 }
 
+// The check against an already-validated window, so a search can skip
+// re-validating (which builds a formatter) on every probe.
+function isHappyHourIn(now, window, startMin, endMin) {
+    const { dayOfWeek, hour, minute } = partsInTz(now, window.tz);
+    if (!window.days.includes(dayOfWeek)) return true;
+    const nowMin = hour * 60 + minute;
+    return nowMin < startMin || nowMin >= endMin;
+}
+
 function isHappyHour(now, peakWindow) {
     const window = validatePeakWindow(peakWindow);
-    const { dayOfWeek, hour, minute } = partsInTz(now, window.tz);
-
-    if (!window.days.includes(dayOfWeek)) return true;
-
-    const nowMin = hour * 60 + minute;
-    const startMin = toMinutes(window.start);
-    const endMin = toMinutes(window.end);
-
-    return nowMin < startMin || nowMin >= endMin;
+    return isHappyHourIn(now, window, toMinutes(window.start), toMinutes(window.end));
 }
 
 // Find the next UTC instant at which isHappyHour flips. Iterates
@@ -136,14 +151,16 @@ function isHappyHour(now, peakWindow) {
 // fiddly DST arithmetic by just asking the question repeatedly.
 function nextTransition(now, peakWindow) {
     const window = validatePeakWindow(peakWindow);
-    const current = isHappyHour(now, window);
+    const startMin = toMinutes(window.start);
+    const endMin = toMinutes(window.end);
+    const current = isHappyHourIn(now, window, startMin, endMin);
 
     const MAX_MS = 8 * 24 * 60 * 60 * 1000;
     const STEP_MS = 60 * 1000;
 
     for (let delta = STEP_MS; delta <= MAX_MS; delta += STEP_MS) {
         const probe = new Date(now.getTime() + delta);
-        if (isHappyHour(probe, window) !== current) return probe;
+        if (isHappyHourIn(probe, window, startMin, endMin) !== current) return probe;
     }
 
     return new Date(now.getTime() + MAX_MS);

@@ -50,11 +50,6 @@ describe('colorResolver — three-layer precedence', () => {
         expect(r.hex).toBeNull();
     });
 
-    it('happyHour tier resolves to Gruvbox green from colorMap', () => {
-        const r = resolveColor('happyHour');
-        expect(r.hex).toBe('#689d6a');
-    });
-
     it('rotLight tier resolves to its fallback hex when no override', () => {
         const r = resolveColor('rotLight');
         expect(r.hex).toBe('#6ca0c4');

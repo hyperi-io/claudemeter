@@ -69,8 +69,64 @@ describe('composeTooltip - account identity', () => {
     });
 });
 
+// The tooltip is a trusted MarkdownString, so a link to a command: URI in any
+// outside string would execute on click.
+describe('composeTooltip - outside strings cannot inject a command link', () => {
+    const HOSTILE = 'Evil [x](command:workbench.action.terminal.sendSequence?%7B%7D) <command:foo>';
+    const injected = (out) => out.includes('[x](command:') || out.includes('<command:foo>');
+
+    it.each([
+        ['account name', { usageData: { accountInfo: { name: HOSTILE } } }],
+        ['email', { usageData: { accountInfo: { email: HOSTILE } } }],
+        ['name and email', { usageData: { accountInfo: { name: 'Derek', email: HOSTILE } } }],
+        ['organisation name', {
+            usageData: { accountInfo: { orgName: HOSTILE } },
+            credentialsInfo: { subscriptionType: 'max' },
+        }],
+        ['organisation type', {
+            usageData: { accountInfo: { organizationType: HOSTILE } },
+            credentialsInfo: { subscriptionType: 'max' },
+        }],
+        ['rate-limit tier', { credentialsInfo: { subscriptionType: 'max', rateLimitTier: HOSTILE } }],
+        ['subscription type', { credentialsInfo: { subscriptionType: HOSTILE } }],
+        ['scoped cap label', {
+            usageData: { usagePercentWeek: 1, scopedWeekly: [{ label: HOSTILE, percent: 5 }] },
+        }],
+        ['currency', {
+            usageData: {
+                monthlyCredits: { used: 1, limit: 2, currency: HOSTILE, percent: 50 },
+                prepaidCredits: { balance: 1, currency: HOSTILE },
+            },
+        }],
+        ['prepaid currency', { usageData: { prepaidCredits: { balance: 1, currency: HOSTILE } } }],
+        ['custom happy-hour icon', { happyHourState: { active: true, icon: HOSTILE, endsAt: null } }],
+    ])('%s', (_name, state) => {
+        expect(injected(composeTooltip({ config: baseConfig, ...state }))).toBe(false);
+    });
+
+    it('keeps a codicon happy-hour icon renderable', () => {
+        const out = composeTooltip({
+            config: baseConfig,
+            happyHourState: { active: true, icon: '$(sparkle)', endsAt: null },
+        });
+        expect(out).toContain('$(sparkle) Happy hour');
+    });
+
+    it('states when happy hour ends in the long form, honouring 24-hour time', () => {
+        const endsAt = new Date('2026-10-16T21:05:00Z');
+        const out = composeTooltip({
+            config: { ...baseConfig, use24HourTime: true },
+            happyHourState: { active: true, icon: '$(sparkle)', endsAt },
+        });
+        const expected = endsAt.toLocaleString(undefined, {
+            weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: false,
+        });
+        expect(out).toContain(`$(sparkle) Happy hour — off-peak, ends ${expected}`);
+    });
+});
+
 describe('composeTooltip - plan + context', () => {
-    it('shows plan with Personal suffix when no orgType', () => {
+    it('shows plan with Personal suffix when the plan token names no shared org', () => {
         const out = composeTooltip({
             config: baseConfig,
             credentialsInfo: { subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' },
@@ -78,13 +134,16 @@ describe('composeTooltip - plan + context', () => {
         expect(out).toMatch(/Max \(Personal\)/);
     });
 
-    it('shows plan with orgType when provided', () => {
+    it.each([
+        ['claude_enterprise', 'Enterprise'],
+        ['claude_team', 'Team'],
+    ])('labels the %s plan token as %s', (token, label) => {
         const out = composeTooltip({
             config: baseConfig,
-            usageData: { accountInfo: { orgType: 'Enterprise' }, timestamp: new Date() },
+            usageData: { accountInfo: { organizationType: token }, timestamp: new Date() },
             credentialsInfo: { subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' },
         });
-        expect(out).toMatch(/Max \(Enterprise\)/);
+        expect(out).toMatch(new RegExp(`Max \\(${label}\\)`));
     });
 
     it('shows Context: line when sessionData has tokenUsage', () => {
@@ -114,7 +173,6 @@ describe('composeTooltip - session block', () => {
             config: baseConfig,
             usageData: {
                 usagePercent: 42,
-                resetTime: '2h 15m',
                 timestamp: new Date(),
             },
         });
@@ -122,10 +180,30 @@ describe('composeTooltip - session block', () => {
         expect(out).toMatch(/Resets/);
     });
 
+    it('renders the reset from the stamp the payload carried', () => {
+        const resetsAt = '2026-10-16T02:30:00Z';
+        const out = composeTooltip({
+            config: baseConfig,
+            usageData: { usagePercent: 42, resetsAt, timestamp: new Date() },
+        });
+        const expected = new Date(resetsAt).toLocaleString(undefined, {
+            weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true,
+        });
+        expect(out).toContain(`Resets ${expected}`);
+    });
+
+    it('shows "-" rather than the current time when the stamp is missing', () => {
+        const out = composeTooltip({
+            config: baseConfig,
+            usageData: { usagePercent: 42, resetsAt: null, timestamp: new Date() },
+        });
+        expect(out).toContain('Resets -');
+    });
+
     it('includes Tokens line when sessionData present', () => {
         const out = composeTooltip({
             config: baseConfig,
-            usageData: { usagePercent: 10, resetTime: '1h', timestamp: new Date() },
+            usageData: { usagePercent: 10, timestamp: new Date() },
             sessionData: { tokenUsage: { current: 50000, limit: 1000000 } },
         });
         expect(out).toMatch(/Tokens /);
@@ -134,7 +212,7 @@ describe('composeTooltip - session block', () => {
     it('shows override line when tokenLimitOverride > 0', () => {
         const out = composeTooltip({
             config: { ...baseConfig, tokenLimitOverride: 500000 },
-            usageData: { usagePercent: 10, resetTime: '1h', timestamp: new Date() },
+            usageData: { usagePercent: 10, timestamp: new Date() },
         });
         expect(out).toMatch(/Context window override/);
     });
@@ -146,7 +224,6 @@ describe('composeTooltip - weekly block', () => {
             config: baseConfig,
             usageData: {
                 usagePercent: 10, usagePercentWeek: 25,
-                resetTime: '1h', resetTimeWeek: '3d 12h',
                 timestamp: new Date(),
             },
         });
@@ -164,7 +241,6 @@ describe('composeTooltip - weekly block', () => {
                     { label: 'Fable', percent: 72 },
                     { label: 'Something New', percent: 3 },
                 ],
-                resetTime: '1h', resetTimeWeek: '3d 12h',
                 timestamp: new Date(),
             },
         });
@@ -178,7 +254,6 @@ describe('composeTooltip - weekly block', () => {
             usageData: {
                 usagePercent: 10, usagePercentWeek: 25,
                 scopedWeekly: [],
-                resetTime: '1h', resetTimeWeek: '3d 12h',
                 timestamp: new Date(),
             },
         });
@@ -221,6 +296,17 @@ describe('composeTooltip - credits blocks', () => {
             },
         });
         expect(out).toMatch(/Balance \$/);
+    });
+
+    it('lays out each credits shape line by line', () => {
+        const compose = (usageData) => composeTooltip({ config: baseConfig, usageData });
+        expect(compose({ prepaidCredits: { balance: 25, currency: 'USD' } }))
+            .toContain('**Credits**  \nBalance $25 USD');
+        expect(compose({
+            monthlyCredits: { used: 33, limit: 100, currency: 'AUD', percent: 33 },
+            prepaidCredits: { balance: 50, currency: 'AUD' },
+        })).toContain('**Extra Usage**  \nUsed $33 / $100 AUD (33%)  \nBalance $50 AUD');
+        expect(compose({ usagePercent: 1 })).not.toMatch(/Credits|Extra Usage|Balance/);
     });
 });
 
@@ -326,7 +412,6 @@ describe('composeTooltip - section error containment', () => {
                 // bad accountInfo - not an object, triggers error in identity section
                 accountInfo: 'not an object',
                 usagePercent: 42,
-                resetTime: '1h',
                 timestamp: new Date(),
             },
             extensionVersion: '2.3.4',
@@ -348,9 +433,7 @@ describe('composeTooltip - Session / Current context / Weekly section split', ()
         const out = composeTooltip({
             usageData: {
                 usagePercent: 50,
-                resetTime: '2h 30m',
                 usagePercentWeek: 30,
-                resetTimeWeek: '3d 4h',
             },
             sessionData: {
                 tokenUsage: { current: 400_000, limit: 1_000_000, limitConfidence: 'authoritative' },
@@ -414,8 +497,8 @@ describe('composeTooltip - plain rendering (regression guards)', () => {
     it('emits no var(--vscode-...) CSS variable references', () => {
         const out = composeTooltip({
             usageData: {
-                usagePercent: 85, resetTime: '2h',
-                usagePercentWeek: 95, resetTimeWeek: '3d',
+                usagePercent: 85,
+                usagePercentWeek: 95,
             },
             sessionData: {
                 tokenUsage: { current: 800_000, limit: 1_000_000, limitConfidence: 'authoritative' },
@@ -432,8 +515,8 @@ describe('composeTooltip - plain rendering (regression guards)', () => {
     it('emits no raw #HEX colours in style position', () => {
         const out = composeTooltip({
             usageData: {
-                usagePercent: 85, resetTime: '2h',
-                usagePercentWeek: 95, resetTimeWeek: '3d',
+                usagePercent: 85,
+                usagePercentWeek: 95,
             },
             sessionData: {
                 tokenUsage: { current: 800_000, limit: 1_000_000, limitConfidence: 'authoritative' },
@@ -468,7 +551,7 @@ describe('composeTooltip - plain rendering (regression guards)', () => {
 
     it('section split preserved with plain bold headers (no wrapping)', () => {
         const out = composeTooltip({
-            usageData: { usagePercent: 30, resetTime: '2h', usagePercentWeek: 10, resetTimeWeek: '3d' },
+            usageData: { usagePercent: 30, usagePercentWeek: 10 },
             sessionData: {
                 tokenUsage: { current: 300_000, limit: 1_000_000, limitConfidence: 'authoritative' },
             },

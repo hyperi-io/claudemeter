@@ -165,9 +165,9 @@ async function readRecordedCwd(filePath) {
         const { bytesRead } = await handle.read(buffer, 0, CWD_PROBE_BYTES, 0);
         const text = buffer.toString('utf-8', 0, bytesRead);
         const lines = text.split('\n');
-        // Drop a line the window cut mid-JSON. A file exactly the probe size
-        // ends on a real boundary, so test the newline, not the byte count.
-        if (bytesRead === CWD_PROBE_BYTES && !text.endsWith('\n')) {
+        // Only newline-terminated lines count, matching claudeDataLoader's head
+        // probe, so a half-written or window-cut final line is never trusted.
+        if (!text.endsWith('\n')) {
             lines.pop();
         }
         return firstRecordedCwd(lines);

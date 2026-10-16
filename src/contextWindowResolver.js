@@ -350,8 +350,6 @@ module.exports = {
     KNOWN_CONTEXT_TIERS,
     CONTEXT_WINDOW_RULES,
     snapToNextKnownTier,
-    parseFamilyAndVersion,
     matchRuleTable,
-    subscriptionTypeToCapability,
     resolveContextWindow,
 };

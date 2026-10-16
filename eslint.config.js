@@ -68,8 +68,8 @@ module.exports = [
         },
     },
     {
-        // vitest.config.js is ESM by convention — same parser tweak.
-        files: ['vitest.config.js'],
+        // The base block above forces commonjs on every file.
+        files: ['**/*.mjs'],
         languageOptions: {
             sourceType: 'module',
         },

@@ -96,7 +96,7 @@ function formatAsBar(percent, style, width = 5) {
 // For the default/minimal display modes this is what sits next to
 // the k-count in the value/extended/limit modes, or alone in `bar` mode.
 function formatIndicator(percent, usageFormat) {
-    if (percent == null) return NO_DATA;
+    if (percent == null || Number.isNaN(percent)) return NO_DATA;
     if (usageFormat === 'percent') {
         return `${percent}%`;
     }
@@ -132,26 +132,18 @@ function formatKCount(current, limit, knownLimit, tokensDisplay = DISPLAY_DEFAUL
         case DISPLAY_VALUE:
             return currentK;
         case DISPLAY_EXTENDED:
-            return hasKnownLimit ? `${currentK}/${formatTokenCount(limit)}` : currentK;
-        case DISPLAY_LIMIT:
-            return isExtended ? formatTokenCount(limit) : '';
         case DISPLAY_COUNT:
             return hasKnownLimit ? `${currentK}/${formatTokenCount(limit)}` : currentK;
-        default:
+        default: // DISPLAY_LIMIT
             return isExtended ? formatTokenCount(limit) : '';
     }
 }
 
+const DISPLAY_MODES = [DISPLAY_BAR, DISPLAY_VALUE, DISPLAY_EXTENDED, DISPLAY_LIMIT, DISPLAY_COUNT];
+
 function normaliseTokensDisplay(tokensDisplay) {
     if (tokensDisplay === DISPLAY_BOTH) return DISPLAY_EXTENDED;  // legacy alias
-    if (tokensDisplay === DISPLAY_BAR
-        || tokensDisplay === DISPLAY_VALUE
-        || tokensDisplay === DISPLAY_EXTENDED
-        || tokensDisplay === DISPLAY_LIMIT
-        || tokensDisplay === DISPLAY_COUNT) {
-        return tokensDisplay;
-    }
-    return DISPLAY_DEFAULT;
+    return DISPLAY_MODES.includes(tokensDisplay) ? tokensDisplay : DISPLAY_DEFAULT;
 }
 
 // Build the Tk indicator body for the default/minimal panel modes.
@@ -198,7 +190,9 @@ function formatTokensDisplay(opts) {
 // mode uses `Tk-36%` / `Tk-275k` / `Tk-36% 275k` with all three
 // values concatenated into one status-bar panel together with the
 // Se and Wk items. The `-` prefix is inherited from the pre-2.3.0
-// compact format; it sits between the `Tk` label and the value.
+// compact format; it sits between the label and the value.
+//
+// `label` is the gauge's compact label, 'Tk' unless gauges.labels renames it.
 function formatTokensDisplayCompact(opts) {
     const {
         display = DISPLAY_DEFAULT,
@@ -206,10 +200,11 @@ function formatTokensDisplayCompact(opts) {
         current,
         limit,
         knownLimit = false,
+        label = 'Tk',
     } = opts || {};
 
     if (percent == null && current == null) {
-        return 'Tk--';
+        return `${label}--`;
     }
 
     const mode = normaliseTokensDisplay(display);
@@ -217,27 +212,19 @@ function formatTokensDisplayCompact(opts) {
     const countStr = formatKCount(current, limit, knownLimit, mode);
 
     if (mode === DISPLAY_COUNT) {
-        return `Tk-${countStr || percentStr}`;
+        return `${label}-${countStr || percentStr}`;
     }
 
-    return countStr ? `Tk-${percentStr} ${countStr}` : `Tk-${percentStr}`;
+    return countStr ? `${label}-${percentStr} ${countStr}` : `${label}-${percentStr}`;
 }
 
 module.exports = {
-    DISPLAY_BAR,
-    DISPLAY_VALUE,
-    DISPLAY_EXTENDED,
-    DISPLAY_LIMIT,
-    DISPLAY_COUNT,
-    DISPLAY_BOTH,       // legacy alias; exported for back-compat with any external callers
     DISPLAY_DEFAULT,
-    EXTENDED_THRESHOLD,
     BAR_STYLES,
     formatTokenCount,
     formatAsBar,
     formatIndicator,
     formatKCount,
-    normaliseTokensDisplay,
     formatTokensDisplay,
     formatTokensDisplayCompact,
 };

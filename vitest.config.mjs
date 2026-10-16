@@ -8,6 +8,6 @@ export default defineConfig({
         // (there's no VS Code extension host under vitest). The setup
         // patches Node's Module resolver so any require('vscode') from
         // source or test code returns a local stub.
-        setupFiles: [path.resolve(__dirname, 'tests/setup.js')],
+        setupFiles: [path.resolve(import.meta.dirname, 'tests/setup.js')],
     },
 });

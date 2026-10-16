@@ -77,13 +77,10 @@ const AUTH_FAILURES = {
 
 const FALLBACK = AUTH_FAILURES.NO_TOKEN;
 
-// These lines are rendered into a trusted MarkdownString, where a `command:`
-// link executes on click. The values interpolated into them come from the
-// environment (a config dir a cloned repo's devcontainer can set) and from
-// network error text, so the link syntax is neutralised rather than trusted.
-function esc(value) {
-    return String(value).replace(/[[\]()`<>\\]/g, '\\$&');
-}
+// These lines render into a trusted MarkdownString, and the values in them come
+// from the environment (a config dir a cloned repo's devcontainer can set) and
+// from network error text.
+const { escapeMarkdown: esc } = require('./markdown');
 
 // Resolve a reason into its description. Unknown reasons degrade to the
 // not-logged-in wording rather than throwing.
@@ -129,12 +126,9 @@ const AUTH_REASONS = Object.freeze(Object.keys(AUTH_FAILURES)
 // Whether a login launched from this window would reach the machine whose
 // credential store the meter actually reads.
 //
-// Claudemeter declares `extensionKind: ui`, so its host is the CLIENT, and it
-// resolves the CLI and reads the credential store there. VS Code's terminals
-// follow the window's remote authority instead, so in a Remote-SSH, WSL or
-// container window a login command lands on the REMOTE machine - a different
-// host from the one being metered, and one where a client path is meaningless
-// (#58).
+// remoteName is set only when claudemeter runs on the client of a remote
+// window. Terminals follow the window's remote authority, so a login there
+// lands on the remote machine, not the client being metered (#58).
 function loginReachesMeteredMachine(remoteName) {
     return !remoteName;
 }

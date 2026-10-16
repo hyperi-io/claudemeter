@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 const { getActivityLevel, getActivityDescription, getStats } = require('../../src/activityMonitor');
+const { ACTIVITY_DESCRIPTIONS } = require('../../src/activityQuotes');
 
 describe('getActivityLevel', () => {
     it('returns idle for low usage', () => {
@@ -54,6 +55,39 @@ describe('getActivityDescription', () => {
     it('falls back to idle for unknown level', () => {
         const desc = getActivityDescription('unknown');
         expect(desc.short).toBe('Normal usage');
+    });
+
+    // A quip that changes per render changes the tooltip, and VS Code then
+    // re-renders an open hover instead of letting it close.
+    it('holds one quip across renders at the same level', () => {
+        const first = getActivityDescription('idle').quirky;
+        for (let i = 0; i < 50; i++) {
+            expect(getActivityDescription('idle').quirky).toBe(first);
+        }
+    });
+
+    it('picks from the new level when the level changes', () => {
+        getActivityDescription('idle');
+        const heavy = getActivityDescription('heavy').quirky;
+        expect(ACTIVITY_DESCRIPTIONS.heavy.quirkyOptions).toContain(heavy);
+    });
+
+    it('keeps the quip at exactly five minutes and re-rolls after', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            const held = getActivityDescription('moderate').quirky;
+            vi.advanceTimersByTime(5 * 60 * 1000);
+            expect(getActivityDescription('moderate').quirky).toBe(held);
+
+            const seen = new Set();
+            for (let i = 0; i < 20; i++) {
+                vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+                seen.add(getActivityDescription('moderate').quirky);
+            }
+            expect(seen.size).toBeGreaterThan(1);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 

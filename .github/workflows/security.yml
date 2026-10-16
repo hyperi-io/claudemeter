@@ -16,7 +16,7 @@ permissions:
 jobs:
   security:
     name: Security
-    runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -100,8 +100,16 @@ jobs:
           echo "✓ AI artifact check passed"
 
       - name: Install Gitleaks
+        env:
+          GITLEAKS_VERSION: 8.28.0
+          # From gitleaks_8.28.0_checksums.txt on the v8.28.0 release.
+          GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar xz
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$asset" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          echo "${GITLEAKS_SHA256}  ${asset}" | sha256sum --check --strict -
+          tar xzf "$asset" gitleaks
           chmod +x gitleaks
 
       - name: Run Gitleaks

@@ -1,6 +1,5 @@
 // Tests for claudeLabelComposer.js - composes the leftmost "Claude"
-// status-bar panel from platform-wide state (service status, refresh
-// spinner). Pure function. Happy hour has its own dedicated panel
+// status-bar panel from the service status. Pure function. Happy hour has its own dedicated panel
 // (statusBar.renderHappyHourPanel) and is NOT part of this module.
 
 import { describe, it, expect } from 'vitest';
@@ -86,19 +85,13 @@ describe('composeClaudeLabel - service status icons', () => {
         });
         expect(r.tooltipLines[0]).toMatch(/API elevated latency/);
     });
-});
 
-describe('composeClaudeLabel - combined states', () => {
-    it('refreshing appended as $(loading) at the end', () => {
+    // The description carries status-page incident text into a trusted tooltip.
+    it('escapes link syntax in the description', () => {
         const r = composeClaudeLabel({
-            serviceStatus: { indicator: 'minor' },
-            isRefreshing: true,
+            serviceStatus: { indicator: 'minor', description: 'Claude Code: [x](command:foo) <command:bar>' },
         });
-        expect(r.text).toBe('Claude $(warning) $(loading)');
-    });
-
-    it('refreshing alone just appends the spinner', () => {
-        const r = composeClaudeLabel({ isRefreshing: true });
-        expect(r.text).toBe('Claude $(loading)');
+        expect(r.tooltipLines[0]).not.toContain('[x](command:');
+        expect(r.tooltipLines[0]).not.toContain('<command:bar>');
     });
 });

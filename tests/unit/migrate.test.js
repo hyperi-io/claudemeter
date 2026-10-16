@@ -8,6 +8,20 @@ const makeLogger = () => {
     return { lines, appendLine: (s) => lines.push(s) };
 };
 
+// The profile map is one registered setting, so VS Code only accepts a write
+// of the whole object - a dotted path into it is an unregistered key.
+const PROFILES_KEY = 'thresholds.tokens.profiles';
+const profileWrites = () => vscode._getWrittenValues().filter(w => w.key === PROFILES_KEY);
+const lastProfiles = () => profileWrites().at(-1)?.value;
+
+const deepFreeze = (value) => {
+    if (value && typeof value === 'object') {
+        Object.values(value).forEach(deepFreeze);
+        Object.freeze(value);
+    }
+    return value;
+};
+
 describe('migrateLegacySettings — happy paths', () => {
     beforeEach(() => vscode._resetConfigValues());
 
@@ -20,13 +34,34 @@ describe('migrateLegacySettings — happy paths', () => {
 
         // 70% of 1M = 700K used -> runway = 1M - 700K - 33K (compactReserve) = 267K
         expect(result.migrated).toEqual(['thresholds.tokens.warning']);
-        const writes = vscode._getWrittenValues();
-        const writeNew = writes.find(w => w.key === 'thresholds.tokens.profiles.max-20x.thresholds.warningRunwayTokens');
-        expect(writeNew?.value).toBe(267_000);
-        expect(writeNew?.target).toBe(vscode.ConfigurationTarget.Global);
+        expect(lastProfiles()['max-20x'].thresholds.warningRunwayTokens).toBe(267_000);
+        expect(profileWrites().at(-1).target).toBe(vscode.ConfigurationTarget.Global);
 
+        const writes = vscode._getWrittenValues();
         const writeDelete = writes.find(w => w.key === 'thresholds.tokens.warning' && w.value === undefined);
         expect(writeDelete).toBeDefined();
+    });
+
+    it('writes only registered keys', async () => {
+        vscode._setConfigInspectValues('thresholds.tokens.warning', { globalValue: 70 });
+        await migrateLegacySettings(vscode, 1_000_000, PROFILES['max-20x'], makeLogger());
+        const keys = vscode._getWrittenValues().map(w => w.key);
+        expect(keys.every(k => k === PROFILES_KEY || k === 'thresholds.tokens.warning')).toBe(true);
+    });
+
+    it('keeps the overrides already in the profile map', async () => {
+        vscode._setConfigInspectValues('thresholds.tokens.warning', { globalValue: 70 });
+        vscode._setConfigInspectValues(PROFILES_KEY, { globalValue: deepFreeze({
+            pro: { thresholds: { errorRunwayTokens: 4_000 } },
+            'max-20x': { rotEnabled: false, thresholds: { errorRunwayTokens: 9_000 } },
+        }) });
+
+        await migrateLegacySettings(vscode, 1_000_000, PROFILES['max-20x'], makeLogger());
+
+        expect(lastProfiles()).toEqual({
+            pro: { thresholds: { errorRunwayTokens: 4_000 } },
+            'max-20x': { rotEnabled: false, thresholds: { errorRunwayTokens: 9_000, warningRunwayTokens: 267_000 } },
+        });
     });
 
     it('migrates legacy 80% error on 200K window for pro profile', async () => {
@@ -38,9 +73,7 @@ describe('migrateLegacySettings — happy paths', () => {
 
         // 80% of 200K = 160K used -> runway = 200K - 160K - 33K = 7K
         expect(result.migrated).toEqual(['thresholds.tokens.error']);
-        const writes = vscode._getWrittenValues();
-        const writeNew = writes.find(w => w.key === 'thresholds.tokens.profiles.pro.thresholds.errorRunwayTokens');
-        expect(writeNew?.value).toBe(7_000);
+        expect(lastProfiles().pro.thresholds.errorRunwayTokens).toBe(7_000);
     });
 
     it('migrates both legacy keys when both are set', async () => {
@@ -54,6 +87,10 @@ describe('migrateLegacySettings — happy paths', () => {
             'thresholds.tokens.error',
             'thresholds.tokens.warning',
         ]);
+        expect(lastProfiles()['max-20x'].thresholds).toEqual({
+            warningRunwayTokens: 267_000,
+            errorRunwayTokens: 167_000,
+        });
     });
 });
 
@@ -62,10 +99,9 @@ describe('migrateLegacySettings — idempotency', () => {
 
     it('does not overwrite when new key already set (idempotency check)', async () => {
         vscode._setConfigInspectValues('thresholds.tokens.warning', { globalValue: 70 });
-        vscode._setConfigInspectValues(
-            'thresholds.tokens.profiles.max-20x.thresholds.warningRunwayTokens',
-            { globalValue: 50_000 }  // already user-customised
-        );
+        vscode._setConfigInspectValues(PROFILES_KEY, {
+            globalValue: { 'max-20x': { thresholds: { warningRunwayTokens: 50_000 } } },  // already user-customised
+        });
         const logger = makeLogger();
 
         const result = await migrateLegacySettings(vscode, 1_000_000, PROFILES['max-20x'], logger);
@@ -86,10 +122,9 @@ describe('migrateLegacySettings — idempotency', () => {
         // After delete, inspect should NOT have the legacy key any more
         vscode._setConfigInspectValues('thresholds.tokens.warning', { globalValue: undefined });
         // And the new key has been recorded
-        vscode._setConfigInspectValues(
-            'thresholds.tokens.profiles.max-20x.thresholds.warningRunwayTokens',
-            { globalValue: 267_000 }
-        );
+        vscode._setConfigInspectValues(PROFILES_KEY, {
+            globalValue: { 'max-20x': { thresholds: { warningRunwayTokens: 267_000 } } },
+        });
 
         const result = await migrateLegacySettings(vscode, 1_000_000, PROFILES['max-20x'], makeLogger());
         expect(result.migrated).toEqual([]);

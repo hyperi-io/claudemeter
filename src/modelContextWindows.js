@@ -21,18 +21,11 @@
 // The suffix parser is still here as a future-proof belt-and-braces for when
 // larger contexts (2M, 5M, ...) get added.
 //
-// This module is now PARSING-ONLY. It turns model IDs and alias strings into
+// This module is PARSING-ONLY. It turns model IDs and alias strings into
 // {family, version, contextLimit} shapes and pulls out any declared suffix.
-// It no longer decides the session limit itself - that lives in
-// contextWindowResolver.resolveContextWindow, which runs the ordered priority
-// chain over every signal (user override, alias, JSONL suffix, rule table,
-// s1mAccessCache, observed floor). Maximising over those signals lets the
-// observed floor become the answer whenever every other one is absent, which
-// ratchets the reported limit upward with usage, so resolveSessionContextWindow
-// below is now just a thin delegator kept for back-compat.
+// The session limit is decided by contextWindowResolver.resolveContextWindow.
 
 const STANDARD_LIMIT = 200000;
-const FALLBACK_LIMIT = STANDARD_LIMIT;
 
 // Parse context suffix like [1m], [2m], [500k] into a token count
 // Returns 0 if no suffix or unrecognised format
@@ -100,56 +93,10 @@ function getHighestDeclaredLimit(modelIds) {
     return highest;
 }
 
-// Resolve context window limit for a single model ID
-// Returns the suffix-declared limit or STANDARD_LIMIT if no suffix
-function getModelContextWindow(modelId) {
-    const parsed = parseModelId(modelId);
-    if (!parsed) return FALLBACK_LIMIT;
-    return parsed.contextLimit || STANDARD_LIMIT;
-}
-
-// Given observed session state, return the resolved context window in tokens.
-//
-// DEPRECATED: treating `maxObservedTokens` as a definitive limit
-// once it exceeds 200K lets the reported limit creep up to match
-// raw observed usage, producing a permanent ~100% Tk%.
-//
-// It is kept only as a thin delegator to contextWindowResolver so
-// any remaining callers (inside or outside the repo) transparently
-// get the fixed behaviour. New code should call
-// `resolveContextWindow` directly with the richer signal set.
-function resolveSessionContextWindow(
-    modelIds,
-    maxObservedTokens = 0,
-    aliasDeclaredLimit = 0,
-    eligibilityLimit = 0
-) {
-    const { resolveContextWindow } = require('./contextWindowResolver');
-    const result = resolveContextWindow({
-        modelIds,
-        observedFloor: maxObservedTokens,
-        aliasDeclaredLimit,
-        jsonlDeclaredLimit: getHighestDeclaredLimit(modelIds),
-        s1mHasAccess: eligibilityLimit >= 1_000_000 ? true : null,
-    });
-    return result.limit;
-}
-
-// Return context window info for tooltip display
-function getPlanContextSummary() {
-    return [
-        { label: 'Default', limit: STANDARD_LIMIT },
-    ];
-}
-
 module.exports = {
     parseModelId,
     parseModelAlias,
     parseContextSuffix,
     getHighestDeclaredLimit,
-    getModelContextWindow,
-    resolveSessionContextWindow,
-    getPlanContextSummary,
-    FALLBACK_LIMIT,
     STANDARD_LIMIT,
 };

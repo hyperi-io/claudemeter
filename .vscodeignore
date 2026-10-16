@@ -21,14 +21,14 @@ scripts/**
 build/**
 
 # Logo generator + its bundled font/icons (build-time only, not shipped).
-# The generated assets/*.png|svg still ship for the icon + README.
+# The generated PNG and SVG files in assets/ still ship for the icon + README.
 assets/src/**
 .tmp/**
 .ruff_cache/**
 
 # Tests and dev configs (not needed by end users)
 tests/**
-vitest.config.js
+vitest.config.mjs
 renovate.json
 .mcp.json
 

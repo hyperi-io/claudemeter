@@ -165,9 +165,10 @@ runway"), so they mean the same thing across window sizes:
 | 200K   | 147K used (~74%)   | 162K used (~81%)   | ~167K (~83%)    |
 | 1M     | 947K used (~95%)   | 962K used (~96%)   | ~967K (~97%)    |
 
-Red consistently means *"about 40K of runway left - Claude is about to
-drop its brain, finish your thought."* Yellow means *"60-80K of
-runway, still safe but heads-up."* On a 200K window each percentage
+Red consistently means *"about 5K tokens before auto-compact (roughly
+38K left in the window) - Claude is about to drop its brain, finish
+your thought."* Yellow means *"about 20K tokens before auto-compact
+(roughly 53K left in the window), still safe but heads-up."* On a 200K window each percentage
 point is worth roughly 5x as much absolute runway as on 1M, which is
 why the percentage thresholds differ so much between the two - but
 the *meaning* (token runway to brain-loss) is identical.
@@ -189,8 +190,8 @@ Each Claude account tier resolves to a built-in threshold profile:
 | `max-5x`        | `rateLimitTier='default_claude_max_5x'`  |
 | `max-20x`       | `rateLimitTier='default_claude_max_20x'` |
 | `max-unknown`   | `subscriptionType='max'` alone           |
-| `team-standard` | `orgType='Team'`                         |
-| `enterprise`    | `orgType='Enterprise'`                   |
+| `team-standard` | plan token `claude_team`                 |
+| `enterprise`    | plan token `claude_enterprise`           |
 | `unknown`       | fallback                                 |
 
 The profile does not decide the window - that comes from the model, per
@@ -220,7 +221,7 @@ always is.
   ```
 
 - **Switch to monochrome (no threshold colouring):** `claudemeter.statusBar.colorMode = "basic"`.
-- **Custom hex per tier:** `claudemeter.colors.{rotLight, rotDeep, warning, error, happyHour}`.
+- **Custom hex per tier:** `claudemeter.colors.{rotLight, rotDeep, warning, error}`.
 
 The rationale above stays in the README so users understand the
 *why* even if they choose to switch the meter off.
@@ -231,7 +232,7 @@ Claudemeter reads the OAuth token Claude Code already stores and calls the same 
 
 The token lives in the shared Claude Code store: the macOS Keychain (`Claude Code-credentials`) or `~/.claude/.credentials.json` elsewhere. Claudemeter reads it fresh each fetch and watches the store, so a token refresh is picked up automatically. It never refreshes or writes the token back, so it can't disturb your Claude Code login - and the usage always matches whichever account Claude Code is on.
 
-Two independent streams feed the status bar. **Web usage** (session / weekly / opus / sonnet / credits) is account-global and shows in any window. The **Tk context gauge** is per-workspace - read live from the current project's Claude Code session - so an empty window (no project) shows the account gauges but no Tk. Multiple VS Code windows share a single web-usage fetch per [`claudemeter.usageRefreshSeconds`](#claudemeterusagerefreshseconds) interval, so N windows don't each hit the API and trip its rate limit.
+Two independent streams feed the status bar. **Web usage** (session / weekly / opus / sonnet / credits) is account-global and shows in any window. The **Tk context gauge** is per-workspace - read live from the current project's Claude Code session - so an empty window (no project) shows the account gauges but no Tk. Transcripts are read in chunks and tailed, so multi-day sessions with transcripts of hundreds of MB are fine. They are read from `~/.claude/projects`, or `<dir>/projects` when `CLAUDE_CONFIG_DIR` is set. In a [remote window](#remote-ssh-wsl-and-container-windows) claudemeter runs on the remote host beside Claude Code and reads the transcripts there. Multiple VS Code windows share a single web-usage fetch per [`claudemeter.usageRefreshSeconds`](#claudemeterusagerefreshseconds) interval, so N windows don't each hit the API and trip its rate limit.
 
 > **Why not a browser?** An earlier build tried this same OAuth approach first, but back then the Claude Code token wasn't authorised for the usage/account API - so the only option was a `sessionKey` cookie from a real browser login, which meant shipping browser automation and hitting Google's anti-automation SSO block. Anthropic has since granted the token that access, so browserless works now. The browser, the cookie, and `playwright-core` are gone. The extension ships with zero runtime dependencies.
 
@@ -280,7 +281,7 @@ If you're not logged into Claude Code, claudemeter prompts you:
 
 If Claude Code isn't installed at all, claudemeter points you at the install docs instead.
 
-Switching Claude Code accounts needs no action: the token in the shared store changes to the new account, and claudemeter's store watcher refetches automatically. Multiple VS Code windows running claudemeter at the same time are safe - the session-data file is locked and atomically merged so concurrent writers don't clobber each other.
+Switching Claude Code accounts needs no action: the token in the shared store changes to the new account, and claudemeter's store watcher refetches automatically. Se and Wk go blank until the new account's usage arrives, so the old account's numbers are never shown as the new one's. Multiple VS Code windows running claudemeter at the same time are safe - the session-data file is locked and atomically merged so concurrent writers don't clobber each other.
 
 ## Configuration
 
@@ -339,7 +340,7 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
 
 - **Type**: Boolean
 - **Default**: `false`
-- **Description**: Token-only mode - show only the local Tk context gauge, skip fetching web usage (session / weekly / opus / sonnet / credits) from the Claude API.
+- **Description**: Token-only mode - show only the local Tk context gauge, skip fetching web usage (session / weekly / opus / sonnet / credits) from the Claude API. Takes effect immediately, no reload needed.
 
 ### `claudemeter.statusBar.displayMode`
 
@@ -391,7 +392,7 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
 
 - **Type**: Boolean
 - **Default**: `true`
-- **Description**: Show Claude service status indicator. Displays a warning/error icon if Claude services are degraded or experiencing an outage.
+- **Description**: Show the Claude Code service status indicator. Displays a warning/error icon if Claude Code or the Claude API it calls is degraded or experiencing an outage. Incidents on other Claude services (claude.ai, the Console) are not shown.
 
 ### `claudemeter.happyHour.enabled`
 
@@ -427,6 +428,7 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
   - **12hour**: 12-hour format with AM/PM (e.g., 2:30 PM)
   - **24hour**: 24-hour format (e.g., 14:30)
   - **countdown**: Countdown timer (e.g., 2h 15m)
+- Reset times are worked out from the reset timestamp the Claude API returns, each time the bar redraws. A gauge with no reset timestamp shows `-`.
 
 ### `claudemeter.statusBar.usageFormat`
 
@@ -467,21 +469,21 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 ### `claudemeter.statusBar.priority`
 
 - **Type**: Number
-- **Default**: `100`
-- **Range**: `0-10000`
-- **Description**: Status bar priority (higher values position items closer to the centre). Requires window reload to take effect.
+- **Default**: `10000`
+- **Range**: `0-1000000`
+- **Description**: Status bar priority. Higher values position items further from the screen edge. The high default keeps the cluster together and clear of VS Code's own items, which sit around 100. Requires window reload to take effect.
 
 ### `claudemeter.debug`
 
 - **Type**: Boolean
 - **Default**: `false`
-- **Description**: Enable debug logging to output channel (for troubleshooting)
+- **Description**: Enable debug logging to output channel (for troubleshooting). Machine-scoped: a workspace cannot set it, nor `claudemeter.debugLogFile` or `claudemeter.debugLogMaxSizeKB`.
 
 ### `claudemeter.debugLogFile`
 
 - **Type**: String
-- **Default**: Auto-populated on first run (`~/.config/claudemeter/debug.log` or platform equivalent)
-- **Description**: Path to debug log file. Supports `~` for home directory.
+- **Default**: `""` (writes `~/.config/claudemeter/debug.log` or platform equivalent)
+- **Description**: Path to debug log file. Supports `~` for home directory. The file is created readable by its owner only.
 
 ### `claudemeter.debugLogMaxSizeKB`
 
@@ -504,19 +506,19 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 - **Range**: `1-100`
 - **Description**: Usage percentage to show error (red) indicator
 
-### `claudemeter.thresholds.tokens.warning`
+### `claudemeter.thresholds.session.warning` / `.error`, `claudemeter.thresholds.weekly.warning` / `.error`, `claudemeter.thresholds.credits.warning` / `.error`
 
 - **Type**: Number
-- **Default**: `65`
+- **Default**: `0`
 - **Range**: `0-100`
-- **Description**: Token-gauge warning (yellow) threshold as a percentage. Default `65` tracks Claude Code's auto-compact trigger (~83% of the context window) minus ~20, giving roughly 20 percentage points of warning runway before auto-compact. `0` inherits `claudemeter.thresholds.warning`. **Deprecated for profile-based accounts:** the profile system expresses this as `warningRunwayTokens` (absolute tokens before auto-compact) - use `claudemeter.thresholds.tokens.profiles` to override.
+- **Description**: Warning (yellow) and error (red) thresholds for the Se, Wk and credits gauges. `0` inherits `claudemeter.thresholds.warning` / `.error`.
 
-### `claudemeter.thresholds.tokens.error`
+### `claudemeter.thresholds.tokens.warning` / `.error` (deprecated)
 
 - **Type**: Number
-- **Default**: `75`
+- **Default**: `65` / `75`
 - **Range**: `0-100`
-- **Description**: Token-gauge error (red) threshold as a percentage. Default `75` gives roughly 10 percentage points of red runway before auto-compact fires (~83%). `0` inherits `claudemeter.thresholds.error`. **Deprecated for profile-based accounts:** use `claudemeter.thresholds.tokens.profiles` to override `errorRunwayTokens` instead.
+- **Description**: Deprecated percentage thresholds for the Tk gauge, replaced by token runways (`warningRunwayTokens`, `errorRunwayTokens`) under `claudemeter.thresholds.tokens.profiles`. A value set in your user settings is converted once on startup and then removed.
 
 ### `claudemeter.thresholds.scoped.warning` / `.error`
 
@@ -530,8 +532,8 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 - **Default**: `color`
 - **Options**: `color`, `basic`
 - **Description**: Status-bar decoration mode.
-  - **color** (default): full palette - gauge tiers (rotLight, rotDeep, warning, error), threshold icons where enabled, happy-hour green, and the colour-coded `●` prefix in the tooltip.
-  - **basic**: every gauge renders in default foreground - no icons, no tier tints, no tooltip prefix dots, no rot recommendation sub-lines. Tooltip section structure is preserved either way.
+  - **color** (default): gauge tier colours (rot gradient, warning, error) and, where `claudemeter.statusBar.showThresholdIcons` is on, the Se/Wk warning glyph.
+  - **basic**: every gauge in the default foreground colour, no warning glyphs, and the Tk gauge held at its normal tier, so the tooltip shows no context-rot advice. The tooltip layout is the same in both modes.
 
 ### `claudemeter.thresholds.tokens.profileOverride`
 
@@ -579,12 +581,6 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 - **Default**: `""` (inherits `claudemeter.outageRed`)
 - **Description**: Custom hex overriding the error (red) tier colour.
 
-### `claudemeter.colors.happyHour`
-
-- **Type**: String (hex colour or `""`)
-- **Default**: `""` (inherits `claudemeter.happyHourGreen`)
-- **Description**: Custom hex overriding the happy-hour panel colour.
-
 ## Commands
 
 All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
@@ -595,6 +591,8 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 - **`Claudemeter: Show Debug Output`** - Open debug output channel
 - **`Claudemeter: Log into Claude Code`** - Run `claude auth login` in a terminal (or point you at the install docs if Claude Code isn't installed). Only needed when you're not already logged into Claude Code.
 - **`Claudemeter: Dump State (for bug reports)`** - Print a redacted snapshot of current state (identity, resolved org, token presence, live sessions) to an output channel - attach this to issues to speed up diagnosis
+- **`Claudemeter: Nopilot - Declutter Built-in AI Surfaces`**, **`Nopilot - Hide the Tooltip Offer`**, **`Nopilot - Undo the Last Apply`** - See [Nopilot](#nopilot)
+- **`Claudemeter: Simulate ...`** - Force gauge levels, plan signals and colour modes to preview the status bar. Enabled only while `claudemeter.debug` is on.
 
 ## Troubleshooting
 
@@ -607,6 +605,12 @@ All commands are available via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+
 ### Usage looks like the wrong account
 
 Claudemeter tracks whichever account Claude Code is on. If it looks wrong, check `claude auth status` - that's the account claudemeter reads. If you run Claude Code with a non-default `CLAUDE_CONFIG_DIR`, claudemeter follows that too.
+
+### Remote-SSH, WSL and container windows
+
+In a Remote-SSH, WSL, Dev Container or Codespaces window, VS Code runs claudemeter on the remote host, the same place it runs Claude Code. Tk reads the remote transcripts, and Se and Wk come from the Claude login on that host, so log in there (**Log into Claude Code** opens a terminal on it).
+
+If claudemeter is installed only on your local machine, VS Code runs it there instead, and Tk is hidden because the transcripts are out of reach. Install it on the remote from the Extensions view (**Install in SSH: ...**).
 
 ### Fetch errors
 
@@ -661,3 +665,53 @@ Originally inspired by [claude-usage-monitor](https://github.com/Gronsten/claude
 ---
 
 **Note**: This is an unofficial extension and is not affiliated with Anthropic or Claude.ai.
+
+## Context
+
+### What this is
+
+A VS Code extension (JavaScript, CommonJS, bundled with esbuild) that shows Claude Code session, weekly and context usage in the status bar. It reads Claude Code's own OAuth token and transcripts and never writes to Claude Code's credential store or refreshes its token. It is not a Claude client, and it does not log in for you. System overview: [docs/architecture.md](docs/architecture.md).
+
+### Where things live
+
+| Path | Holds |
+|---|---|
+| `extension.js` | Entry point. Timers, file watchers, commands, wiring |
+| `src/tokenSource.js` | Reads the Claude Code OAuth token (credentials file or macOS Keychain) |
+| `src/oauthFetcher.js`, `src/apiSchema.js` | Usage and profile requests to api.anthropic.com, response parsing |
+| `src/usageCache.js` | Usage cache shared by every window, account-keyed, file-locked |
+| `src/claudeDataLoader.js` | Reads Claude Code JSONL transcripts for the Tk gauge |
+| `src/sessionTracker.js` | `session-data.json` with atomic writes and the file lock |
+| `src/tk/` | Tk profiles, tier thresholds, colours, legacy settings migration |
+| `src/statusBar.js`, `src/tooltipComposer.js` | Status bar items and tooltip markdown |
+| `src/serviceStatus.js` | Claude Code and API component status from status.claude.com |
+| `src/declutter/`, `src/commands/` | Nopilot and the command handlers |
+| `tests/unit/`, `tests/integration/` | Vitest suites. `vscode` is mocked in `tests/__mocks__/vscode.js` |
+
+### Commands that prove a change
+
+| Command | Does |
+|---|---|
+| `npm run build` | esbuild bundle into `dist/extension.js`, which `package.json` `main` points at |
+| `npm run package` | Production bundle, then `vsce package` for a `.vsix` |
+| `npx vitest run` | Unit and integration tests (`npm test` is the same) |
+| `npm run lint` | ESLint over the repo |
+
+Green means the logic holds against a mocked `vscode`. It does not prove the status bar renders in a real window. For that, press F5 (the "Run Extension" launch config) or install the `.vsix`.
+
+### What tends to bite
+
+| Don't | Do | Why |
+|---|---|---|
+| Hand-bump `package.json` `version` or edit `CHANGELOG.md` | Leave both to semantic-release | `.github/workflows/release.yml` runs on every push to `main`, bumps the version, writes the changelog and publishes |
+| Read a transcript with one `readFile` | Go through `claudeDataLoader` | A multi-day transcript outgrows the longest string V8 can hold. It is read in 1 MB chunks, then only the new tail on later reads |
+| Add a runtime dependency | Use Node and VS Code built-ins | The extension ships none. Dev dependencies stay in `devDependencies` |
+| Gate on `vscode.env.remoteName` | Use `clientSideRemoteName()` | `extensionKind` is `["workspace","ui"]`, so in a remote window the host is usually the remote, where every read is correct. Only the client side must leave Tk blank |
+| Refresh or write the OAuth token | Re-read it from the store | Claude Code rotates refresh tokens. A second refresher logs the user out |
+| Edit `src/` and expect a running extension to change | Rebuild first (F5 does it) | The host loads `dist/extension.js` |
+
+### Where this sits
+
+- Reads Claude Code's transcripts under `~/.claude/projects` and its OAuth credentials. Claude Code owns both.
+- Calls `api.anthropic.com` for usage and profile, and `status.claude.com` for service status.
+- Nothing depends on it. It publishes to the VS Code Marketplace as `hypersec.claudemeter`.

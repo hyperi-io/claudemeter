@@ -1,8 +1,7 @@
 // Project:   Claudemeter
 // File:      claudeLabelComposer.js
 // Purpose:   Compose the leftmost "Claude" status-bar panel text,
-//            color, and tooltip lines from platform-wide state
-//            (service status + refresh spinner).
+//            color, and tooltip lines from the service status.
 //            Pure - no vscode deps, fully unit-testable.
 // Language:  JavaScript (CommonJS)
 //
@@ -11,7 +10,7 @@
 //
 // Output shape:
 //   {
-//     text:            "Claude $(warning) $(loading)",
+//     text:            "Claude $(warning)",
 //     color:           'charts.yellow' | 'claudemeter.outageRed' | undefined,
 //     backgroundColor: 'statusBarItem.errorBackground' | undefined,
 //     tooltipLines:    ["$(warning) Service degraded - API delays"]
@@ -24,8 +23,7 @@
 // package.json so it can be tuned to match Claude's brand red and
 // overridden by users via workbench.colorCustomizations.
 //
-// Status bar icons render AFTER the "Claude" text. Service status
-// comes first, the refresh spinner is last. Severity escalates by
+// Status bar icons render AFTER the "Claude" text. Severity escalates by
 // icon, then by background - text colour stays red from major
 // upward so both outage states read as urgent:
 //
@@ -50,6 +48,8 @@
 // Happy hour has its own dedicated status-bar panel (see
 // renderHappyHourPanel in statusBar.js) and is not part of this
 // composer.
+
+const { escapeMarkdown } = require('./markdown');
 
 const LABEL = 'Claude';
 
@@ -85,10 +85,7 @@ const SERVICE_RENDER = Object.freeze({
 });
 
 function composeClaudeLabel(state = {}) {
-    const {
-        serviceStatus,
-        isRefreshing = false,
-    } = state;
+    const { serviceStatus } = state;
 
     const icons = [];
     const tooltipLines = [];
@@ -104,9 +101,10 @@ function composeClaudeLabel(state = {}) {
             if (statusBarIcon) icons.push(statusBarIcon);
             color = render.color;
             backgroundColor = render.background;
+            // The description carries status-page text into a trusted tooltip.
             const desc = serviceStatus.description
                 && serviceStatus.description !== render.label
-                ? ` — ${serviceStatus.description}`
+                ? ` — ${escapeMarkdown(serviceStatus.description)}`
                 : '';
             tooltipLines.push(`${render.icon} ${render.label}${desc}`);
             // The thematic quote (e.g. "He's dead, Jim." for critical) is
@@ -117,11 +115,6 @@ function composeClaudeLabel(state = {}) {
                 quirkyOverride = render.quote;
             }
         }
-    }
-
-    // Spinner last
-    if (isRefreshing) {
-        icons.push('$(loading)');
     }
 
     const text = icons.length === 0 ? LABEL : `${LABEL} ${icons.join(' ')}`;

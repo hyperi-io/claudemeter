@@ -288,14 +288,10 @@ function isGenericPanel(gauge) {
 
 module.exports = {
     BUILTIN_GAUGES,
-    DEDICATED_PANELS,
     isGenericPanel,
-    abbreviate,
-    GAUGES: BUILTIN_GAUGES,
     mergeDefinitions,
     gaugeLabels,
     scopedShortLabel,
     scopedTooltipLabel,
     resolveGauges,
-    scopeName,
 };

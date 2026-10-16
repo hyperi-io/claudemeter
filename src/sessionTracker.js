@@ -29,9 +29,10 @@
 //   4. Re-derives `totals` from the merged list rather than trusting the
 //      incoming value, which might have been computed against stale data.
 
+const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
-const { PATHS, getTokenLimit } = require('./utils');
+const { PATHS, getTokenLimit, sleep } = require('./utils');
 
 const EMPTY_DATA = () => ({
     sessions: [],
@@ -42,28 +43,33 @@ const EMPTY_DATA = () => ({
     },
 });
 
-// Acquire an exclusive advisory lock for `targetPath` by creating a
-// sibling `.lock` file with O_EXCL semantics. Callers must release via
-// releaseFileLock(). This protects read-modify-write sequences against
-// concurrent writers in other processes AND other promises in the same
-// process.
-//
-// Characteristics:
-//   - O_EXCL create is atomic on POSIX and Windows, so two callers cannot
-//     both observe "lock is free" simultaneously.
-//   - Stale locks (from a crashed process that didn't release) are cleaned
-//     up automatically after STALE_LOCK_MS; we check mtime on contention.
-//   - We record the current pid + timestamp in the lock file, which helps
-//     diagnose "who holds it" in logs.
-//
-// Not suitable for high-contention workloads, but claudemeter writes
-// session data at most a few times per minute, so the simple spin is fine.
-const STALE_LOCK_MS = 30 * 1000;
+// Exclusive advisory lock on `targetPath`: a sibling `.lock` file made with O_EXCL,
+// atomic on POSIX and Windows. Guards read-modify-write across processes and promises,
+// released via releaseFileLock(). Writes are rare, so the simple spin is fine.
 
+// Longer than the longest legitimate hold: usageCache keeps the lock across a
+// fetch of up to three 15 s request rounds.
+const STALE_LOCK_MS = 90 * 1000;
+
+async function readLockBody(lockPath) {
+    try {
+        return await fs.readFile(lockPath, 'utf8');
+    } catch {
+        return null;
+    }
+}
+
+// Returns a handle for releaseFileLock, which only removes a lock this handle
+// still owns.
 async function acquireFileLock(targetPath, { timeoutMs = 5000, pollMs = 10 } = {}) {
     const lockPath = `${targetPath}.lock`;
     const deadline = Date.now() + timeoutMs;
-    const payload = JSON.stringify({ pid: process.pid, ts: Date.now() });
+    // The nonce lets a holder tell its own lock from a replacement.
+    const payload = JSON.stringify({
+        pid: process.pid,
+        ts: Date.now(),
+        nonce: crypto.randomBytes(8).toString('hex'),
+    });
 
     // First attempt to ensure the parent dir exists.
     await fs.mkdir(path.dirname(lockPath), { recursive: true }).catch(() => {});
@@ -76,16 +82,18 @@ async function acquireFileLock(targetPath, { timeoutMs = 5000, pollMs = 10 } = {
             } finally {
                 await handle.close();
             }
-            return lockPath;
+            return { path: lockPath, payload };
         } catch (err) {
             if (err.code !== 'EEXIST') throw err;
 
-            // Lock file exists - check if it's stale.
+            // An old lock is a crashed holder's, stolen only if its body is
+            // unchanged just before the unlink, so a lock re-taken since survives.
+            const seen = await readLockBody(lockPath);
             try {
                 const stat = await fs.stat(lockPath);
-                if (Date.now() - stat.mtimeMs > STALE_LOCK_MS) {
-                    // Stale: force-remove and retry. Racy if two processes
-                    // both see stale, but O_EXCL on the next open catches it.
+                if (Date.now() - stat.mtimeMs > STALE_LOCK_MS
+                    && seen !== null
+                    && await readLockBody(lockPath) === seen) {
                     await fs.unlink(lockPath).catch(() => {});
                     continue;
                 }
@@ -97,15 +105,16 @@ async function acquireFileLock(targetPath, { timeoutMs = 5000, pollMs = 10 } = {
             if (Date.now() >= deadline) {
                 throw new Error(`Could not acquire lock for ${targetPath} within ${timeoutMs}ms`);
             }
-            // Tiny sleep before retry
-            await new Promise(r => setTimeout(r, pollMs));
+            await sleep(pollMs);
         }
     }
 }
 
-async function releaseFileLock(lockPath) {
+async function releaseFileLock(lock) {
+    if (!lock) return;
     try {
-        await fs.unlink(lockPath);
+        if (await readLockBody(lock.path) !== lock.payload) return;
+        await fs.unlink(lock.path);
     } catch {
         // Best-effort
     }
@@ -209,6 +218,8 @@ class SessionTracker {
         this.sessionFilePath = sessionFilePath || PATHS.SESSION_DATA_FILE;
         this.currentSession = null;
         this._cachedData = null;
+        this._nextTokens = null;
+        this._recording = null;
     }
 
     // Read fresh data from disk. `useCache` is a read-path optimisation
@@ -238,30 +249,22 @@ class SessionTracker {
     // which is atomic on POSIX and Windows NTFS and therefore protects
     // against both same-process and cross-process concurrency.
     async saveData(data) {
-        const dir = path.dirname(this.sessionFilePath);
-        try {
-            await fs.mkdir(dir, { recursive: true });
-        } catch {
-            // Ignore - directory may already exist.
-        }
-
-        const lockPath = await acquireFileLock(this.sessionFilePath);
+        // acquireFileLock creates the directory.
+        const lock = await acquireFileLock(this.sessionFilePath);
         try {
             let existing;
             try {
-                const content = await fs.readFile(this.sessionFilePath, 'utf8');
-                existing = JSON.parse(content);
+                existing = JSON.parse(await fs.readFile(this.sessionFilePath, 'utf8'));
             } catch {
                 existing = EMPTY_DATA();
             }
-
             const merged = mergeSessionData(existing, data);
 
             await atomicWriteJson(this.sessionFilePath, merged);
             this._cachedData = merged;
             return merged;
         } finally {
-            await releaseFileLock(lockPath);
+            await releaseFileLock(lock);
         }
     }
 
@@ -274,8 +277,11 @@ class SessionTracker {
         const date = new Date().toISOString().split('T')[0];
 
         const tokenLimit = getTokenLimit();
+        // The random suffix keeps two windows that start at once from sharing
+        // an id, since both read the same session count.
+        const suffix = crypto.randomBytes(3).toString('hex');
         this.currentSession = {
-            sessionId: `session-${date}-${sessionNumber}`,
+            sessionId: `session-${date}-${sessionNumber}-${suffix}`,
             startTime: new Date().toISOString(),
             description: description,
             tokenUsage: {
@@ -301,27 +307,20 @@ class SessionTracker {
     //               'inferred', 'standard').
     async updateTokens(tokensUsed, tokenLimit = null, resolvedMeta = null) {
         const limit = tokenLimit || getTokenLimit();
+        // Each window writes only a session it started itself. The newest
+        // on-disk session may belong to another window, which would then
+        // overwrite this one's record and be overwritten in turn.
+        if (!this.currentSession) {
+            await this.startSession('Claude Code session (auto-created)');
+        }
         const data = await this.loadData({ useCache: false });
 
-        // Prefer the in-memory currentSession (correct identity for this
-        // instance). Fall back to the most recent on-disk session only if
-        // this instance hasn't started its own.
-        let session = null;
-        if (this.currentSession) {
-            session = data.sessions.find(s => s.sessionId === this.currentSession.sessionId) || null;
-            if (!session) {
-                // The merged on-disk view doesn't know about our session
-                // yet - push the in-memory copy back in.
-                session = this.currentSession;
-                data.sessions.push(session);
-            }
-        } else if (data.sessions && data.sessions.length > 0) {
-            session = data.sessions[data.sessions.length - 1];
-        }
-
+        let session = data.sessions.find(s => s.sessionId === this.currentSession.sessionId) || null;
         if (!session) {
-            console.warn('No active session to update');
-            return;
+            // The merged on-disk view doesn't know about our session
+            // yet - push the in-memory copy back in.
+            session = this.currentSession;
+            data.sessions.push(session);
         }
 
         session.tokenUsage = session.tokenUsage || {};
@@ -337,13 +336,28 @@ class SessionTracker {
         await this.saveData(data);
     }
 
-    async getCurrentSession() {
-        if (this.currentSession) {
-            return this.currentSession;
+    // Coalesces calls so a stalled lock queues one write, not one per refresh:
+    // a call made while a write is in flight is folded into the next write,
+    // which carries only the newest value. Resolves when that write lands.
+    recordTokens(tokensUsed, tokenLimit = null, resolvedMeta = null) {
+        this._nextTokens = [tokensUsed, tokenLimit, resolvedMeta];
+        if (!this._recording) {
+            this._recording = this._drainTokens().finally(() => { this._recording = null; });
         }
+        return this._recording;
+    }
 
-        const data = await this.loadData();
-        return data.sessions.length > 0 ? data.sessions[data.sessions.length - 1] : null;
+    async _drainTokens() {
+        while (this._nextTokens) {
+            const args = this._nextTokens;
+            this._nextTokens = null;
+            await this.updateTokens(...args);
+        }
+    }
+
+    // This window's own session only, or null before its first update.
+    async getCurrentSession() {
+        return this.currentSession;
     }
 }
 
@@ -353,4 +367,5 @@ module.exports = {
     mergeSessionData,
     acquireFileLock,
     releaseFileLock,
+    STALE_LOCK_MS,
 };

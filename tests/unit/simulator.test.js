@@ -179,3 +179,34 @@ describe('simulator — null returns to live, set/get/clear semantics', () => {
         expect(sim.getProfileOverride()).toBe(null);
     });
 });
+
+describe('simulator commands - registration and palette gating', () => {
+    const vscode = require('vscode');
+    const { registerSimulatorCommands } = require('../../src/commands/simulator');
+    const pkg = require('../../package.json');
+    const contributed = new Map(pkg.contributes.commands.map((c) => [c.command, c]));
+
+    const registeredIds = () => {
+        const context = { subscriptions: [] };
+        const ids = [];
+        const real = vscode.commands.registerCommand;
+        vscode.commands.registerCommand = (id, handler) => { ids.push(id); return real(id, handler); };
+        try {
+            registerSimulatorCommands(context, async () => {});
+        } finally {
+            vscode.commands.registerCommand = real;
+        }
+        return ids;
+    };
+
+    it('registers the 13 commands its header names', () => {
+        expect(registeredIds()).toHaveLength(13);
+    });
+
+    it('hides every simulate command, simulateStatus included, unless debug is on', () => {
+        const devOnly = [...registeredIds(), 'claudemeter.simulateStatus'];
+        for (const id of devOnly) {
+            expect(contributed.get(id)?.enablement, id).toBe('config.claudemeter.debug');
+        }
+    });
+});

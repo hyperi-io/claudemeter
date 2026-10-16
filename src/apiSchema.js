@@ -196,6 +196,11 @@ function calculateResetTime(isoTimestamp) {
     }
 }
 
+function resetGauges(gauges) {
+    const byKey = key => gauges.find(g => g.key === key) || { percent: null, resetsAt: null };
+    return { session: byKey('session'), weekly: byKey('weekly') };
+}
+
 // Build standardised usage response from raw API data.
 //
 // `definitions` is the merged gauge registry; callers with user overrides pass
@@ -206,14 +211,16 @@ function processApiResponse(apiResponse, creditsData, overageData, accountInfo, 
     const prepaidCredits = processPrepaidData(creditsData);
 
     const gauges = resolveGauges(apiResponse, { definitions });
-    const byKey = key => gauges.find(g => g.key === key) || { percent: null, resetsAt: null };
-    const session = byKey('session');
-    const weekly = byKey('weekly');
+    const { session, weekly } = resetGauges(gauges);
 
     return {
         usagePercent: session.percent ?? 0,
-        resetTime: calculateResetTime(session.resetsAt),
+        // Rendered against the clock at display time, so cached data never drifts.
+        resetsAt: session.resetsAt || null,
         usagePercentWeek: weekly.percent ?? 0,
+        resetsAtWeek: weekly.resetsAt || null,
+        // Older bundles sharing the on-disk cache still read these durations.
+        resetTime: calculateResetTime(session.resetsAt),
         resetTimeWeek: calculateResetTime(weekly.resetsAt),
         scopedWeekly: normaliseScopedWeekly(gauges, data),
         extraUsage: data.extraUsage.value,
@@ -240,6 +247,11 @@ function upgradeCachedUsage(usageData) {
     if (usageData.limits === undefined) {
         usageData.limits = usageData.rawData.limits || null;
     }
+    if (usageData.resetsAt === undefined || usageData.resetsAtWeek === undefined) {
+        const { session, weekly } = resetGauges(resolveGauges(usageData.rawData));
+        if (usageData.resetsAt === undefined) usageData.resetsAt = session.resetsAt || null;
+        if (usageData.resetsAtWeek === undefined) usageData.resetsAtWeek = weekly.resetsAt || null;
+    }
     return usageData;
 }
 
@@ -253,10 +265,8 @@ function getSchemaInfo() {
 
 module.exports = {
     USAGE_API_SCHEMA,
-    OVERAGE_API_SCHEMA,
     getNestedValue,
     extractFromSchema,
-    normaliseScopedWeekly,
     processOverageData,
     processPrepaidData,
     calculateResetTime,

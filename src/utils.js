@@ -14,11 +14,6 @@ const crypto = require('crypto');
 
 const CONFIG_NAMESPACE = 'claudemeter';
 
-// Split text into lines, handling both Unix (\n) and Windows (\r\n) line endings
-function splitLines(text) {
-    return text.split(/\r?\n/);
-}
-
 // "1 setting" / "2 settings" - regular plurals only.
 function plural(n, word) {
     return `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -64,8 +59,6 @@ const PATHS = {
     CONFIG_DIR: CONFIG_DIR,
     SESSION_DATA_FILE: path.join(CONFIG_DIR, 'session-data.json'),
 };
-
-const { FALLBACK_LIMIT: DEFAULT_TOKEN_LIMIT } = require('./modelContextWindows');
 
 // File-based debug logging with instance identification
 // Each instance identified by short hash + project name for easy differentiation
@@ -136,7 +129,7 @@ class FileLogger {
             }
             return expandedPath;
         }
-        return path.join(PATHS.CONFIG_DIR, 'debug.log');
+        return getDefaultDebugLogPath();
     }
 
     getMaxSizeBytes() {
@@ -161,24 +154,20 @@ class FileLogger {
 
             const stats = fs.statSync(this.logFile);
             if (stats.size >= this.maxSizeBytes) {
-                // FIFO trim: keep newest ~75% of max size, discard oldest entries
-                const content = fs.readFileSync(this.logFile, 'utf-8');
-                const lines = splitLines(content);
+                // FIFO trim: keep the newest ~75% of max size. Only that tail
+                // is read, so a log of any size costs at most maxSizeBytes.
                 const targetSize = Math.floor(this.maxSizeBytes * 0.75);
-
-                // Find cut point to keep ~targetSize bytes from the end
-                let keptSize = 0;
-                let cutIndex = lines.length;
-                for (let i = lines.length - 1; i >= 0; i--) {
-                    keptSize += lines[i].length + 1; // +1 for newline
-                    if (keptSize >= targetSize) {
-                        cutIndex = i;
-                        break;
-                    }
+                const tail = Buffer.alloc(targetSize);
+                const fd = fs.openSync(this.logFile, 'r');
+                let bytesRead;
+                try {
+                    bytesRead = fs.readSync(fd, tail, 0, targetSize, stats.size - targetSize);
+                } finally {
+                    fs.closeSync(fd);
                 }
-
-                const trimmedContent = lines.slice(cutIndex).join('\n');
-                fs.writeFileSync(this.logFile, trimmedContent);
+                // Drop the partial line the cut landed in.
+                const kept = tail.subarray(tail.indexOf(0x0a) + 1, bytesRead);
+                fs.writeFileSync(this.logFile, kept);
             }
         } catch (e) {
             // Ignore trim errors
@@ -189,16 +178,18 @@ class FileLogger {
         if (!isDebugEnabled()) return;
 
         try {
+            // Owner-only modes apply on create alone: debugLogFile can point at
+            // an existing file whose permissions are the user's business.
             const dir = path.dirname(this.logFile);
             if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
+                fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
             }
 
             this.trimIfNeeded();
 
             const timestamp = new Date().toISOString();
             const line = `${timestamp} ${this.instanceId} ${scrubHome(message)}\n`;
-            fs.appendFileSync(this.logFile, line);
+            fs.appendFileSync(this.logFile, line, { mode: 0o600 });
         } catch (e) {
             // Silently ignore write errors to avoid blocking
         }
@@ -405,87 +396,65 @@ function getUseCountdownTimer() {
     return getTimeFormat() === 'countdown';
 }
 
-// Format countdown string (e.g., "2h 15m", "5d 21h")
-function formatCountdown(resetTime) {
-    try {
-        const days = resetTime.match(/(\d+)d/);
-        const hours = resetTime.match(/(\d+)h/);
-        const minutes = resetTime.match(/(\d+)m/);
+// Shown wherever a reset time is due but the payload carried no stamp.
+const NO_RESET_TIME = '-';
 
-        const parts = [];
-        if (days) parts.push(`${parseInt(days[1])}d`);
-        if (hours) parts.push(`${parseInt(hours[1])}h`);
-        if (minutes && !days) parts.push(`${parseInt(minutes[1])}m`);  // Skip minutes if days shown
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-        return parts.join(' ') || '0m';
-    } catch (error) {
-        return '??';
-    }
+// A reset stamp (ISO string or Date) as a Date, or null when absent or invalid.
+function toResetDate(resetsAt) {
+    if (!resetsAt) return null;
+    const date = resetsAt instanceof Date ? resetsAt : new Date(resetsAt);
+    return Number.isNaN(date.getTime()) ? null : date;
 }
 
-// Parse relative time string (e.g. "2h 30m", "5d 21h") and calculate reset datetime
-function calculateResetClockTime(resetTime, timeFormat = { hour: 'numeric', minute: '2-digit' }) {
-    // If countdown mode enabled, return the relative time directly
-    if (getUseCountdownTimer()) {
-        return formatCountdown(resetTime);
-    }
-
-    try {
-        const days = resetTime.match(/(\d+)d/);
-        const hours = resetTime.match(/(\d+)h/);
-        const minutes = resetTime.match(/(\d+)m/);
-
-        let totalMinutes = 0;
-        if (days) totalMinutes += parseInt(days[1]) * 24 * 60;
-        if (hours) totalMinutes += parseInt(hours[1]) * 60;
-        if (minutes) totalMinutes += parseInt(minutes[1]);
-
-        const now = new Date();
-        const resetDate = new Date(now.getTime() + totalMinutes * 60 * 1000);
-
-        const hour12 = !getUse24HourTime();
-
-        if (totalMinutes >= 24 * 60) {
-            // Multi-day: show "Fri 15:20" (day name + time) for clarity
-            const dayName = resetDate.toLocaleDateString(undefined, { weekday: 'short' });
-            const timeStr = resetDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12 });
-            return `${dayName} ${timeStr}`;
-        }
-
-        // Within 24 hours: show time
-        const timeStr = resetDate.toLocaleTimeString(undefined, { ...timeFormat, hour12 });
-        return timeStr;
-    } catch (error) {
-        return '??:??';
-    }
+// Time left until a reset, e.g. "2h 15m" or "5d 21h". Minutes drop once days
+// show, and a reset already passed reads "0m".
+function formatCountdown(resetDate) {
+    const totalMinutes = Math.max(0, Math.floor((resetDate.getTime() - Date.now()) / 60000));
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
 }
 
-// Full datetime format for tooltips
-function calculateResetClockTimeExpanded(resetTime) {
-    try {
-        const days = resetTime.match(/(\d+)d/);
-        const hours = resetTime.match(/(\d+)h/);
-        const minutes = resetTime.match(/(\d+)m/);
+// Status-bar reset time, measured from now at every render: a countdown, a
+// clock time within the day, or day plus time further out.
+function calculateResetClockTime(resetsAt, timeFormat = { hour: 'numeric', minute: '2-digit' }) {
+    const resetDate = toResetDate(resetsAt);
+    if (!resetDate) return NO_RESET_TIME;
+    if (getUseCountdownTimer()) return formatCountdown(resetDate);
 
-        let totalMinutes = 0;
-        if (days) totalMinutes += parseInt(days[1]) * 24 * 60;
-        if (hours) totalMinutes += parseInt(hours[1]) * 60;
-        if (minutes) totalMinutes += parseInt(minutes[1]);
-
-        const now = new Date();
-        const resetDate = new Date(now.getTime() + totalMinutes * 60 * 1000);
-
-        return resetDate.toLocaleString(undefined, {
-            weekday: 'long',
-            day: 'numeric',
-            month: 'long',
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: !getUse24HourTime()
-        });
-    } catch (error) {
-        return 'Unknown';
+    const hour12 = !getUse24HourTime();
+    if (resetDate.getTime() - Date.now() >= DAY_MS) {
+        const dayName = resetDate.toLocaleDateString(undefined, { weekday: 'short' });
+        const timeStr = resetDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12 });
+        return `${dayName} ${timeStr}`;
     }
+    return resetDate.toLocaleTimeString(undefined, { ...timeFormat, hour12 });
+}
+
+// "Sunday 19 April at 2:01 pm": every long-form time in a tooltip uses this,
+// so the reset and happy-hour rows read alike. '' for a non-Date.
+function formatLongDateTime(date, use24Hour) {
+    if (!(date instanceof Date)) return '';
+    return date.toLocaleString(undefined, {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: !use24Hour,
+    });
+}
+
+// Full reset datetime for tooltips.
+function calculateResetClockTimeExpanded(resetsAt) {
+    const resetDate = toResetDate(resetsAt);
+    if (!resetDate) return NO_RESET_TIME;
+    return formatLongDateTime(resetDate, getUse24HourTime());
 }
 
 function getCurrencySymbol(currency) {
@@ -512,26 +481,35 @@ function getCurrencySymbol(currency) {
     return symbols[currency] || '';
 }
 
+// Thresholds sit just under each unit so rounding never prints "1000.0K".
 function formatCompact(value) {
-    if (value >= 1000000) {
+    if (value >= 999_950) {
         return `${(value / 1000000).toFixed(1)}M`;
-    } else if (value >= 1000) {
+    } else if (value >= 999.5) {
         return `${(value / 1000).toFixed(1)}K`;
     }
     return Math.round(value).toString();
 }
 
+// The remote authority when this extension host is the client of a remote
+// window, whose transcripts and Claude login live on another machine. Null when
+// local, or when VS Code runs claudemeter on the remote host itself.
+function clientSideRemoteName() {
+    const remote = vscode.env.remoteName;
+    if (!remote) return null;
+    const kind = vscode.extensions.getExtension('HyperSec.claudemeter')?.extensionKind;
+    return kind === vscode.ExtensionKind.Workspace ? null : remote;
+}
+
 module.exports = {
+    clientSideRemoteName,
     CONFIG_NAMESPACE,
     COMMANDS,
     plural,
     PATHS,
-    DEFAULT_TOKEN_LIMIT,
     getTokenLimit,
     resolveTokenLimit,
-    getTimeFormat,
     getUse24HourTime,
-    getUseCountdownTimer,
     setDevMode,
     isDebugEnabled,
     getDebugChannel,
@@ -539,13 +517,13 @@ module.exports = {
     sleep,
     calculateResetClockTime,
     calculateResetClockTimeExpanded,
-    formatCountdown,
+    formatLongDateTime,
+    toResetDate,
+    DAY_MS,
     getCurrencySymbol,
     formatCompact,
     initFileLogger,
-    getFileLogger,
     fileLog,
     scrubHome,
     getDefaultDebugLogPath,
-    splitLines,
 };

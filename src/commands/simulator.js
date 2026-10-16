@@ -1,13 +1,14 @@
 // Project:   Claudemeter
 // File:      commands/simulator.js
-// Purpose:   Register the 12 dev-only F5 simulator commands.
+// Purpose:   Register the 13 dev-only F5 simulator commands.
 //
 //            All commands are gated by the `config.claudemeter.debug`
 //            enablement clause in package.json - they only appear in
 //            the command palette when claudemeter.debug=true. Each
-//            command sets a simulator override and triggers an
-//            immediate re-fetch so the change is visible without
-//            waiting for the auto-refresh tick.
+//            command sets a simulator override and re-renders through
+//            performFetch. contextWindow and planSignals feed the Tk
+//            limit resolver instead, so they show on the next local
+//            refresh tick (claudemeter.localRefreshSeconds).
 //
 //            Pulled out of extension.js so the command-registration
 //            block doesn't grow alongside it, and so the input-validator

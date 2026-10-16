@@ -15,55 +15,27 @@
 // This module merges both sources into one unified view so the rest of
 // claudemeter sees a stable shape regardless of which file carries which field.
 
-const fs = require('fs');
-const path = require('path');
 const { getOAuthAccount } = require('./claudeConfigReader');
-const { getConfigDir } = require('./tokenSource');
-
-// Resolved per-call (not at module load) so the env vars are honoured without
-// re-importing. getConfigDir is the single resolver for the Claude config dir.
-function getCredentialsPath() {
-    return path.join(getConfigDir(), '.credentials.json');
-}
-
-// Read the raw .credentials.json oauth blob. Returns null if missing/unreadable.
-function readCredentialsRaw() {
-    try {
-        const credentialsPath = getCredentialsPath();
-        if (!fs.existsSync(credentialsPath)) {
-            return null;
-        }
-        const raw = fs.readFileSync(credentialsPath, 'utf-8');
-        const data = JSON.parse(raw);
-        return data && typeof data === 'object' ? data : null;
-    } catch (error) {
-        console.warn('Claudemeter: Failed to read credentials:', error.message);
-        return null;
-    }
-}
+const { credentialsFilePath, readCredentialsFile, oauthBlob } = require('./tokenSource');
 
 // Return a unified view of the current Claude Code account.
 //
-// Identity fields (orgId, email, accountUuid, displayName, organizationName,
-// organizationRole, billingType, hasAvailableSubscription) come from
-// ~/.claude.json oauthAccount (the new source of truth). Token fields
-// (accessToken, refreshToken, subscriptionType) come from .credentials.json
-// for backwards compatibility - older Claude Code builds still populate them
-// there, newer builds leave them null. Plan fields prefer .credentials.json
-// then fall back to the oauthAccount equivalents current builds write (#51).
+// Identity comes from ~/.claude.json oauthAccount. Token presence and
+// subscriptionType come from .credentials.json, which older builds still fill
+// and newer ones leave null. Plan fields fall back to oauthAccount (#51).
 //
 // Returns null if BOTH files are missing or unreadable. Returns a partial
 // object (with some null fields) if only one source is available, so callers
 // can still function with degraded information.
 function readCredentials() {
     const oauthAccount = getOAuthAccount();
-    const raw = readCredentialsRaw();
+    const raw = readCredentialsFile();
 
     if (!oauthAccount && !raw) {
         return null;
     }
 
-    const oauth = (raw && raw.claudeAiOauth) || {};
+    const oauth = oauthBlob(raw) || {};
 
     return {
         // Identity - prefer .claude.json (new), fall back to .credentials.json (legacy)
@@ -87,9 +59,9 @@ function readCredentials() {
         organizationType: oauthAccount?.organizationType || null,
         rateLimitTier: oauth.rateLimitTier || oauthAccount?.organizationRateLimitTier || null,
 
-        // OAuth tokens - only .credentials.json has these
-        accessToken: oauth.accessToken || null,
-        refreshToken: oauth.refreshToken || null,
+        // Presence only: this object outlives the call and readToken() supplies values.
+        hasAccessToken: !!oauth.accessToken,
+        hasRefreshToken: !!oauth.refreshToken,
     };
 }
 
@@ -141,9 +113,8 @@ function formatRateLimitTier(tier) {
 }
 
 module.exports = {
-    getCredentialsPath,
+    getCredentialsPath: credentialsFilePath,
     readCredentials,
-    readCredentialsRaw,
     getIdentityKey,
     identityChanged,
     formatSubscriptionType,

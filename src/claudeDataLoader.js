@@ -10,7 +10,6 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const { createHash } = require('crypto');
-const { getTokenLimit, splitLines } = require('./utils');
 const {
     projectDirName,
     normaliseUnicode,
@@ -18,6 +17,7 @@ const {
     pathsEqual,
     firstRecordedCwd,
     resolveProjectDir,
+    CWD_PROBE_BYTES,
 } = require('./projectDir');
 
 // How long a "no project directory for this workspace" answer stays cached.
@@ -58,31 +58,19 @@ function selectActiveSession(sessions) {
     return { active, activeSessionCount };
 }
 
-// Transcripts are append-only, so re-reading one whole is wasted work. They
-// reach hundreds of megabytes and tens of thousands of lines while the gauge
-// refreshes on a timer and on every debounced write, so a full read per tick
-// dwarfs everything else the extension does.
-//
-// So each transcript is read ONCE, and after that only the bytes appended
-// since. `readAt` is the byte offset just past the last complete line already
-// folded into `summary`, and `size` plus the edge hashes identify the file
-// state that produced it. mtime is deliberately not part of that: filesystem
-// timestamp granularity varies and a same-size rewrite can land inside one
-// tick, so it cannot answer whether anything changed.
-//
-// Keyed by path, most-recently-read last, and bounded: an extension host runs
-// for days and would otherwise hold one entry per transcript ever read. Entries
-// are small, so the cap is about never growing without limit rather than about
-// saving bytes - evicting one only costs that transcript a re-read.
+// Transcripts are append-only and reach hundreds of MB, so each is read once, then
+// only the bytes appended since: `readAt` is the offset past the last complete line
+// folded into `summary`. `size` and the edge hashes detect a rewrite, mtime is too coarse.
 const transcriptCache = new Map();
+
+// Least recently used first, capped so a host that runs for days does not keep
+// one entry per transcript ever read.
 const TRANSCRIPT_CACHE_MAX = 64;
 
 // In-flight reads, keyed by path. The refresh timer and the debounced
 // file-watcher both reach readSessionUsage() with nothing between them, so two
-// reads of one transcript can overlap. Whichever finished last would write back
-// its `readAt`, and if that were the one that saw the SMALLER file the offset
-// regresses and the overlap is folded in twice, inflating messageCount.
-// Sharing one promise per path removes the interleaving.
+// reads of one transcript can overlap, and whichever finished last would write
+// back its `readAt` - regressing the offset if it saw the smaller file.
 const inFlightReads = new Map();
 
 function rememberTranscript(filePath, entry) {
@@ -97,15 +85,14 @@ function rememberTranscript(filePath, entry) {
     }
 }
 
-// Discard cached tail state. Only needed by tests, which write several
-// different files to the same path faster than mtime can distinguish them.
+// Discard all cached transcript state, so a test starts from a cold cache.
 function resetTranscriptCache() {
     transcriptCache.clear();
     inFlightReads.clear();
 }
 
 // Fold one parsed record into the running state: the newest real prompt.
-// Shared by the first full read and each incremental tail read so the two can
+// Shared by the first read and each incremental tail read so the two can
 // never drift apart.
 //
 // The prompt is the SUM of the three input fields: input + cache_creation +
@@ -114,9 +101,8 @@ function resetTranscriptCache() {
 // file and all of it lands in cache_creation. Measured 32K against a real
 // 233K prompt in a live session (#54).
 function foldRecord(entry, state) {
-    // Same shapes isValidUsageRecord() rejects. These carry a token count
-    // without being a real prompt, and one would become the session's whole
-    // reported context.
+    // Synthetic and API-error turns carry a token count without being a real
+    // prompt, and one would become the session's whole reported context.
     if (entry.isApiErrorMessage || entry.message?.model === '<synthetic>') return;
     // A subagent's turn describes the subagent's context, not this session's.
     // Claude Code keeps them in agent-*.jsonl, which the caller already filters
@@ -149,34 +135,121 @@ function foldRecord(entry, state) {
     };
 }
 
-// First read of a transcript: scan BACKWARD and stop at the newest prompt,
-// which is normally a few lines from the end. That keeps JSON.parse off the
-// tens of thousands of lines behind it.
-function scanWholeTranscript(lines) {
-    const state = { latest: null };
-    for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-            foldRecord(JSON.parse(lines[i]), state);
-        } catch (parseError) {
-            continue;
-        }
-        if (state.latest) break;
+// Fold one transcript line. A torn or non-JSON line is not a record.
+function foldLine(line, state) {
+    if (line === null) return;
+    let entry;
+    try {
+        entry = JSON.parse(line.toString('utf-8'));
+    } catch (parseError) {
+        return;
     }
-    return state;
+    if (entry && typeof entry === 'object') foldRecord(entry, state);
 }
 
-// Byte offset just past the last newline, i.e. the end of the last COMPLETE
-// line. A transcript being appended to mid-read leaves a partial final line;
-// stopping short of it means the next read picks it up whole.
-function lastCompleteLineEnd(buffer) {
-    return buffer.lastIndexOf('\n') + 1;
+// Transcripts are scanned in chunks, never decoded whole: a multi-day session
+// outgrows the longest string V8 can hold, and decoding it throws.
+const CHUNK_BYTES = 1024 * 1024;
+
+// Longest line either scan assembles, past which the visitor gets null. Usage
+// rides only on assistant turns, which the output cap keeps far shorter.
+const MAX_LINE_BYTES = 16 * 1024 * 1024;
+
+// Visit each complete line in [start, end) in order with the offset past it, until
+// `visit` returns true. Returns the offset past the last line visited, so a partial
+// trailing line waits for the next read. A visited Buffer is valid only during the call.
+async function forEachLine(handle, start, end, visit) {
+    const chunk = Buffer.alloc(Math.max(0, Math.min(CHUNK_BYTES, end - start)));
+    let pieces = [];
+    let pieceBytes = 0;
+    let consumed = start;
+    for (let pos = start; pos < end;) {
+        const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, end - pos), pos);
+        if (bytesRead === 0) break;
+        const data = chunk.subarray(0, bytesRead);
+        let from = 0;
+        for (let nl = data.indexOf(0x0a); nl !== -1; nl = data.indexOf(0x0a, from)) {
+            const tail = data.subarray(from, nl);
+            let line = null;
+            if (pieceBytes + tail.length <= MAX_LINE_BYTES) {
+                line = pieces.length ? Buffer.concat([...pieces, tail]) : tail;
+            }
+            pieces = [];
+            pieceBytes = 0;
+            from = nl + 1;
+            consumed = pos + from;
+            if (visit(line, consumed)) return consumed;
+        }
+        if (from < bytesRead) {
+            pieceBytes += bytesRead - from;
+            // Copied, because the next read overwrites `chunk`.
+            if (pieceBytes <= MAX_LINE_BYTES) pieces.push(Buffer.from(data.subarray(from)));
+            else pieces = [];
+        }
+        pos += bytesRead;
+    }
+    return consumed;
 }
 
-// Split a newline-terminated chunk into records, dropping the empty tail the
-// final newline produces. Both read paths go through this so `messageCount`
-// means the same thing whether a transcript was read whole or in pieces.
-function recordLines(text) {
-    return splitLines(text).filter(line => line.trim());
+// Visit complete lines in [0, end) newest first until `visit` returns true. The newest
+// prompt is near the end, so JSON.parse stays off everything behind it. `end` must sit
+// just past a newline, or the scan starts inside a partial line.
+async function forEachLineBackward(handle, end, visit) {
+    let pieces = [];
+    let pieceBytes = 0;
+    const emit = (head) => {
+        let line = null;
+        if (head.length + pieceBytes <= MAX_LINE_BYTES) {
+            line = pieces.length ? Buffer.concat([head, ...pieces]) : head;
+        }
+        pieces = [];
+        pieceBytes = 0;
+        return visit(line);
+    };
+    for (let pos = end; pos > 0;) {
+        const length = Math.min(CHUNK_BYTES, pos);
+        pos -= length;
+        const data = await readBytes(handle, pos, length);
+        let stop = data.length;
+        while (stop > 0) {
+            const nl = data.lastIndexOf(0x0a, stop - 1);
+            if (nl === -1) break;
+            if (emit(data.subarray(nl + 1, stop))) return;
+            stop = nl;
+        }
+        if (stop > 0) {
+            pieceBytes += stop;
+            if (pieceBytes <= MAX_LINE_BYTES) pieces.unshift(data.subarray(0, stop));
+            else pieces = [];
+        }
+    }
+    emit(Buffer.alloc(0));
+}
+
+// Offset just past the last newline in [0, size), or 0 when there is none. A
+// transcript normally ends on a newline, so this is one small read.
+const LAST_LINE_STEP_BYTES = 64 * 1024;
+
+async function lastLineEnd(handle, size) {
+    for (let pos = size; pos > 0;) {
+        const length = Math.min(LAST_LINE_STEP_BYTES, pos);
+        pos -= length;
+        const nl = (await readBytes(handle, pos, length)).lastIndexOf(0x0a);
+        if (nl !== -1) return pos + nl + 1;
+    }
+    return 0;
+}
+
+// The origin cwd from complete lines in [start, end) inside the head the directory
+// scan probes, so the two agree on where a session started. Returns how far the
+// probe got, CWD_PROBE_BYTES once the head is exhausted.
+async function probeHeadCwd(handle, start, end) {
+    let cwd = null;
+    const probed = await forEachLine(handle, start, Math.min(end, CWD_PROBE_BYTES), (line) => {
+        if (line !== null) cwd = firstRecordedCwd([line.toString('utf-8')]);
+        return cwd !== null;
+    });
+    return { cwd, headBytes: end > CWD_PROBE_BYTES ? CWD_PROBE_BYTES : probed };
 }
 
 // How far in to look for the first line, and how much of the tail to hash.
@@ -184,47 +257,46 @@ function recordLines(text) {
 // Code transcript's first record sits well inside it.
 const FINGERPRINT_BYTES = 1024;
 
-// Two hashes, answering two different questions.
-//
-// `head` answers "is this still the same file", so it must cover something an
-// APPEND CANNOT MOVE. A fixed byte window does not: on a file shorter than the
-// window it covers the whole file, so every append rewrites the identity and
-// forces a full re-read - on every turn of a new session, and forever for one
-// that never grows past the window. So the identity is the first LINE, which a
-// transcript writes once and never revisits. Vector fingerprints on leading
-// LINES for the same reason.
-//
-// `tail` answers "has anything changed", which size and mtime cannot be trusted
-// to do: a same-size rewrite inside one filesystem timestamp tick leaves size,
-// mtime, device and inode all identical. Timestamp granularity is a property of
-// the filesystem and some resolve two such writes apart while others do not, so
-// the only portable answer is to look at the bytes.
-//
-// A head of null means "no stable identity yet": the first line has not been
-// terminated, so there is nothing an append could not change. Callers treat
-// that as unknown rather than as a mismatch, so it never reads as a resync.
+// `head` is the file's identity, so it hashes the first LINE: a fixed byte window
+// changes on every append while the file is shorter than it. A first line longer
+// than the window is hashed as the window, and null (unterminated) means unknown.
 async function readEdgeHashes(handle, size) {
     if (size <= 0) return { head: null, tail: 'empty' };
 
     const window = Math.min(FINGERPRINT_BYTES, size);
-    const front = Buffer.alloc(window);
-    await handle.read(front, 0, window, 0);
+    const front = await readBytes(handle, 0, window);
     const firstNewline = front.indexOf(0x0a);
-    const head = firstNewline === -1
-        ? null
-        : createHash('sha1').update(front.subarray(0, firstNewline)).digest('hex');
+    let head = null;
+    if (firstNewline !== -1) {
+        head = createHash('sha1').update(front.subarray(0, firstNewline)).digest('hex');
+    } else if (size > FINGERPRINT_BYTES) {
+        head = createHash('sha1').update(front).digest('hex');
+    }
 
+    // A same-size rewrite inside one timestamp tick leaves size, mtime and inode
+    // unchanged, so the last kilobyte is hashed too. consumedHash() covers the
+    // window behind the read offset, and an edit further back than both goes unseen.
     const tail = createHash('sha1')
-        .update(size <= window ? front : await readAt(handle, size - window, window))
+        .update(size <= window ? front : await readBytes(handle, size - window, window))
         .digest('hex');
 
     return { head, tail };
 }
 
-async function readAt(handle, position, length) {
+// Hash of the window ending at a read offset: the last bytes already folded
+// in, which an append cannot touch and a rewrite almost always does. At the
+// end of the file it is the tail hash, so the common case reads nothing more.
+async function consumedHash(handle, readAt, size, edges) {
+    if (readAt === size) return edges.tail;
+    const start = Math.max(0, readAt - FINGERPRINT_BYTES);
+    return createHash('sha1').update(await readBytes(handle, start, readAt - start)).digest('hex');
+}
+
+// Only the bytes actually read: a file truncated mid-scan returns short.
+async function readBytes(handle, position, length) {
     const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, position);
-    return buffer;
+    const { bytesRead } = await handle.read(buffer, 0, length, position);
+    return buffer.subarray(0, bytesRead);
 }
 
 // Windows can report ino/dev as 0 on some filesystems, in which case they
@@ -237,34 +309,60 @@ function identityOf(stats, headHash) {
 }
 
 // Parse a transcript's latest assistant prompt size into a session summary, or
-// null if it has no usage yet. Module-level so both the live scan and the
-// aged-out fallback reuse it.
-//
-// Reads each transcript once and thereafter only the bytes appended since -
-// these files are append-only and reach 162MB, while the gauge refreshes on a
-// timer and on every debounced write. An unchanged file costs one stat.
+// null if it has no usage yet. Reads only the bytes appended since the last call.
+// A call arriving mid-read marks it dirty and shares its result, and a dirty read
+// runs once more, so no caller gets an answer older than its own call.
 async function readSessionUsage(filePath, log) {
-    const pending = inFlightReads.get(filePath);
-    if (pending) {
-        const summary = await pending;
-        return summary ? { ...summary } : null;
+    let flight = inFlightReads.get(filePath);
+    if (flight) {
+        flight.dirty = true;
+    } else {
+        flight = { dirty: false, done: null };
+        flight.done = flyRead(filePath, log, flight);
+        inFlightReads.set(filePath, flight);
     }
-    const read = readTranscript(filePath, log);
-    inFlightReads.set(filePath, read);
+    const summary = await flight.done;
+    return summary ? { ...summary } : null;
+}
+
+async function flyRead(filePath, log, flight) {
     try {
-        return await read;
+        let summary;
+        do {
+            flight.dirty = false;
+            summary = await readTranscript(filePath, log);
+        } while (flight.dirty);
+        return summary;
     } finally {
-        inFlightReads.delete(filePath);
+        if (inFlightReads.get(filePath) === flight) inFlightReads.delete(filePath);
     }
+}
+
+// Cache what a read established and return a copy of the summary it yields.
+async function remember(filePath, handle, stats, edges, identity, entry) {
+    const summary = entry.state.latest
+        ? { file: path.basename(filePath), ...entry.state.latest, cwd: entry.cwd }
+        : null;
+    rememberTranscript(filePath, {
+        ...entry,
+        identity,
+        size: stats.size,
+        tail: edges.tail,
+        consumed: await consumedHash(handle, entry.readAt, stats.size, edges),
+        summary,
+    });
+    return summary ? { ...summary } : null;
 }
 
 async function readTranscript(filePath, log) {
     let handle = null;
     try {
-        const stats = await fs.stat(filePath);
+        // Stat through the handle, so a file replaced between the two calls
+        // cannot pair one file's inode with another's bytes.
+        handle = await fs.open(filePath, 'r');
+        const stats = await handle.stat();
         const cached = transcriptCache.get(filePath);
 
-        handle = await fs.open(filePath, 'r');
         const edges = await readEdgeHashes(handle, stats.size);
         const identity = identityOf(stats, edges.head);
 
@@ -273,140 +371,71 @@ async function readTranscript(filePath, log) {
         // unknowns, not a match.
         const sameFile = Boolean(cached && identity && cached.identity === identity);
 
-        // Same file, same length, same last bytes: genuinely nothing new. This
-        // is the common case by a wide margin and costs a stat plus 2KB of
-        // reads, against re-reading up to 162MB.
-        if (sameFile && stats.size === cached.size && edges.tail === cached.tail) {
-            await handle.close();
-            handle = null;
+        // The window behind the cached offset still holds the bytes already
+        // folded in. An append cannot touch it, so a mismatch is a rewrite and
+        // the cached offset points into a file that no longer exists.
+        const consumedIntact = sameFile
+            && stats.size >= cached.readAt
+            && await consumedHash(handle, cached.readAt, stats.size, edges) === cached.consumed;
+
+        // Same file, same length, same bytes at both ends of what was read:
+        // nothing new. Re-filed as most recently used, so a transcript read on
+        // every tick is never the one evicted.
+        if (consumedIntact && stats.size === cached.size && edges.tail === cached.tail) {
+            rememberTranscript(filePath, cached);
             return cached.summary ? { ...cached.summary } : null;
         }
 
         // Grew, and everything already consumed is still behind us: read only
-        // the new bytes. Anything else - shrunk, replaced, rewritten in place -
-        // and the cached offset points into a file that no longer exists.
-        const continues = sameFile
-            && stats.size >= cached.size
-            && stats.size >= cached.readAt;
-
-        if (continues && stats.size === cached.readAt) {
-            // Touched but no COMPLETE new line yet (a write caught mid-flight).
-            await handle.close();
-            handle = null;
-            rememberTranscript(filePath, {
-                ...cached,
-                size: stats.size,
-                tail: edges.tail,
-            });
-            return cached.summary ? { ...cached.summary } : null;
-        }
-
-        if (continues) {
-            const length = stats.size - cached.readAt;
-            const buffer = Buffer.alloc(length);
-            await handle.read(buffer, 0, length, cached.readAt);
-            await handle.close();
-            handle = null;
-
-            const text = buffer.toString('utf-8');
-            const complete = lastCompleteLineEnd(text);
+        // the new bytes. A partial trailing line is re-read next time, whole.
+        if (consumedIntact && stats.size >= cached.size) {
             const state = { latest: cached.state.latest };
-            let added = 0;
-            for (const line of recordLines(text.slice(0, complete))) {
-                added++;
-                try {
-                    foldRecord(JSON.parse(line), state);
-                } catch (parseError) {
-                    continue;
+            let { cwd, headBytes } = cached;
+            const readAt = await forEachLine(handle, cached.readAt, stats.size, (line, lineEnd) => {
+                if (cwd === null && headBytes < CWD_PROBE_BYTES) {
+                    headBytes = Math.min(lineEnd, CWD_PROBE_BYTES);
+                    if (line !== null && lineEnd <= CWD_PROBE_BYTES) {
+                        cwd = firstRecordedCwd([line.toString('utf-8')]);
+                    }
                 }
-            }
-
-            const messageCount = cached.messageCount + added;
-            const summary = state.latest ? {
-                file: path.basename(filePath),
-                ...state.latest,
-                messageCount,
-                cwd: cached.cwd,
-            } : null;
-
-            rememberTranscript(filePath, {
-                identity,
-                tail: edges.tail,
-                dev: stats.dev || 0,
-                ino: stats.ino || 0,
-                size: stats.size,
-                // Only what was consumed: a partial trailing line is re-read
-                // next time, whole.
-                readAt: cached.readAt + Buffer.byteLength(text.slice(0, complete), 'utf-8'),
-                messageCount,
-                cwd: cached.cwd,
-                resyncs: cached.resyncs,
-                state,
-                summary,
+                foldLine(line, state);
             });
-            return summary ? { ...summary } : null;
+            return await remember(filePath, handle, stats, edges, identity, {
+                readAt, cwd, headBytes, resyncs: cached.resyncs, state,
+            });
         }
 
-        await handle.close();
-        handle = null;
-
-        // Full read: either the first sight of this transcript, or its identity
-        // changed underneath us. A resync cannot repeat on a settled file
-        // because the NEW identity is stored below and the next tick compares
-        // equal to it; a file whose identity genuinely changes every tick
-        // degrades to a full read per tick, never to a hang or a wrong answer.
-        //
-        // Only a genuine identity CHANGE counts as a resync. Reaching here with
-        // no identity on one side means there is nothing to compare yet, and
-        // counting that would report a resync for every new transcript.
-        const changedIdentity = Boolean(cached && cached.identity && identity
-            && cached.identity !== identity);
-        const resyncs = changedIdentity ? cached.resyncs + 1 : (cached ? cached.resyncs : 0);
-        if (changedIdentity && log) {
-            log(`${path.basename(filePath)} changed identity (${cached.identity} -> ${identity})`
-                + ` - re-reading in full (resync #${resyncs})`);
+        // Full read: first sight of this transcript, or it changed underneath us.
+        // The new identity and hashes are stored below, so a settled file does not
+        // resync again. No identity on one side means nothing to compare, not a resync.
+        let why = null;
+        if (cached && cached.identity && identity && cached.identity !== identity) {
+            why = `changed identity (${cached.identity} -> ${identity})`;
+        } else if (sameFile) {
+            why = consumedIntact ? 'shrank' : 'was rewritten behind the read offset';
         }
+        const resyncs = (cached ? cached.resyncs : 0) + (why ? 1 : 0);
+        if (why && log) log(`${path.basename(filePath)} ${why} - re-reading in full (resync #${resyncs})`);
 
-        const content = await fs.readFile(filePath, 'utf-8');
-        const complete = lastCompleteLineEnd(content);
-        const consumed = content.slice(0, complete);
-        const lines = recordLines(consumed);
-        const state = scanWholeTranscript(lines);
-        // Where the session STARTED, which is the project it belongs to. `cwd`
-        // is a per-entry field and it moves - a Bash `cd`, a worktree, an
-        // added-directory turn all rewrite it (28% of a 141-transcript store
-        // recorded more than one, one recorded 24). The last turn's cwd would
-        // misattribute a long session to whatever it touched last.
-        // It cannot change once recorded, so it is resolved once and cached.
-        const cwd = firstRecordedCwd(lines);
-        const messageCount = lines.length;
-        const summary = state.latest ? {
-            file: path.basename(filePath),
-            ...state.latest,
-            messageCount,
-            cwd,
-        } : null;
+        // The session's origin cwd is its project. `cwd` moves (Bash `cd`, worktrees,
+        // added directories), so the last turn's would misattribute a long session.
+        const { cwd, headBytes } = await probeHeadCwd(handle, 0, stats.size);
 
-        rememberTranscript(filePath, {
-            identity,
-            tail: edges.tail,
-            dev: stats.dev || 0,
-            ino: stats.ino || 0,
-            size: stats.size,
-            readAt: Buffer.byteLength(consumed, 'utf-8'),
-            messageCount,
-            cwd,
-            resyncs,
-            state,
-            summary,
+        const readAt = await lastLineEnd(handle, stats.size);
+        const state = { latest: null };
+        await forEachLineBackward(handle, readAt, (line) => {
+            foldLine(line, state);
+            return state.latest !== null;
         });
-        return summary ? { ...summary } : null;
+
+        return await remember(filePath, handle, stats, edges, identity, {
+            readAt, cwd, headBytes, resyncs, state,
+        });
     } catch (readError) {
-        if (handle) {
-            try { await handle.close(); } catch { /* already gone */ }
-        }
         if (log) log(`Error reading ${path.basename(filePath)}: ${readError.message}`);
         return null;
+    } finally {
+        if (handle) await handle.close().catch(() => {});
     }
 }
 
@@ -430,22 +459,25 @@ class ClaudeDataLoader {
         return projectDirName(normaliseUnicode(workspacePath));
     }
 
-    setWorkspacePath(workspacePath) {
-        this.workspacePath = workspacePath;
-        this.dirMiss = null;
-        this.projectDirName = workspacePath ? this.convertPathToClaudeDir(workspacePath) : null;
-        this.log(`ClaudeDataLoader workspace set to: ${workspacePath}`);
-        this.log(`   Project dir name: ${this.projectDirName}`);
-    }
-
     async getProjectDataDirectory() {
         if (!this.workspacePath) {
             this.log('No workspace path set - no project directory');
             return null;
         }
 
-        const baseDir = await this.findClaudeDataDirectory();
-        if (!baseDir) {
+        // A resolved directory is kept while it still exists, so a match on
+        // recorded cwd does not re-scan every project directory each refresh.
+        if (this.dirHit) {
+            try {
+                if ((await fs.stat(this.dirHit)).isDirectory()) return this.dirHit;
+            } catch (statError) {
+                // Gone - resolve again below.
+            }
+            this.dirHit = null;
+        }
+
+        const bases = await this.findClaudeDataDirectories();
+        if (bases.length === 0) {
             return null;
         }
 
@@ -454,11 +486,14 @@ class ClaudeDataLoader {
         // straight away. Only the walk over every project directory is
         // rate-limited - this runs on the refresh timer and on every debounced
         // JSONL event.
-        const missKey = `${baseDir}|${this.workspacePath}`;
+        const missKey = `${bases.join(',')}|${this.workspacePath}`;
         const scannedRecently = this.dirMiss?.key === missKey
             && Date.now() - this.dirMiss.at < DIR_MISS_TTL_MS;
 
-        const resolved = await resolveProjectDir(baseDir, this.workspacePath, (m) => this.log(m), !scannedRecently);
+        // Every base by name before any by scan, so a leftover base listed
+        // first cannot hide the live one.
+        let resolved = await this.resolveInBases(bases, false);
+        if (!resolved && !scannedRecently) resolved = await this.resolveInBases(bases, true);
         if (!resolved) {
             if (!scannedRecently) this.dirMiss = { key: missKey, at: Date.now() };
             this.log(`Project directory not found for workspace: ${this.workspacePath}`);
@@ -471,16 +506,27 @@ class ClaudeDataLoader {
             // drifted - re-check src/projectDir.js against the current CLI.
             this.log('   Naming rule did not match - resolved from the recorded cwd instead');
         }
+        this.dirHit = resolved.dir;
         return resolved.dir;
+    }
+
+    async resolveInBases(bases, allowScan) {
+        for (const baseDir of bases) {
+            const resolved = await resolveProjectDir(baseDir, this.workspacePath, (m) => this.log(m), allowScan);
+            if (resolved) return resolved;
+        }
+        return null;
     }
 
     getClaudeConfigPaths() {
         const paths = [];
         const homeDir = os.homedir();
 
+        // The config dir itself, the ~/.claude equivalent, so transcripts sit
+        // one level down.
         const envPath = process.env.CLAUDE_CONFIG_DIR;
         if (envPath) {
-            paths.push(...envPath.split(',').map(p => p.trim()));
+            paths.push(...envPath.split(',').map(p => p.trim()).filter(Boolean).map(p => path.join(p, 'projects')));
         }
 
         // Standard locations (cross-platform)
@@ -509,50 +555,42 @@ class ClaudeDataLoader {
         return paths;
     }
 
-    async findClaudeDataDirectory() {
-        for (const dirPath of this.claudeConfigPaths) {
+    // Every candidate location that exists, in search order.
+    async findClaudeDataDirectories() {
+        const found = [];
+        for (const dirPath of new Set(this.claudeConfigPaths)) {
             try {
-                const stat = await fs.stat(dirPath);
-                if (stat.isDirectory()) {
-                    this.log(`Found Claude data directory: ${dirPath}`);
-                    return dirPath;
-                }
+                if ((await fs.stat(dirPath)).isDirectory()) found.push(dirPath);
             } catch (error) {
                 continue;
             }
         }
-        console.warn('Could not find Claude data directory in any standard location');
-        return null;
+        return found;
     }
 
-    // `seen` carries resolved transcript paths down the recursion so a
-    // symlinked transcript is not returned twice.
-    async findJsonlFiles(dirPath, seen = new Set()) {
+    async findClaudeDataDirectory() {
+        const [first] = await this.findClaudeDataDirectories();
+        if (!first) this.log('Could not find Claude data directory in any standard location');
+        return first || null;
+    }
+
+    // Transcripts in the project directory itself. Claude Code keeps agent-*.jsonl
+    // and tool results in a per-session subdirectory with thousands of files the
+    // caller would discard, so the walk does not descend.
+    async findJsonlFiles(dirPath) {
         const jsonlFiles = [];
+        const seen = new Set();
 
         try {
             const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
             for (const entry of entries) {
+                if (!entry.name.endsWith('.jsonl')) continue;
                 const fullPath = path.join(dirPath, entry.name); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- entry.name from fs.readdir is a bare filename (OS forbids separators); dirPath is an internal Claude data dir.
 
-                // Symlinked FILES are followed, symlinked DIRECTORIES are not.
-                //
-                // People do symlink transcripts (shared session storage, GNU
-                // Stow dotfiles) and Claude Code stopped following those in
-                // 2.1.104 (claude-code#51488, #46342), so a linked .jsonl is
-                // worth picking up. Recursing through a linked DIRECTORY is
-                // not: this walk has no cycle detection, and project dirs
-                // already carry links pointing outside the Claude tree (a
-                // `memory` link is common). Two links resolving to an ancestor
-                // spin until the kernel's symlink limit and hang the refresh.
-                // A link to an ancestor also yields the same transcript once
-                // per level, which inflates the live-session count.
-                //
-                // Symlinked project directories are handled a level up, in
-                // projectDir.findDirByRecordedCwd, which stats them without
-                // recursing.
-                let isDir = entry.isDirectory();
+                // A symlinked transcript is followed: people link them (shared
+                // session storage, GNU Stow dotfiles) and Claude Code stopped
+                // following those in 2.1.104 (claude-code#51488, #46342).
                 let isFile = entry.isFile();
                 if (entry.isSymbolicLink()) {
                     try {
@@ -562,14 +600,9 @@ class ClaudeDataLoader {
                     }
                 }
 
-                if (isDir) {
-                    const subFiles = await this.findJsonlFiles(fullPath, seen);
-                    jsonlFiles.push(...subFiles);
-                } else if (isFile && entry.name.endsWith('.jsonl')) {
-                    // Deduplicate on the resolved path. A link pointing at a
-                    // transcript we already have would otherwise count as a
-                    // second live session. One realpath per transcript is
-                    // nothing next to reading the file, which we do anyway.
+                if (isFile) {
+                    // Deduplicate on the resolved path, or a link to a transcript we
+                    // already have counts as a second live session.
                     let realPath;
                     try {
                         realPath = await fs.realpath(fullPath);
@@ -582,126 +615,10 @@ class ClaudeDataLoader {
                 }
             }
         } catch (error) {
-            console.error('Error reading directory:', dirPath, error.message);
+            this.log(`Error reading directory ${dirPath}: ${error.message}`);
         }
 
         return jsonlFiles;
-    }
-
-    async parseJsonlFile(filePath) {
-        const records = [];
-
-        try {
-            const content = await fs.readFile(filePath, 'utf-8');
-            const lines = splitLines(content).filter(line => line.trim());
-
-            for (const line of lines) {
-                try {
-                    const record = JSON.parse(line);
-
-                    if (this.isValidUsageRecord(record)) {
-                        records.push(record);
-                    }
-                } catch (parseError) {
-                    console.warn('Failed to parse line in:', filePath, parseError.message);
-                }
-            }
-        } catch (error) {
-            console.error('Error reading JSONL file:', filePath, error.message);
-        }
-
-        return records;
-    }
-
-    isValidUsageRecord(record) {
-        return record &&
-            record.message &&
-            record.message.usage &&
-            typeof record.message.usage.input_tokens === 'number' &&
-            typeof record.message.usage.output_tokens === 'number' &&
-            record.message.model !== '<synthetic>' &&
-            !record.isApiErrorMessage;
-    }
-
-    getRecordHash(record) {
-        const messageId = record.message?.id || '';
-        const requestId = record.requestId || '';
-        return `${messageId}-${requestId}`;
-    }
-
-    calculateTotalTokens(usage) {
-        return (usage.input_tokens || 0) +
-               (usage.output_tokens || 0) +
-               (usage.cache_creation_input_tokens || 0) +
-               (usage.cache_read_input_tokens || 0);
-    }
-
-    async loadUsageRecords(sinceTimestamp = null) {
-        const dataDir = await this.findClaudeDataDirectory();
-        if (!dataDir) {
-            return {
-                totalTokens: 0,
-                inputTokens: 0,
-                outputTokens: 0,
-                cacheCreationTokens: 0,
-                cacheReadTokens: 0,
-                messageCount: 0,
-                records: []
-            };
-        }
-
-        const jsonlFiles = await this.findJsonlFiles(dataDir);
-        this.log(`Found ${jsonlFiles.length} JSONL files in ${dataDir}`);
-
-        const allRecords = [];
-        for (const filePath of jsonlFiles) {
-            const records = await this.parseJsonlFile(filePath);
-            allRecords.push(...records);
-        }
-
-        let filteredRecords = allRecords;
-        if (sinceTimestamp) {
-            filteredRecords = allRecords.filter(record => {
-                const recordTime = new Date(record.timestamp).getTime();
-                return recordTime >= sinceTimestamp;
-            });
-        }
-
-        const uniqueRecords = [];
-        const seenHashes = new Set();
-        for (const record of filteredRecords) {
-            const hash = this.getRecordHash(record);
-            if (!seenHashes.has(hash)) {
-                seenHashes.add(hash);
-                uniqueRecords.push(record);
-            }
-        }
-
-        let totalInputTokens = 0;
-        let totalOutputTokens = 0;
-        let totalCacheCreationTokens = 0;
-        let totalCacheReadTokens = 0;
-
-        for (const record of uniqueRecords) {
-            const usage = record.message.usage;
-            totalInputTokens += usage.input_tokens || 0;
-            totalOutputTokens += usage.output_tokens || 0;
-            totalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
-            totalCacheReadTokens += usage.cache_read_input_tokens || 0;
-        }
-
-        const totalTokens = totalInputTokens + totalOutputTokens +
-                           totalCacheCreationTokens + totalCacheReadTokens;
-
-        return {
-            totalTokens,
-            inputTokens: totalInputTokens,
-            outputTokens: totalOutputTokens,
-            cacheCreationTokens: totalCacheCreationTokens,
-            cacheReadTokens: totalCacheReadTokens,
-            messageCount: uniqueRecords.length,
-            records: uniqueRecords
-        };
     }
 
     // Did this session run in OUR workspace?
@@ -772,7 +689,6 @@ class ClaudeDataLoader {
                     outputTokens: 0,
                     cacheCreationTokens: 0,
                     cacheReadTokens: 0,
-                    messageCount: 0,
                     isActive: false
                 };
             }
@@ -788,7 +704,6 @@ class ClaudeDataLoader {
                 outputTokens: 0,
                 cacheCreationTokens: 0,
                 cacheReadTokens: 0,
-                messageCount: 0,
                 isActive: false,
                 activeSessionCount: 0,
             };
@@ -839,7 +754,6 @@ class ClaudeDataLoader {
                     outputTokens: 0,
                     cacheCreationTokens: 0,
                     cacheReadTokens: 0,
-                    messageCount: 0,
                     isActive: false,
                     activeSessionCount: 0
                 };
@@ -902,10 +816,8 @@ class ClaudeDataLoader {
             const modelIds = active && active.model ? [active.model] : [];
 
             if (active) {
-                const resolvedLimit = getTokenLimit(modelIds, active.contextTotal);
-                const pct = ((active.contextTotal / resolvedLimit) * 100).toFixed(2);
                 this.log(`Showing ${agedOut ? 'latest aged-out' : 'highest-consumption live'} session: ${active.file}`);
-                this.log(`   Models: ${modelIds.join(', ') || 'none'} | Window: ${resolvedLimit.toLocaleString()} | context: ${active.contextTotal.toLocaleString()} (${pct}%)`);
+                this.log(`   Model: ${active.model || 'none'} | context: ${active.contextTotal.toLocaleString()}`);
                 this.log(`   input: ${active.input.toLocaleString()} + cache_creation: ${active.cacheCreation.toLocaleString()} + cache_read: ${active.cacheRead.toLocaleString()}`);
             } else {
                 this.log('No session with usage - inactive');
@@ -917,31 +829,23 @@ class ClaudeDataLoader {
                 outputTokens: 0,
                 cacheCreationTokens: active ? active.cacheCreation : 0,
                 cacheReadTokens: active ? active.cacheRead : 0,
-                messageCount: active ? active.messageCount : 0,
                 isActive: !!active,
                 activeSessionCount: activeSessionCount,
                 modelIds: modelIds,
             };
 
         } catch (error) {
-            console.error(`Error getting current session usage: ${error.message}`);
+            this.log(`Error getting current session usage: ${error.message}`);
             return {
                 totalTokens: 0,
                 inputTokens: 0,
                 outputTokens: 0,
                 cacheCreationTokens: 0,
                 cacheReadTokens: 0,
-                messageCount: 0,
                 isActive: false,
                 activeSessionCount: 0
             };
         }
-    }
-
-    async getTodayUsage() {
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-        return await this.loadUsageRecords(startOfDay.getTime());
     }
 }
 
@@ -950,4 +854,5 @@ module.exports = {
     selectActiveSession,
     readSessionUsage,
     resetTranscriptCache,
+    TRANSCRIPT_CACHE_MAX,
 };

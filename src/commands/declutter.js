@@ -75,8 +75,7 @@ function writeOrder(picks, read) {
 }
 
 // Split at the boundary the host teardown sits on. The deferred writes restart
-// the extension host, so anything this command still wants to say must be said
-// before they are issued.
+// the extension host, so the report must be on screen before they are issued.
 function splitDeferred(writes) {
     return {
         immediate: writes.filter((w) => !WRITE_LAST.includes(w.key)),
@@ -84,11 +83,8 @@ function splitDeferred(writes) {
     };
 }
 
-// We write at Global scope but the gate reads the EFFECTIVE value, so a key
-// pinned away from target in a workspace or folder would stay pending forever -
-// the offer would return after every apply and re-write Global each time. A key
-// whose effective value still differs after its own successful write is
-// shadowed, and is reported rather than counted as written.
+// The gate reads Global scope, so a key pinned in a workspace or folder is
+// caught by its EFFECTIVE value and reported as shadowed, not counted as written.
 function isShadowed(key, target) {
     return rootConfig().get(key) !== target;
 }
@@ -119,22 +115,26 @@ async function applyWrites(config, writes) {
     return { written, skipped, shadowed, priors };
 }
 
-async function reportOutcome(written, skipped, shadowed) {
+// Shows the report and returns the button choice unawaited, so writes finish first.
+function showReport(written, skipped, shadowed) {
     const notes = [];
     if (skipped.length) notes.push(` ${plural(skipped.length, 'setting')} not recognised by this build.`);
     if (shadowed.length) notes.push(` ${plural(shadowed.length, 'setting')} overridden by your workspace settings.`);
 
     if (written.length === 0) {
         vscode.window.showWarningMessage(`Nopilot: nothing changed.${notes.join('')}`);
-        return;
+        return Promise.resolve(undefined);
     }
     // Several of these apply live; the side bar's default visibility applies
     // to windows opened afterwards, so the reload is offered, not forced.
-    const choice = await vscode.window.showInformationMessage(
+    return Promise.resolve(vscode.window.showInformationMessage(
         `Nopilot: ${plural(written.length, 'setting')} updated.${notes.join('')}`,
         'Reload Window',
         'Undo'
-    );
+    ));
+}
+
+async function actOnReport(choice) {
     if (choice === 'Reload Window') {
         await vscode.commands.executeCommand('workbench.action.reloadWindow');
     } else if (choice === 'Undo') {
@@ -173,7 +173,7 @@ function explicitOverwrites(config, writes) {
         .filter((key) => config.inspect(key).globalValue !== undefined);
 }
 
-async function runNopilot(context) {
+async function runNopilot(context, onChanged) {
     const config = rootConfig();
     const items = buildItems(config);
 
@@ -219,17 +219,17 @@ async function runNopilot(context) {
         return;
     }
 
-    // Record priors BEFORE the deferred writes for the same reason the report
-    // goes first - the host teardown may end this command mid-flight.
+    // Priors are recorded before the deferred writes, since the host teardown
+    // may end this command mid-flight.
     const priors = { ...result.priors };
     for (const { key } of deferred) {
         if (isDeclared(config, key)) priors[key] = config.inspect(key).globalValue;
     }
     await context.globalState.update(PRIORS_KEY, priors);
 
-    // Report BEFORE the deferred writes. They restart the extension host, so
-    // this command may not get another turn to say anything.
-    await reportOutcome(
+    // Shown before the deferred writes, which may end this command, but acted
+    // on after them so Reload and Undo both see every write in place.
+    const choice = showReport(
         result.written.concat(deferred.map((w) => w.key)),
         result.skipped,
         result.shadowed
@@ -240,6 +240,9 @@ async function runNopilot(context) {
     } catch (err) {
         fileLog(`Nopilot: deferred write failed - ${err && err.message}`);
     }
+    if (onChanged) onChanged();
+
+    await actOnReport(await choice);
 }
 
 /**
@@ -252,8 +255,7 @@ async function runNopilot(context) {
 function registerDeclutterCommands(context, onChanged) {
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.NOPILOT, async () => {
-            await runNopilot(context);
-            if (onChanged) onChanged();
+            await runNopilot(context, onChanged);
         }),
         vscode.commands.registerCommand(COMMANDS.NOPILOT_DISMISS, async () => {
             await rootConfig().update(
@@ -285,10 +287,8 @@ function registerDeclutterCommands(context, onChanged) {
 
 module.exports = {
     registerDeclutterCommands,
-    ENABLED_SETTING,
     PRIORS_KEY,
     // Exported for tests - pure enough to drive with a fake config.
-    buildItems,
     applyWrites,
     writeOrder,
     splitDeferred,

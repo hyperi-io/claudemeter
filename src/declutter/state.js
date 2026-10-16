@@ -55,12 +55,13 @@ function pendingGroups(read) {
 // Whether the tooltip offer has served its purpose. Gated on the group's FIRST
 // setting - the master switch - not on all of them: the rest include
 // provider-agnostic keys a user may legitimately turn back on, and requiring
-// every one would resurrect the offer permanently. An absent core group reads
-// as applied, so a registry edit can never strand the offer on screen.
-function isCoreApplied(read) {
+// every one would resurrect the offer permanently. An absent core group, or a
+// master key the build does not declare, reads as applied: nothing could clear it.
+function isCoreApplied(read, declared = () => true) {
     const core = coreGroup();
     if (!core) return true;
     const master = Object.keys(core.settings)[0];
+    if (!declared(master)) return true;
     return read(master) === core.settings[master];
 }
 
