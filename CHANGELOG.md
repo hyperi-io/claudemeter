@@ -1,3 +1,10 @@
+## [2.5.22](https://github.com/hyperi-io/claudemeter/compare/v2.5.21...v2.5.22) (2026-10-16)
+
+
+### Bug Fixes
+
+* keep the Tk gauge working on huge transcripts and over Remote-SSH ([#67](https://github.com/hyperi-io/claudemeter/issues/67)) ([873da8c](https://github.com/hyperi-io/claudemeter/commit/873da8c764a2fa17c4734aa7c4dbbf58ce1bd02b))
+
 ## [2.5.21](https://github.com/hyperi-io/claudemeter/compare/v2.5.20...v2.5.21) (2026-10-12)
 
 
