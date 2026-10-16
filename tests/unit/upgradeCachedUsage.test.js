@@ -73,6 +73,20 @@ describe('upgradeCachedUsage - an old writer must not blank a new reader', () =>
         expect(upgraded.scopedWeekly[0]).toMatchObject({ label: 'Sonnet', percent: 12 });
     });
 
+    // Older writers stored only a duration string measured at fetch time.
+    it('recovers the reset stamps from the cached rawData', () => {
+        const upgraded = upgradeCachedUsage({ ...oldShape(), resetTime: '2h 0m', resetTimeWeek: '3d 0h' });
+        expect(upgraded.resetsAt).toBe(RAW.five_hour.resets_at);
+        expect(upgraded.resetsAtWeek).toBe(RAW.seven_day.resets_at);
+    });
+
+    it('keeps stamps a current writer stored', () => {
+        const cached = { ...oldShape(), resetsAt: '2026-02-01T00:00:00Z', resetsAtWeek: null };
+        const upgraded = upgradeCachedUsage(cached);
+        expect(upgraded.resetsAt).toBe('2026-02-01T00:00:00Z');
+        expect(upgraded.resetsAtWeek).toBeNull();
+    });
+
     it('does nothing without rawData to derive from', () => {
         const cached = { usagePercent: 3 };
         expect(upgradeCachedUsage(cached).scopedWeekly).toBeUndefined();

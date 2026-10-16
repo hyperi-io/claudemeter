@@ -37,11 +37,6 @@ const TIER_COLORS = Object.freeze({
         setting: 'colors.error',
         hex:     '#cc4540',
     }),
-    happyHour: Object.freeze({
-        theme:   'claudemeter.happyHourGreen',
-        setting: 'colors.happyHour',
-        hex:     '#689d6a',
-    }),
     normal: null,
 });
 

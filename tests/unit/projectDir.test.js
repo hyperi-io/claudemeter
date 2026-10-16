@@ -342,8 +342,19 @@ describe('readRecordedCwd', () => {
         await fs.writeFile(file, [
             JSON.stringify({ type: 'summary' }),
             JSON.stringify({ type: 'user', cwd: '/real/place' }),
-        ].join('\n'), 'utf-8');
+        ].join('\n') + '\n', 'utf-8');
         expect(await readRecordedCwd(file)).toBe('/real/place');
+    });
+
+    it('ignores an unterminated final line on a file shorter than the window', async () => {
+        // A line still being written has no newline yet, and the session
+        // filter's head probe only reads complete lines, so the two must agree.
+        const file = path.join(dir, 'unterminated.jsonl');
+        await fs.writeFile(file, JSON.stringify({ type: 'user', cwd: '/still/writing' }), 'utf-8');
+        expect(await readRecordedCwd(file)).toBeNull();
+
+        await fs.appendFile(file, '\n', 'utf-8');
+        expect(await readRecordedCwd(file)).toBe('/still/writing');
     });
 
     it('skips malformed lines instead of throwing', async () => {
@@ -352,7 +363,7 @@ describe('readRecordedCwd', () => {
             'not json at all',
             '{"half": ',
             JSON.stringify({ cwd: '/good' }),
-        ].join('\n'), 'utf-8');
+        ].join('\n') + '\n', 'utf-8');
         expect(await readRecordedCwd(file)).toBe('/good');
     });
 

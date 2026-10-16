@@ -2,8 +2,9 @@
 // The settings reader is a plain map lookup here - the production reader is
 // vscode's configuration API, which these modules never import.
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 const vscode = require('vscode');
+const { COMMANDS } = require('../../src/utils');
 const { GROUPS, WRITE_LAST, coreGroup, allSettingKeys } = require('../../src/declutter/groups');
 const {
     pendingSettings,
@@ -21,6 +22,7 @@ const {
     splitDeferred,
     explicitOverwrites,
     undoLastApply,
+    registerDeclutterCommands,
     PRIORS_KEY,
 } = require('../../src/commands/declutter');
 
@@ -404,6 +406,117 @@ describe('undoLastApply', () => {
     it('does nothing when there is no record at all', async () => {
         await undoLastApply(fakeContext(undefined));
         expect(vscode._getWrittenValues()).toEqual([]);
+    });
+});
+
+describe('Nopilot command - the deferred write against the report toast', () => {
+    const MASTER = 'chat.disableAIFeatures';
+    const original = {};
+    let toastChoice;
+    let order;
+
+    const fakeContext = () => {
+        const store = {};
+        return {
+            subscriptions: [],
+            globalState: {
+                get: (k) => store[k],
+                update: async (k, v) => { store[k] = v; },
+            },
+        };
+    };
+
+    // Runs the registered command, answering the pick and the modal confirm,
+    // with the report toast held open until the test releases it.
+    async function runWithToast() {
+        const context = fakeContext();
+        registerDeclutterCommands(context, () => order.push('redraw'));
+        const run = vscode._getCommand(COMMANDS.NOPILOT)();
+        // Let the command reach the report toast and anything it does next.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return { run };
+    }
+
+    beforeEach(() => {
+        vscode._resetConfigValues();
+        vscode._resetCommands();
+        declareAll();
+        order = [];
+        for (const k of ['showQuickPick', 'showInformationMessage']) original[k] = vscode.window[k];
+        vscode.window.showQuickPick = async (items) => items;
+        vscode.window.showInformationMessage = (message, ...rest) => {
+            if (typeof rest[0] === 'object' && rest[0] && rest[0].modal) return Promise.resolve('Apply');
+            if (!message.includes('updated')) return Promise.resolve(undefined);
+            order.push('toast');
+            return new Promise((resolve) => { toastChoice = resolve; });
+        };
+        const realExecute = vscode.commands.executeCommand;
+        vscode.commands.executeCommand = async (id, ...args) => {
+            order.push(id);
+            return realExecute(id, ...args);
+        };
+        original.executeCommand = realExecute;
+    });
+
+    afterEach(() => {
+        vscode.window.showQuickPick = original.showQuickPick;
+        vscode.window.showInformationMessage = original.showInformationMessage;
+        vscode.commands.executeCommand = original.executeCommand;
+    });
+
+    it('writes the master switch while the toast is still open', async () => {
+        const { run } = await runWithToast();
+        const keys = vscode._getWrittenValues().map((w) => w.key);
+        expect(keys).toContain(MASTER);
+        expect(order.indexOf('toast')).toBeGreaterThanOrEqual(0);
+        toastChoice(undefined);
+        await run;
+    });
+
+    it('reloads only after the master switch is written', async () => {
+        const { run } = await runWithToast();
+        const writesBefore = vscode._getWrittenValues().map((w) => w.key);
+        toastChoice('Reload Window');
+        await run;
+        expect(writesBefore).toContain(MASTER);
+        expect(order).toContain('workbench.action.reloadWindow');
+    });
+
+    it('Undo reverses the master switch too, leaving nothing applied', async () => {
+        const { run } = await runWithToast();
+        toastChoice('Undo');
+        await run;
+        const config = vscode.workspace.getConfiguration();
+        // Every key back to its prior (unset) user value, master switch included.
+        for (const key of allSettingKeys()) {
+            expect(config.inspect(key).globalValue).toBeUndefined();
+        }
+        const writes = vscode._getWrittenValues();
+        expect(writes[writes.length - 1]).toEqual({
+            key: MASTER,
+            value: undefined,
+            target: vscode.ConfigurationTarget.Global,
+        });
+    });
+
+    it('redraws once the writes land, without waiting on the toast', async () => {
+        const { run } = await runWithToast();
+        expect(order).toContain('redraw');
+        toastChoice(undefined);
+        await run;
+    });
+});
+
+describe('isCoreApplied on a build without the master switch', () => {
+    it('reads an undeclared master key as applied, so the offer clears', () => {
+        // The pick list skips the key on such a build, so nothing can ever
+        // write it and the offer would otherwise never go.
+        const declared = (key) => key !== 'chat.disableAIFeatures';
+        expect(isCoreApplied(reader({}), declared)).toBe(true);
+    });
+
+    it('still gates on the master key where the build declares it', () => {
+        expect(isCoreApplied(reader({}), () => true)).toBe(false);
     });
 });
 

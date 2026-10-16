@@ -96,17 +96,28 @@ function detectAuthOverride() {
     return AUTH_OVERRIDE_ENV.find((k) => process.env[k]) || null;
 }
 
-// Read + parse the oauth blob from the on-disk file. Linux/Windows always
-// use the file; macOS only has it if the user opted out of Keychain.
-function readFromFile() {
+// The parsed credentials file, or null when it is absent, unreadable or not a
+// JSON object. Never logs, because a JSON.parse error quotes the file.
+function readCredentialsFile() {
     const file = credentialsFilePath();
     if (!fs.existsSync(file)) return null;
     try {
         const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
-        return raw.claudeAiOauth || raw;
+        return raw && typeof raw === 'object' ? raw : null;
     } catch {
         return null;
     }
+}
+
+// Current stores wrap the oauth blob in claudeAiOauth, older ones were bare.
+function oauthBlob(raw) {
+    return raw ? (raw.claudeAiOauth || raw) : null;
+}
+
+// The oauth blob from the on-disk file. Linux/Windows always use the file;
+// macOS only has it if the user opted out of Keychain.
+function readFromFile() {
+    return oauthBlob(readCredentialsFile());
 }
 
 // A store can exist and still carry no usable token: Claude Code writes
@@ -139,8 +150,7 @@ function readFromKeychain(forceFresh = false) {
             // "item could not be found" into the extension host on every poll.
             { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] },
         );
-        const raw = JSON.parse(out);
-        blob = raw.claudeAiOauth || raw;
+        blob = oauthBlob(JSON.parse(out));
     } catch {
         // Absent, locked or malformed entry -> no token. Never log the error:
         // an execFileSync timeout carries .stdout, which is the token.
@@ -312,10 +322,11 @@ module.exports = {
     detectAuthOverride,
     getConfigDir,
     credentialsFilePath,
+    readCredentialsFile,
+    oauthBlob,
     describeStores,
     hasUsableToken,
     classifyEmptyRead,
     keychainServiceName,
-    AUTH_OVERRIDE_ENV,
     KEYCHAIN_SERVICE,
 };

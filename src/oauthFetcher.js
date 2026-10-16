@@ -19,8 +19,8 @@
 //   - The token IS the account the user's Claude Code is on, so the old
 //     CLI-vs-web account-mismatch failure mode disappears.
 //   - The claude.ai OAuth Bearer is REJECTED by claude.ai's own
-//     /api/organizations/* (403 account_session_invalid); these
-//     api.anthropic.com/oauth/* endpoints are the only token-auth'd
+//     organizations API (403 account_session_invalid), so the
+//     api.anthropic.com OAuth endpoints are the only token-auth'd
 //     usage path, and the ones Claude Code depends on.
 //
 // Token lifecycle is NOT ours: tokenSource reads fresh every call and we
@@ -42,7 +42,7 @@ const API_BASE = 'https://api.anthropic.com';
 const USAGE_URL = `${API_BASE}/api/oauth/usage`;
 const PROFILE_URL = `${API_BASE}/api/oauth/profile`;
 
-// The oauth beta flag gates Bearer access to /api/oauth/*; version is the
+// The oauth beta flag gates Bearer access to the /api/oauth endpoints; version is the
 // standard API pin. UA identifies us honestly rather than spoofing Chrome.
 const OAUTH_HEADERS = {
     'anthropic-beta': 'oauth-2025-04-20',
@@ -257,13 +257,8 @@ function pickRetryCandidates(refusedToken, stores) {
 
 module.exports = {
     fetchUsageData,
-    fetchWithToken,
-    retryOtherStores,
     pickRetryCandidates,
-    mapAccountInfo,
     deriveCreditsArgs,
-    USAGE_URL,
-    PROFILE_URL,
 };
 
 // Standalone smoke test: `node src/oauthFetcher.js`. Redacts identity.

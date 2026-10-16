@@ -7,7 +7,7 @@
 //                recommend chat.commandCenter.enabled, which no longer exists:
 //                  rg -o '"chat\.[A-Za-z0-9._]*"' \
 //                    <install>/resources/app/out/vs/workbench/workbench.desktop.main.js
-//                applySettings() skips undeclared keys, so a rename reads as
+//                applyWrites() skips undeclared keys, so a rename reads as
 //                not-applied instead of leaving dead JSON in user settings.
 //
 //                The `core` group gates the tooltip offer.

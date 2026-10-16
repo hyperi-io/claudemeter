@@ -81,8 +81,8 @@ describe('stopSpinner - untrusted values cannot inject a command link', () => {
     });
 });
 
-// updateStatusBar runs immediately before stopSpinner and owns the normal
-// colours, including the compact panel's threshold and rot colours.
+// The render after stopSpinner owns the normal colours, including the compact
+// panel's threshold and rot colours.
 describe('stopSpinner - a clean fetch leaves the rendered state alone', () => {
     it('does not touch the compact panel colour when there is no error', () => {
         const items = freshItems('compact');

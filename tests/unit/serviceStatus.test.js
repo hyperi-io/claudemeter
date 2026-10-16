@@ -2,8 +2,40 @@
 // summary.json payload to the worst of the Claude Code and Claude API
 // components, ignoring the rest of the page.
 
-import { describe, it, expect } from 'vitest';
-const { parseServiceStatus, STATUS_PAGE_URL } = require('../../src/serviceStatus');
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+const http = require('http');
+const { parseServiceStatus, fetchJson, MAX_STATUS_BODY_BYTES, STATUS_PAGE_URL } = require('../../src/serviceStatus');
+
+describe('fetchJson - response size', () => {
+    let server;
+    let base;
+    let bodies;
+
+    beforeAll(async () => {
+        bodies = {
+            '/small': JSON.stringify({ page: { updated_at: 'x' } }),
+            '/huge': JSON.stringify({ pad: 'x'.repeat(MAX_STATUS_BODY_BYTES) }),
+        };
+        server = http.createServer((req, res) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(bodies[req.url]);
+        });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        base = `http://127.0.0.1:${server.address().port}`;
+    });
+
+    afterAll(async () => {
+        await new Promise((resolve) => server.close(resolve));
+    });
+
+    it('parses a body under the cap', async () => {
+        expect(await fetchJson(`${base}/small`, http)).toEqual({ page: { updated_at: 'x' } });
+    });
+
+    it('fails a body over the cap instead of buffering it', async () => {
+        await expect(fetchJson(`${base}/huge`, http)).rejects.toThrow(/larger than/);
+    });
+});
 
 const CLAUDE_CODE_ID = 'yyzkbfz2thpt';
 const CONSOLE_ID = '0qbwn08sd68x';

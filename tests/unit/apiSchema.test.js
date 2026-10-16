@@ -186,6 +186,16 @@ describe('processApiResponse', () => {
         expect(result.rawData).toBe(apiData);
     });
 
+    // A duration taken at fetch time goes stale in the cache; the stamp does not.
+    it('stores the reset stamps as the payload gave them', () => {
+        const result = processApiResponse({
+            five_hour: { utilization: 1, resets_at: '2026-10-16T02:30:00Z' },
+            seven_day: { utilization: 2, resets_at: null },
+        }, null, null, null);
+        expect(result.resetsAt).toBe('2026-10-16T02:30:00Z');
+        expect(result.resetsAtWeek).toBeNull();
+    });
+
     it('includes overage data when provided', () => {
         const apiData = {
             five_hour: { utilization: 0, resets_at: null },

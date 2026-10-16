@@ -12,7 +12,13 @@
 //
 //                String comparisons are EXACT (no normalisation). Verbatim
 //                Anthropic strings come from the credential store and the
-//                OAuth /profile response; they are compared as-is. Do not
+//                OAuth /profile response; they are compared as-is.
+//
+//                The org tier arrives as organizationType, the plan token
+//                from ~/.claude.json oauthAccount and the /profile
+//                organization_type field ('claude_team',
+//                'claude_enterprise'). orgType ('Team', 'Enterprise') is
+//                the bootstrap API's spelling, still accepted. Do not
 //                import or call formatSubscriptionType /
 //                formatRateLimitTier here - those are display formatters
 //                and a parallel-normalisation hazard.
@@ -32,7 +38,7 @@ let hasWarnedUnknown = false;
 /**
  * Resolve detection signals -> Tk profile.
  *
- * @param {{ subscriptionType?: string, rateLimitTier?: string, orgType?: string }} signals
+ * @param {{ subscriptionType?: string, rateLimitTier?: string, orgType?: string, organizationType?: string }} signals
  * @param {{ appendLine: (msg: string) => void } | null} logger - optional output channel
  * @returns {object} a profile from PROFILES (never null - always falls back to 'unknown')
  */
@@ -40,6 +46,9 @@ function selectProfile(signals, logger = null) {
     const subscriptionType = signals?.subscriptionType;
     const rateLimitTier = signals?.rateLimitTier;
     const orgType = signals?.orgType;
+    const organizationType = signals?.organizationType;
+    const isEnterprise = orgType === 'Enterprise' || organizationType === 'claude_enterprise';
+    const isTeam = orgType === 'Team' || organizationType === 'claude_team';
 
     // Most specific first - both subscriptionType AND rateLimitTier set
     if (subscriptionType === 'max' && rateLimitTier === 'default_claude_max_20x') {
@@ -51,14 +60,14 @@ function selectProfile(signals, logger = null) {
 
     // One field set
     if (subscriptionType === 'max') return PROFILES['max-unknown'];
-    if (orgType === 'Enterprise')   return PROFILES['enterprise'];
-    if (orgType === 'Team')         return PROFILES['team-standard'];
+    if (isEnterprise)               return PROFILES['enterprise'];
+    if (isTeam)                     return PROFILES['team-standard'];
     if (subscriptionType === 'pro') return PROFILES['pro'];
 
     // Fallback
     if (!hasWarnedUnknown && logger && typeof logger.appendLine === 'function') {
         logger.appendLine(
-            `[claudemeter] profile detection fell through — using 'unknown' (signals: ${JSON.stringify({ subscriptionType, rateLimitTier, orgType })})`
+            `[claudemeter] profile detection fell through - using 'unknown' (signals: ${JSON.stringify({ subscriptionType, rateLimitTier, orgType, organizationType })})`
         );
         hasWarnedUnknown = true;
     }

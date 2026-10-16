@@ -1,6 +1,6 @@
 // Project:   Claudemeter
 // File:      claudeConfigReader.js
-// Purpose:   Read ~/.claude.json and ~/.claude/sessions/*.json for account identity,
+// Purpose:   Read ~/.claude.json and the ~/.claude/sessions JSON files for account identity,
 //            1M context eligibility, and live Claude Code session mapping.
 // Language:  JavaScript (CommonJS)
 //
@@ -44,18 +44,26 @@ function getClaudeSessionsDir() {
     return path.join(getConfigDir(), 'sessions');
 }
 
-// Read and parse ~/.claude.json.
-// Returns null on any read/parse error - callers must handle the null case.
+// Last good parse, keyed on path + mtime + size. Claude Code grows this file
+// and every refresh reads it several times, so an unchanged file costs one stat.
+let configMemo = null;
+
+// Read and parse ~/.claude.json, or null when it is missing or has never
+// parsed. A failed parse returns the last good one, since a read can land
+// mid-write.
 function readClaudeConfig() {
+    let configPath = null;
     try {
-        const configPath = getClaudeConfigPath();
-        if (!fs.existsSync(configPath)) {
-            return null;
-        }
-        const raw = fs.readFileSync(configPath, 'utf-8');
-        return JSON.parse(raw);
+        configPath = getClaudeConfigPath();
+        const stat = fs.statSync(configPath, { throwIfNoEntry: false });
+        if (!stat) return null;
+        const key = `${configPath}|${stat.mtimeMs}|${stat.size}`;
+        if (configMemo && configMemo.key === key) return configMemo.config;
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        configMemo = { path: configPath, key, config };
+        return config;
     } catch (error) {
-        return null;
+        return configMemo && configMemo.path === configPath ? configMemo.config : null;
     }
 }
 
@@ -135,7 +143,7 @@ function hasMaxContextAccess() {
     return entry.hasAccess === true;
 }
 
-// Read ~/.claude/sessions/*.json - each file represents one live Claude Code
+// Read the ~/.claude/sessions JSON files - each represents one live Claude Code
 // process and contains {pid, sessionId, cwd, startedAt, kind, entrypoint}.
 // Returns an array of session records, possibly empty.
 //
@@ -180,25 +188,11 @@ function findSessionForWorkspace(workspacePath) {
     return sessions[0] || null;
 }
 
-// Return the mtime of ~/.claude.json in milliseconds, or 0 if unreadable.
-// Used by the multi-instance coordination layer to detect external account
-// changes without parsing the whole file on every fetch.
-function getClaudeConfigMtime() {
-    try {
-        const stat = fs.statSync(getClaudeConfigPath());
-        return stat.mtimeMs;
-    } catch {
-        return 0;
-    }
-}
-
 module.exports = {
     getClaudeConfigPath,
     getClaudeSessionsDir,
-    readClaudeConfig,
     getOAuthAccount,
     hasMaxContextAccess,
     getLiveSessions,
     findSessionForWorkspace,
-    getClaudeConfigMtime,
 };

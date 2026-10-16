@@ -3,7 +3,8 @@
  * dev-token.js - test helper for claudemeter's not-logged-in flow.
  *
  * Claudemeter reads the Claude Code OAuth token from the shared store (macOS
- * Keychain "Claude Code-credentials", else $CLAUDE_CONFIG_DIR/.credentials.json).
+ * Keychain "Claude Code-credentials", suffixed per config dir when
+ * CLAUDE_CONFIG_DIR is set, else $CLAUDE_CONFIG_DIR/.credentials.json).
  * To test claudemeter from a "not logged in yet" position you need that token
  * temporarily gone. This stashes it aside (reversibly) so claudemeter shows the
  * not-logged-in state, you exercise the login flow, then you restore it.
@@ -35,16 +36,23 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+// vscode-free, so the store paths and the Keychain service name are the ones
+// the extension itself derives.
+const { keychainServiceName, getConfigDir, credentialsFilePath } = require('../src/tokenSource');
 
-const SERVICE = 'Claude Code-credentials';
-const STASH_SERVICE = 'Claude Code-credentials-claudemeter-stash';
 const isMac = process.platform === 'darwin';
 
+function service() {
+    return keychainServiceName();
+}
+function stashService() {
+    return `${service()}-claudemeter-stash`;
+}
 function configDir() {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    return getConfigDir();
 }
 function credFile() {
-    return path.join(configDir(), '.credentials.json');
+    return credentialsFilePath();
 }
 function stashFile() {
     return credFile() + '.claudemeter-stash';
@@ -96,12 +104,29 @@ function kcAccount(service) {
         return os.userInfo().username;
     }
 }
-function kcWrite(service, account, secret) {
-    // -U updates if it already exists. -w reads the secret from a positional arg;
-    // pass it as an arg (local machine, dev tool) rather than echoing to a shell.
-    execFileSync('security',
-        ['add-generic-password', '-s', service, '-a', account, '-w', secret, '-U'],
-        { stdio: 'ignore' });
+// `security -i` reads each command as one line into a 4096-byte buffer and runs
+// any overflow as a separate command, so a longer line is refused, not sent.
+const SECURITY_MAX_LINE = 4094;
+
+// The add-generic-password command for `security -i`. The secret goes as hex (-X)
+// on stdin, never in argv where ps shows it. Names are double-quoted, so a quote,
+// backslash or line break in one is refused rather than escaped.
+function kcWriteCommand(serviceName, account, secret) {
+    for (const value of [serviceName, account]) {
+        if (/["\\\r\n]/.test(value)) {
+            throw new Error('Keychain service or account name has a character security -i cannot take');
+        }
+    }
+    const hex = Buffer.from(secret, 'utf8').toString('hex');
+    const line = `add-generic-password -U -s "${serviceName}" -a "${account}" -X ${hex}`;
+    if (line.length > SECURITY_MAX_LINE) throw new Error('Keychain secret too long for security -i');
+    return `${line}\n`;
+}
+function kcWrite(serviceName, account, secret) {
+    execFileSync('security', ['-i'], {
+        input: kcWriteCommand(serviceName, account, secret),
+        stdio: ['pipe', 'ignore', 'ignore'],
+    });
 }
 function kcDelete(service) {
     try {
@@ -117,8 +142,8 @@ function state() {
     return {
         file: fs.existsSync(credFile()),
         fileStash: fs.existsSync(stashFile()),
-        keychain: isMac ? kcRead(SERVICE) !== null : false,
-        keychainStash: isMac ? kcRead(STASH_SERVICE) !== null : false,
+        keychain: isMac ? kcRead(service()) !== null : false,
+        keychainStash: isMac ? kcRead(stashService()) !== null : false,
     };
 }
 
@@ -126,7 +151,7 @@ function cmdStatus() {
     const s = state();
     console.log(`config dir     : ${configDir()}`);
     console.log(`token (file)   : ${s.file ? 'present' : '-'}   ${credFile()}`);
-    if (isMac) console.log(`token (keychain): ${s.keychain ? 'present' : '-'}   service "${SERVICE}"`);
+    if (isMac) console.log(`token (keychain): ${s.keychain ? 'present' : '-'}   service "${service()}"`);
     console.log(`stashed (file) : ${s.fileStash ? 'yes' : '-'}`);
     if (isMac) console.log(`stashed (keychn): ${s.keychainStash ? 'yes' : '-'}`);
     console.log(`usage cache    : ${fs.existsSync(usageCacheFile()) ? 'present' : '-'}   ${usageCacheFile()}`);
@@ -149,10 +174,10 @@ function cmdStash() {
         console.log(`Stashed file token -> ${stashFile()}`);
     }
     if (s.keychain) {
-        const secret = kcRead(SERVICE);
-        kcWrite(STASH_SERVICE, kcAccount(SERVICE), secret);
-        kcDelete(SERVICE);
-        console.log(`Stashed Keychain token -> service "${STASH_SERVICE}"`);
+        const secret = kcRead(service());
+        kcWrite(stashService(), kcAccount(service()), secret);
+        kcDelete(service());
+        console.log(`Stashed Keychain token -> service "${stashService()}"`);
     }
     if (clearUsageCache()) {
         console.log('Cleared claudemeter usage cache (gauges drop to not-logged-in on next refresh).');
@@ -173,10 +198,10 @@ function cmdRestore() {
         console.log(`Restored file token <- ${path.basename(stashFile())}`);
     }
     if (s.keychainStash) {
-        const secret = kcRead(STASH_SERVICE);
-        kcWrite(SERVICE, kcAccount(STASH_SERVICE), secret);
-        kcDelete(STASH_SERVICE);
-        console.log(`Restored Keychain token <- service "${STASH_SERVICE}"`);
+        const secret = kcRead(stashService());
+        kcWrite(service(), kcAccount(stashService()), secret);
+        kcDelete(stashService());
+        console.log(`Restored Keychain token <- service "${stashService()}"`);
     }
     if (clearUsageCache()) {
         console.log('Cleared claudemeter usage cache (fresh fetch on next refresh).');
@@ -184,8 +209,14 @@ function cmdRestore() {
     console.log('\nToken restored. Claude Code + claudemeter are logged in again.');
 }
 
-const cmd = process.argv[2] || 'status';
-({ status: cmdStatus, stash: cmdStash, restore: cmdRestore }[cmd] || (() => {
-    console.error(`Unknown command "${cmd}". Use: status | stash | restore`);
-    process.exit(1);
-}))();
+function main() {
+    const cmd = process.argv[2] || 'status';
+    ({ status: cmdStatus, stash: cmdStash, restore: cmdRestore }[cmd] || (() => {
+        console.error(`Unknown command "${cmd}". Use: status | stash | restore`);
+        process.exit(1);
+    }))();
+}
+
+if (require.main === module) main();
+
+module.exports = { kcWriteCommand, service, stashService, SECURITY_MAX_LINE };

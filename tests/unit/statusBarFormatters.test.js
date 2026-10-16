@@ -501,6 +501,14 @@ describe('formatTokensDisplayCompact — compact mode variants', () => {
         });
         expect(result).toBe('Tk--');
     });
+
+    // claudemeter.gauges.labels can rename the gauge, so the label is an input.
+    it('uses the label it is given, with data and without', () => {
+        expect(formatTokensDisplayCompact({ display: 'bar', percent: 36, label: 'Ctx' })).toBe('Ctx-36%');
+        expect(formatTokensDisplayCompact({ display: 'count', current: 1000, limit: 200000, knownLimit: true, label: 'Ctx' }))
+            .toBe('Ctx-1k/200k');
+        expect(formatTokensDisplayCompact({ percent: null, current: null, label: 'Ctx' })).toBe('Ctx--');
+    });
 });
 
 describe('formatTokensDisplay — no data', () => {

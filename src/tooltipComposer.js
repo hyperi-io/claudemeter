@@ -24,6 +24,9 @@
 //     marketplaceUrl,              // marketplace review deep-link, footer "rate it"
 //     brandIconDataUri,            // tiny HyperI hound data URI, footer brand link
 //     claudeCodeSelectedModel,     // from workspace config
+//     remoteName,                  // vscode.env.remoteName, null locally
+//     scopedWeekly,                // scoped caps resolved with gauges.definitions
+//     gaugeLabelOverrides,         // claudemeter.gauges.labels
 //     tokensInfo,                  // { current, limit, knownLimit, recommendation }
 //     config: {                    // pre-resolved config values
 //       tokenLimitOverride,
@@ -34,12 +37,18 @@
 
 const {
     calculateResetClockTimeExpanded,
+    formatLongDateTime,
     getCurrencySymbol,
     formatCompact,
     COMMANDS,
 } = require('./utils');
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
+const { scopedTooltipLabel } = require('./gauges');
+const { escapeMarkdown: esc } = require('./markdown');
+
+// A codicon such as $(sparkle) has to reach the renderer unescaped to draw.
+const CODICON_RE = /^\$\([\w~-]+\)$/;
 
 // The activity quip is free-text and can be long. A VS Code markdown tooltip
 // has no width control - its widest line sets the whole tooltip's width - so an
@@ -102,18 +111,19 @@ function renderAccountIdentity(state) {
         : null;
 
     if (accountName && accountEmail) {
-        const safe = accountName.replace(/([*_`~[\]\\])/g, '\\$1');
-        return [`**${safe}** (${accountEmail})`];
+        return [`**${esc(accountName)}** (${esc(accountEmail)})`];
     }
     if (accountName) {
-        const safe = accountName.replace(/([*_`~[\]\\])/g, '\\$1');
-        return [`**${safe}**`];
+        return [`**${esc(accountName)}**`];
     }
     if (accountEmail) {
-        return [accountEmail];
+        return [esc(accountEmail)];
     }
     return [];
 }
+
+// Plan tokens that name a shared org; every other plan reads as Personal.
+const ORG_TYPE_LABELS = { claude_team: 'Team', claude_enterprise: 'Enterprise' };
 
 function renderPlanAndContext(state) {
     const { usageData, sessionData, credentialsInfo } = state;
@@ -122,20 +132,20 @@ function renderPlanAndContext(state) {
     if (credentialsInfo) {
         const plan = formatSubscriptionType(credentialsInfo.subscriptionType);
         const tier = formatRateLimitTier(credentialsInfo.rateLimitTier);
-        const orgType = usageData?.accountInfo?.orgType;
+        const orgType = ORG_TYPE_LABELS[usageData?.accountInfo?.organizationType];
         const orgName = usageData?.accountInfo?.orgName;
 
-        let planLabel = plan;
+        let planLabel = plan && esc(plan);
         if (plan && orgType) {
-            planLabel = `${plan} (${orgType})`;
+            planLabel = `${esc(plan)} (${esc(orgType)})`;
         } else if (plan && orgName && !/'s Organi[sz]ation$/.test(orgName)) {
-            planLabel = `${plan} (${orgName})`;
+            planLabel = `${esc(plan)} (${esc(orgName)})`;
         } else if (plan) {
-            planLabel = `${plan} (Personal)`;
+            planLabel = `${esc(plan)} (Personal)`;
         }
 
         if (planLabel && tier && tier !== plan) {
-            lines.push(`${planLabel} · ${tier}`);
+            lines.push(`${planLabel} · ${esc(tier)}`);
         } else if (planLabel) {
             lines.push(planLabel);
         }
@@ -176,7 +186,7 @@ function renderSessionBlock(state) {
 
     const lines = [''];  // leading blank line for visual separation
     const sessionPercent = usageData.usagePercent;
-    const resetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTime);
+    const resetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetsAt);
     lines.push(`**Session - ${sessionPercent}%**`);
     lines.push(`Resets ${resetTimeExpanded}`);
     if (config?.tokenLimitOverride > 0) {
@@ -192,7 +202,7 @@ function renderCurrentContextBlock(state) {
     // reads as broken (#58).
     if (remoteName) {
         return ['', '**Current context - unavailable here**',
-            '_Claude Code\'s transcripts are on the remote host, and Claudemeter runs on this machine._'];
+            '_Claude Code\'s transcripts are on the remote host, and Claudemeter runs on this machine. Install it on the remote host to see Tk._'];
     }
     if (!sessionData || !sessionData.tokenUsage) return [];
 
@@ -224,18 +234,18 @@ function renderCurrentContextBlock(state) {
 }
 
 function renderWeeklyBlock(state) {
-    const { usageData } = state;
+    const { usageData, gaugeLabelOverrides } = state;
     if (!usageData || usageData.usagePercentWeek === undefined) return [];
 
     const weeklyPercent = usageData.usagePercentWeek;
-    const weeklyResetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetTimeWeek);
+    const weeklyResetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetsAtWeek);
     const lines = ['', `**Weekly - ${weeklyPercent}%**`];
 
-    // Every model-scoped weekly cap the payload reports, including any the
-    // status bar has no slot for.
-    for (const scoped of usageData.scopedWeekly || []) {
+    // Every scoped cap the status bar resolves, including any it has no slot for.
+    const scopedWeekly = Array.isArray(state.scopedWeekly) ? state.scopedWeekly : (usageData.scopedWeekly || []);
+    for (const scoped of scopedWeekly) {
         if (typeof scoped.percent !== 'number') continue;
-        lines.push(`${scoped.label} ${scoped.percent}%`);
+        lines.push(`${esc(scopedTooltipLabel(scoped.label, gaugeLabelOverrides))} ${scoped.percent}%`);
     }
 
     lines.push(`Resets ${weeklyResetTimeExpanded}`);
@@ -246,53 +256,32 @@ function renderCreditsBlock(state) {
     const { usageData } = state;
     if (!usageData) return [];
 
+    const prepaid = usageData.prepaidCredits;
+    const balance = prepaid
+        ? [`Balance ${getCurrencySymbol(prepaid.currency)}${prepaid.balance.toLocaleString()} ${esc(prepaid.currency)}`]
+        : [];
+
     if (usageData.monthlyCredits) {
         const credits = usageData.monthlyCredits;
         const currencySymbol = getCurrencySymbol(credits.currency);
         const usedFormatted = `${currencySymbol}${credits.used.toLocaleString()}`;
         const limitFormatted = `${currencySymbol}${credits.limit.toLocaleString()}`;
-        const lines = ['', '**Extra Usage**',
-            `Used ${usedFormatted} / ${limitFormatted} ${credits.currency} (${credits.percent}%)`];
-
-        if (usageData.prepaidCredits) {
-            const prepaid = usageData.prepaidCredits;
-            const prepaidSymbol = getCurrencySymbol(prepaid.currency);
-            lines.push(
-                `Balance ${prepaidSymbol}${prepaid.balance.toLocaleString()} ${prepaid.currency}`
-            );
-        }
-        return lines;
+        return ['', '**Extra Usage**',
+            `Used ${usedFormatted} / ${limitFormatted} ${esc(credits.currency)} (${credits.percent}%)`, ...balance];
     }
-
-    if (usageData.prepaidCredits) {
-        const prepaid = usageData.prepaidCredits;
-        const prepaidSymbol = getCurrencySymbol(prepaid.currency);
-        return ['', '**Credits**',
-            `Balance ${prepaidSymbol}${prepaid.balance.toLocaleString()} ${prepaid.currency}`];
-    }
-
-    return [];
+    return balance.length ? ['', '**Credits**', ...balance] : [];
 }
 
 function renderHappyHourRow(state) {
     const { happyHourState, config } = state;
     if (!happyHourState?.active) return [];
-    const icon = happyHourState.icon || '';
+    // happyHour.customIcon is workspace-settable, so only a codicon passes raw.
+    const rawIcon = happyHourState.icon || '';
+    const icon = CODICON_RE.test(rawIcon) ? rawIcon : esc(rawIcon);
     const endsLine = happyHourState.endsAt instanceof Date
-        ? ` — off-peak, ends ${formatHappyHourEndsAt(happyHourState.endsAt, !!config?.use24HourTime)}`
+        ? ` — off-peak, ends ${formatLongDateTime(happyHourState.endsAt, !!config?.use24HourTime)}`
         : ' — off-peak';
     return ['', `${icon} Happy hour${endsLine}`];
-}
-
-function formatHappyHourEndsAt(date, use24Hour) {
-    return date.toLocaleString(undefined, {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: !use24Hour,
-    });
 }
 
 function renderActivityQuip(state) {

@@ -135,6 +135,50 @@ describe('nextTransition', () => {
     });
 });
 
+// The minute-stepping search as first shipped, kept as the reference the
+// faster search must agree with to the millisecond.
+function referenceNextTransition(now, peakWindow) {
+    const window = validatePeakWindow(peakWindow);
+    const current = isHappyHour(now, window);
+    const MAX_MS = 8 * 24 * 60 * 60 * 1000;
+    const STEP_MS = 60 * 1000;
+    for (let delta = STEP_MS; delta <= MAX_MS; delta += STEP_MS) {
+        const probe = new Date(now.getTime() + delta);
+        if (isHappyHour(probe, window) !== current) return probe;
+    }
+    return new Date(now.getTime() + MAX_MS);
+}
+
+describe('nextTransition - agrees with the reference search', () => {
+    const windows = {
+        default: DEFAULT_PEAK_WINDOW,
+        sydney: { days: [1, 2, 3, 4, 5], start: '09:00', end: '17:00', tz: 'Australia/Sydney' },
+        kathmandu: { days: [0, 3], start: '10:15', end: '10:45', tz: 'Asia/Kathmandu' },
+        inverted: { days: [0, 6], start: '09:00', end: '17:00', tz: 'America/Los_Angeles' },
+        backwards: { days: [2], start: '22:00', end: '03:00', tz: 'Europe/London' },
+    };
+    // US DST starts 2026-03-08 and ends 2026-11-01; Sydney's ends 2026-04-05
+    // and starts 2026-10-04; London's ends 2026-10-25. Seconds and
+    // milliseconds are deliberately off the minute.
+    const cases = [
+        ['default', '2026-03-07T20:00:07.250Z'],
+        ['default', '2026-03-09T11:59:59.999Z'],
+        ['default', '2026-10-31T19:00:30Z'],
+        ['default', '2026-11-02T13:00:00Z'],
+        ['default', '2026-04-17T06:30:00Z'],
+        ['sydney', '2026-04-04T08:00:15Z'],
+        ['sydney', '2026-10-03T12:00:00Z'],
+        ['kathmandu', '2026-04-15T04:31:45Z'],
+        ['inverted', '2026-04-17T23:59:59Z'],
+        ['backwards', '2026-10-24T12:00:01Z'],
+    ];
+    it.each(cases)('%s window from %s', (name, iso) => {
+        const now = new Date(iso);
+        expect(nextTransition(now, windows[name]).toISOString())
+            .toBe(referenceNextTransition(now, windows[name]).toISOString());
+    });
+});
+
 describe('validatePeakWindow', () => {
     it('returns defaults for null', () => {
         expect(validatePeakWindow(null)).toEqual(DEFAULT_PEAK_WINDOW);

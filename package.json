@@ -27,6 +27,7 @@
     "node": ">=24.0.0"
   },
   "extensionKind": [
+    "workspace",
     "ui"
   ],
   "keywords": [
@@ -117,6 +118,7 @@
       {
         "command": "claudemeter.simulateStatus",
         "title": "Simulate Service Status (dev)",
+        "enablement": "config.claudemeter.debug",
         "category": "Claudemeter"
       },
       {
@@ -239,15 +241,6 @@
           "dark": "#4279a1",
           "light": "#205c80",
           "highContrast": "#5e81ac"
-        }
-      },
-      {
-        "id": "claudemeter.happyHourGreen",
-        "description": "Subdued green used for the happy-hour status-bar panel. Gruvbox green. Override via workbench.colorCustomizations or claudemeter.colors.happyHour.",
-        "defaults": {
-          "dark": "#689d6a",
-          "light": "#427b44",
-          "highContrast": "#a8d8ab"
         }
       }
     ],
@@ -439,6 +432,8 @@
           "default": 65,
           "minimum": 0,
           "maximum": 100,
+          "deprecationMessage": "Replaced by token runways: set warningRunwayTokens under claudemeter.thresholds.tokens.profiles. A value here is converted once on startup, then removed.",
+          "markdownDeprecationMessage": "Replaced by token runways: set `warningRunwayTokens` under `#claudemeter.thresholds.tokens.profiles#`. A value here is converted once on startup, then removed.",
           "markdownDescription": "Token-gauge warning (yellow) threshold. Default `65` tracks Claude Code's auto-compact trigger (~83% of the context window, gated by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`) minus ~20 — so the gauge turns yellow ~20 percentage points before auto-compact. `0` inherits `claudemeter.thresholds.warning`."
         },
         "claudemeter.thresholds.tokens.error": {
@@ -446,6 +441,8 @@
           "default": 75,
           "minimum": 0,
           "maximum": 100,
+          "deprecationMessage": "Replaced by token runways: set errorRunwayTokens under claudemeter.thresholds.tokens.profiles. A value here is converted once on startup, then removed.",
+          "markdownDeprecationMessage": "Replaced by token runways: set `errorRunwayTokens` under `#claudemeter.thresholds.tokens.profiles#`. A value here is converted once on startup, then removed.",
           "markdownDescription": "Token-gauge error (red) threshold. Default `75` tracks Claude Code's auto-compact trigger (~83% of the context window) minus ~10 — giving roughly 10 percentage points of red runway before auto-compact. `0` inherits `claudemeter.thresholds.error`."
         },
         "claudemeter.thresholds.scoped.warning": {
@@ -483,7 +480,7 @@
             "basic"
           ],
           "default": "color",
-          "markdownDescription": "Status-bar decoration mode.\n\n- **color** (default): full palette — gauge tiers (rotLight, rotDeep, warning, error), Se/Wk warning icons, happy-hour green, and the colour-coded `●` prefix in the tooltip.\n- **basic**: every gauge renders in default foreground; no icons; no tier tints; no tooltip prefix dots; no rot recommendation sub-lines. Tooltip section structure (Session / Current context / Weekly) is preserved either way."
+          "markdownDescription": "Status-bar decoration mode.\n\n- **color** (default): gauge tier colours (rot gradient, warning, error) and, where `claudemeter.statusBar.showThresholdIcons` is on, the Se/Wk warning glyph.\n- **basic**: every gauge in the default foreground colour, no warning glyphs, and the Tk gauge held at its normal tier, so the tooltip shows no context-rot advice. The tooltip layout is the same in both modes."
         },
         "claudemeter.thresholds.tokens.profileOverride": {
           "type": "string",
@@ -519,15 +516,10 @@
           "default": "",
           "markdownDescription": "Custom hex overriding the error (red) tier colour. Empty inherits from `claudemeter.outageRed`."
         },
-        "claudemeter.colors.happyHour": {
-          "type": "string",
-          "pattern": "^(|#[0-9a-fA-F]{6})$",
-          "default": "",
-          "markdownDescription": "Custom hex overriding the happy-hour panel colour. Empty inherits from `claudemeter.happyHourGreen` (Gruvbox green by default)."
-        },
         "claudemeter.debug": {
           "type": "boolean",
           "default": false,
+          "scope": "machine",
           "description": "Enable debug logging to output channel (for troubleshooting)"
         },
         "claudemeter.nopilot.enabled": {
@@ -652,35 +644,33 @@
         "claudemeter.debugLogFile": {
           "type": "string",
           "default": "",
-          "description": "Path to debug log file. Auto-populated on first run. Supports ~ for home directory."
+          "scope": "machine",
+          "description": "Path to the debug log file. Empty (default) writes debug.log in claudemeter's config directory. Supports ~ for the home directory."
         },
         "claudemeter.debugLogMaxSizeKB": {
           "type": "number",
           "default": 256,
           "minimum": 64,
           "maximum": 2048,
+          "scope": "machine",
           "description": "Maximum debug log file size in KB. Oldest entries are trimmed when exceeded (64-2048 KB, default 256 KB)"
         }
       }
     }
   },
   "overrides": {
-    "undici": ">=8.9.0",
     "flatted": ">=3.4.2",
     "picomatch": ">=2.3.2",
-    "brace-expansion": ">=5.0.8",
+    "brace-expansion": ">=5.0.12",
     "vite": ">=8.0.5",
     "postcss": "^8.5.23",
-    "fast-uri": "^4.0.0",
-    "lodash": ">=4.18.0",
-    "js-yaml": "^5.2.3",
     "nanoid": "^6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@vscode/vsce": "^3.9.2",
+    "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.8.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }

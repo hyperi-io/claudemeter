@@ -109,6 +109,31 @@ describe('claudeConfigReader.getOAuthAccount', () => {
         const { claudeConfig } = loadReaders();
         expect(claudeConfig.getOAuthAccount()).toBeNull();
     });
+
+    it('re-reads the file once it changes, by size or by mtime', () => {
+        const file = path.join(tmpHome, '.claude.json');
+        writeClaudeConfig({ oauthAccount: { accountUuid: 'acc-1' } });
+        const { claudeConfig } = loadReaders();
+        expect(claudeConfig.getOAuthAccount().accountUuid).toBe('acc-1');
+
+        writeClaudeConfig({ oauthAccount: { accountUuid: 'acc-22' } });
+        expect(claudeConfig.getOAuthAccount().accountUuid).toBe('acc-22');
+
+        // Same length, so only the timestamp can tell the two apart.
+        writeClaudeConfig({ oauthAccount: { accountUuid: 'acc-33' } });
+        const later = new Date(Date.now() + 5000);
+        fs.utimesSync(file, later, later);
+        expect(claudeConfig.getOAuthAccount().accountUuid).toBe('acc-33');
+    });
+
+    it('keeps the last good parse when the file is caught mid-write', () => {
+        writeClaudeConfig({ oauthAccount: { accountUuid: 'acc-1' } });
+        const { claudeConfig } = loadReaders();
+        expect(claudeConfig.getOAuthAccount().accountUuid).toBe('acc-1');
+
+        fs.writeFileSync(path.join(tmpHome, '.claude.json'), '{"oauthAccount": {"accountUu');
+        expect(claudeConfig.getOAuthAccount().accountUuid).toBe('acc-1');
+    });
 });
 
 describe('claudeConfigReader.hasMaxContextAccess', () => {
@@ -189,8 +214,26 @@ describe('credentialsReader.readCredentials (merged view)', () => {
         expect(c.orgId).toBe('org-v2');
         expect(c.accountUuid).toBe('acc-v2');
         expect(c.email).toBe('v2@example.com');
-        expect(c.hasAccessToken = !!c.accessToken).toBe(true);
+        expect(c.hasAccessToken).toBe(true);
+        expect(c.hasRefreshToken).toBe(true);
         expect(c.hasAvailableSubscription).toBe(true);
+    });
+
+    it('reports token presence without carrying the tokens', () => {
+        writeCredentials({ claudeAiOauth: { accessToken: 'token-xxx', refreshToken: 'refresh-xxx' } });
+        const { credentials } = loadReaders();
+        const serialised = JSON.stringify(credentials.readCredentials());
+        expect(serialised).not.toContain('token-xxx');
+        expect(serialised).not.toContain('refresh-xxx');
+    });
+
+    it('reads the bare oauth shape the token reader accepts', () => {
+        writeCredentials({ accessToken: 'tok', subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' });
+        const { credentials } = loadReaders();
+        const c = credentials.readCredentials();
+        expect(c.subscriptionType).toBe('max');
+        expect(c.rateLimitTier).toBe('default_claude_max_5x');
+        expect(c.hasAccessToken).toBe(true);
     });
 
     it('v1 fallback: credentials.json only (pre-v2 Claude Code build)', () => {
@@ -290,7 +333,8 @@ describe('credentialsReader.readCredentials (merged view)', () => {
         const c = credentials.readCredentials();
         expect(c).not.toBeNull();
         expect(c.orgId).toBe('org-1');
-        expect(c.accessToken).toBeNull();
+        expect(c.hasAccessToken).toBe(false);
+        expect(c.hasRefreshToken).toBe(false);
     });
 });
 

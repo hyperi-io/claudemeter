@@ -10,12 +10,15 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const os = require('os');
+const { execFileSync } = require('child_process');
 const {
     ClaudeDataLoader,
     selectActiveSession,
     readSessionUsage,
     resetTranscriptCache,
+    TRANSCRIPT_CACHE_MAX,
 } = require('../../src/claudeDataLoader');
+const { projectDirName, canonicalisePath, CWD_PROBE_BYTES } = require('../../src/projectDir');
 
 describe('ClaudeDataLoader.convertPathToClaudeDir', () => {
     // Use a single instance - the method is pure with respect to its
@@ -254,9 +257,8 @@ describe('readSessionUsage - context accounting (#54)', () => {
     });
 });
 
-// Transcripts are append-only and reach 162MB, while the gauge re-reads on a
-// 15s timer and on every debounced write. Reading one whole per tick cost
-// ~280ms of synchronous work on the extension host; reading only what was
+// Transcripts are append-only and run to hundreds of megabytes, while the gauge
+// re-reads on a 15s timer and on every debounced write. Reading only what was
 // appended costs one stat when nothing changed.
 describe('readSessionUsage - incremental tail reads', () => {
     let dir;
@@ -306,7 +308,99 @@ describe('readSessionUsage - incremental tail reads', () => {
         append(file, [turn(90000)]);
         const after = await readSessionUsage(file);
         expect(after.contextTotal).toBe(90002);
-        expect(after.messageCount).toBe(2);
+        expect(after).not.toHaveProperty('messageCount');
+    });
+
+    it('picks up a line that was still partial on the first read', async () => {
+        const file = fresh([turn(40000)]);
+        fs.appendFileSync(file, turn(90000).slice(0, 40), 'utf-8');
+        expect((await readSessionUsage(file)).contextTotal).toBe(40002);
+
+        fs.appendFileSync(file, turn(90000).slice(40) + '\n', 'utf-8');
+        expect((await readSessionUsage(file)).contextTotal).toBe(90002);
+    });
+
+    it('finds the origin cwd in lines appended after the first read', async () => {
+        // Real transcripts open with several records that carry no cwd, so a
+        // session read early has not recorded one yet.
+        const file = fresh([JSON.stringify({ type: 'summary' }), JSON.stringify({ type: 'queue-operation' })]);
+        expect(await readSessionUsage(file)).toBeNull();
+
+        append(file, [JSON.stringify({ type: 'user', cwd: '/origin/repo' }), turn(40000, { cwd: '/elsewhere' })]);
+        expect((await readSessionUsage(file)).cwd).toBe('/origin/repo');
+    });
+
+    it('stops looking for the origin cwd past the head the directory scan probes', async () => {
+        const pad = JSON.stringify({ type: 'user', message: { content: 'p'.repeat(1000) } });
+        const file = fresh(Array.from({ length: Math.ceil(CWD_PROBE_BYTES / pad.length) + 1 }, () => pad));
+        await readSessionUsage(file);
+
+        append(file, [JSON.stringify({ type: 'user', cwd: '/late' }), turn(40000)]);
+        expect((await readSessionUsage(file)).cwd).toBeNull();
+    });
+
+    it('re-reads a same-size rewrite instead of serving the cached answer', async () => {
+        // The partial trailing line keeps the last kilobyte identical, so only
+        // the bytes behind the read offset show the rewrite.
+        const partial = JSON.stringify({ type: 'user', message: { content: 'x'.repeat(2048) } });
+        const file = fresh([JSON.stringify({ type: 'summary' }), turn(40000)]);
+        fs.appendFileSync(file, partial, 'utf-8');
+        expect((await readSessionUsage(file)).contextTotal).toBe(40002);
+
+        fs.writeFileSync(file, [JSON.stringify({ type: 'summary' }), turn(40001)].join('\n') + '\n' + partial, 'utf-8');
+        expect((await readSessionUsage(file)).contextTotal).toBe(40003);
+    });
+
+    it('re-reads a rewrite that also grew instead of continuing from a stale offset', async () => {
+        const head = JSON.stringify({ type: 'summary' });
+        const file = fresh([head, turn(40000)]);
+        expect((await readSessionUsage(file)).contextTotal).toBe(40002);
+
+        // Same first line, and the old offset now lands just past turn(50000).
+        fs.writeFileSync(file, [head, turn(50000), JSON.stringify({ type: 'user', cwd: '/some/project' })].join('\n') + '\n', 'utf-8');
+        expect((await readSessionUsage(file)).contextTotal).toBe(50002);
+    });
+
+    it('keeps a transcript that is read every tick ahead of the eviction', async () => {
+        // The cwd sits behind the first line and more than a kilobyte before
+        // the end, where a same-size edit is visible only to a full re-read,
+        // so the reported cwd tells a cached entry apart from an evicted one.
+        const pad = JSON.stringify({ type: 'user', message: { content: 'p'.repeat(2048) } });
+        const watched = fresh([JSON.stringify({ type: 'summary' }), JSON.stringify({ type: 'user', cwd: '/aaaa' }), turn(40000), pad]);
+        expect((await readSessionUsage(watched)).cwd).toBe('/aaaa');
+
+        for (let i = 1; i < TRANSCRIPT_CACHE_MAX; i++) await readSessionUsage(fresh([turn(i)]));
+        await readSessionUsage(watched);
+        await readSessionUsage(fresh([turn(1)]));
+
+        fs.writeFileSync(watched, fs.readFileSync(watched, 'utf-8').replace('/aaaa', '/bbbb'), 'utf-8');
+        expect((await readSessionUsage(watched)).cwd).toBe('/aaaa');
+    });
+
+    it.skipIf(process.platform === 'win32')('gives a caller that arrives mid-read the file as it was when it arrived', async () => {
+        // A FIFO holds the first read inside open() until a writer appears,
+        // which pins the second call inside that read without any timing.
+        const file = path.join(dir, `fifo${seq++}.jsonl`);
+        execFileSync('mkfifo', [file]);
+        const first = readSessionUsage(file);
+        const second = readSessionUsage(file);
+
+        let writer = null;
+        while (writer === null) {
+            try {
+                writer = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+            } catch (openError) {
+                if (openError.code !== 'ENXIO') throw openError;
+                await new Promise((resolve) => setTimeout(resolve, 5));
+            }
+        }
+        const real = `${file}.tmp`;
+        fs.writeFileSync(real, turn(90000) + '\n', 'utf-8');
+        fs.renameSync(real, file);
+        fs.closeSync(writer);
+
+        expect((await second).contextTotal).toBe(90002);
+        expect((await first).contextTotal).toBe(90002);
     });
 
     it('returns the same answer when nothing was appended', async () => {
@@ -326,9 +420,7 @@ describe('readSessionUsage - incremental tail reads', () => {
 
         // The rest of that same line lands.
         fs.appendFileSync(file, turn(90000).slice(40) + '\n', 'utf-8');
-        const after = await readSessionUsage(file);
-        expect(after.contextTotal).toBe(90002);
-        expect(after.messageCount).toBe(2);
+        expect((await readSessionUsage(file)).contextTotal).toBe(90002);
     });
 
     it('re-reads from scratch when the file shrinks', async () => {
@@ -338,9 +430,7 @@ describe('readSessionUsage - incremental tail reads', () => {
         // Replaced, not appended - the cached offsets describe a file that no
         // longer exists.
         fs.writeFileSync(file, turn(7000) + '\n', 'utf-8');
-        const after = await readSessionUsage(file);
-        expect(after.contextTotal).toBe(7002);
-        expect(after.messageCount).toBe(1);
+        expect((await readSessionUsage(file)).contextTotal).toBe(7002);
     });
 
     it('keeps the origin cwd across incremental reads', async () => {
@@ -382,6 +472,23 @@ describe('readSessionUsage - incremental tail reads', () => {
         expect((await readSessionUsage(file)).contextTotal).toBe(55002);
     });
 
+    it('reads only the appended bytes when the first line outruns the fingerprint window', async () => {
+        // Real transcripts can open with a long queued-prompt record. A same-size cwd
+        // edit over a kilobyte before the offset shows only in a full read, which
+        // tells the two apart.
+        const longHead = JSON.stringify({ type: 'queue-operation', content: 'x'.repeat(1300) });
+        const pad = JSON.stringify({ type: 'user', message: { content: 'p'.repeat(2048) } });
+        const file = fresh([longHead, JSON.stringify({ type: 'user', cwd: '/aaaa' }), turn(40000), pad]);
+        expect((await readSessionUsage(file)).cwd).toBe('/aaaa');
+
+        fs.writeFileSync(file, fs.readFileSync(file, 'utf-8').replace('/aaaa', '/bbbb'), 'utf-8');
+        append(file, [turn(90000)]);
+
+        const after = await readSessionUsage(file);
+        expect(after.contextTotal).toBe(90002);
+        expect(after.cwd).toBe('/aaaa');
+    });
+
     it('ignores a subagent turn that landed in a main transcript', async () => {
         // Subagents live in agent-*.jsonl, which getCurrentSessionUsage filters
         // out by name - but a filename convention is not a contract, and a
@@ -393,6 +500,81 @@ describe('readSessionUsage - incremental tail reads', () => {
         expect((await readSessionUsage(file)).contextTotal).toBe(120002);
     });
 
+});
+
+// A multi-day session's transcript outgrows the longest string V8 can hold, so
+// a reader that decodes the file whole throws and the gauge goes blank.
+describe('readSessionUsage - transcripts larger than one string', () => {
+    const { MAX_STRING_LENGTH } = require('buffer').constants;
+    const MIB = 1024 * 1024;
+    let dir;
+    let seq = 0;
+
+    const user = (cwd, content = 'hi') => JSON.stringify({ type: 'user', cwd, message: { content } });
+    const turn = (cacheRead) => JSON.stringify({
+        type: 'assistant',
+        cwd: '/origin/repo',
+        timestamp: '2026-10-15T20:27:14.757Z',
+        message: {
+            model: 'claude-opus-5-5',
+            usage: { input_tokens: 2, cache_read_input_tokens: cacheRead, output_tokens: 5 },
+        },
+    });
+
+    // A NUL-filled hole past the string limit, without spending the disk.
+    // The hole reads back as one line that cannot be decoded, which is also
+    // the worst shape a transcript could take.
+    const sparse = (head, tail) => {
+        const file = path.join(dir, `big${seq++}.jsonl`);
+        fs.writeFileSync(file, head.join('\n') + '\n', 'utf-8');
+        fs.truncateSync(file, MAX_STRING_LENGTH + MIB);
+        fs.appendFileSync(file, '\n' + tail.join('\n') + '\n', 'utf-8');
+        return file;
+    };
+
+    const fresh = (lines) => {
+        const file = path.join(dir, `chunks${seq++}.jsonl`);
+        fs.writeFileSync(file, lines.join('\n') + '\n', 'utf-8');
+        return file;
+    };
+
+    beforeAll(async () => {
+        dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claudemeter-big-'));
+    });
+
+    afterAll(async () => {
+        if (dir) await fsp.rm(dir, { recursive: true, force: true });
+    });
+
+    beforeEach(() => resetTranscriptCache());
+
+    it('reads the latest prompt from a file past the string limit', async () => {
+        const file = sparse([user('/origin/repo'), turn(1000)], [turn(170120)]);
+        const s = await readSessionUsage(file);
+        expect(s).not.toBeNull();
+        expect(s.contextTotal).toBe(170122);
+        expect(s.cwd).toBe('/origin/repo');
+    }, 60_000);
+
+    it('walks back past an undecodable line to an earlier prompt', async () => {
+        const file = sparse([user('/origin/repo'), turn(5000)], [user('/origin/repo')]);
+        expect((await readSessionUsage(file)).contextTotal).toBe(5002);
+    }, 60_000);
+
+    it('assembles lines that span read chunks, multi-byte characters included', async () => {
+        // Each big line crosses several chunk boundaries, and the multi-byte
+        // padding lands a boundary mid-character somewhere along it.
+        const bigUser = user('/origin/repo', 'é中'.repeat(Math.ceil((3 * MIB) / 5)));
+        const trailingUser = user('/origin/repo', 'x'.repeat(2 * MIB));
+        const file = fresh([user('/origin/repo'), turn(10000), bigUser, turn(20000), trailingUser]);
+
+        const first = await readSessionUsage(file);
+        expect(first.contextTotal).toBe(20002);
+        expect(first.cwd).toBe('/origin/repo');
+
+        fs.appendFileSync(file, [bigUser, turn(30000)].join('\n') + '\n', 'utf-8');
+        expect((await readSessionUsage(file)).contextTotal).toBe(30002);
+    });
 });
 
 describe('readSessionUsage - session attribution by origin cwd', () => {
@@ -438,6 +620,17 @@ describe('readSessionUsage - session attribution by origin cwd', () => {
         const file = path.join(dir, 'userfirst.jsonl');
         await fsp.writeFile(file, wandering('/repo', '/elsewhere'), 'utf-8');
         expect((await readSessionUsage(file)).cwd).toBe('/repo');
+    });
+
+    it('looks for the origin cwd only in the head the directory scan probes', async () => {
+        const { CWD_PROBE_BYTES } = require('../../src/projectDir');
+        const pad = JSON.stringify({ type: 'user', message: { content: 'p'.repeat(1000) } });
+        const lines = Array.from({ length: Math.ceil(CWD_PROBE_BYTES / pad.length) + 1 }, () => pad);
+        const file = path.join(dir, 'latecwd.jsonl');
+        await fsp.writeFile(file, wandering('/late', '/late').replace(/^/, lines.join('\n') + '\n'), 'utf-8');
+        const s = await readSessionUsage(file);
+        expect(s.cwd).toBeNull();
+        expect(s.contextTotal).toBe(200002);
     });
 
     it('is null when no entry records a cwd', async () => {
@@ -627,12 +820,12 @@ describe('findJsonlFiles - symlink handling', () => {
         expect(Array.isArray(files)).toBe(true);
     });
 
-    it('follows a symlinked transcript but not a symlinked directory', async () => {
+    it('follows a symlinked transcript and stays in the project directory', async () => {
+        // Subdirectories hold agent-*.jsonl and tool-result files, never a
+        // session's own transcript.
         const loader = new ClaudeDataLoader(proj, () => {});
         const names = (await loader.findJsonlFiles(proj)).map(f => path.basename(f)).sort();
-        expect(names).toContain('linked.jsonl');
-        expect(names).toContain('a.jsonl');
-        expect(names).toContain('real.jsonl');
+        expect(names).toEqual(['a.jsonl', 'linked.jsonl']);
     });
 
     it('returns each transcript once, however many links point at it', async () => {
@@ -647,6 +840,72 @@ describe('findJsonlFiles - symlink handling', () => {
         const loader = new ClaudeDataLoader(proj, () => {});
         const names = (await loader.findJsonlFiles(proj)).map(f => path.basename(f));
         expect(names).not.toContain('dangling.jsonl');
+    });
+});
+
+describe('getProjectDataDirectory - where the transcripts live', () => {
+    // HOME is redirected so the default locations are fixtures too.
+    const SAVED = ['HOME', 'CLAUDE_CONFIG_DIR'];
+    const saved = {};
+    let root;
+    let workspace;
+
+    const derivedUnder = async (projectsDir) => {
+        const dir = path.join(projectsDir, projectDirName(await canonicalisePath(workspace)));
+        await fsp.mkdir(dir, { recursive: true });
+        return dir;
+    };
+
+    beforeEach(async () => {
+        for (const name of SAVED) saved[name] = process.env[name];
+        root = await fsp.mkdtemp(path.join(os.tmpdir(), 'claudemeter-bases-'));
+        workspace = path.join(root, 'workspace');
+        await fsp.mkdir(workspace);
+        process.env.HOME = path.join(root, 'home');
+        delete process.env.CLAUDE_CONFIG_DIR;
+    });
+
+    afterEach(async () => {
+        for (const name of SAVED) {
+            if (saved[name] === undefined) delete process.env[name];
+            else process.env[name] = saved[name];
+        }
+        if (root) await fsp.rm(root, { recursive: true, force: true });
+    });
+
+    it('finds transcripts under CLAUDE_CONFIG_DIR/projects', async () => {
+        // CLAUDE_CONFIG_DIR is the ~/.claude equivalent, not the projects dir.
+        const configDir = path.join(root, 'config');
+        const expected = await derivedUnder(path.join(configDir, 'projects'));
+        process.env.CLAUDE_CONFIG_DIR = configDir;
+        expect(await new ClaudeDataLoader(workspace, () => {}).getProjectDataDirectory()).toBe(expected);
+    });
+
+    it('looks past a leftover base that does not hold this workspace', async () => {
+        await fsp.mkdir(path.join(process.env.HOME, '.config', 'claude', 'projects'), { recursive: true });
+        const expected = await derivedUnder(path.join(process.env.HOME, '.claude', 'projects'));
+        expect(await new ClaudeDataLoader(workspace, () => {}).getProjectDataDirectory()).toBe(expected);
+    });
+
+    it('reuses a directory resolved by recorded cwd instead of scanning again', async () => {
+        const configDir = path.join(root, 'config');
+        const renamed = path.join(configDir, 'projects', 'named-by-another-cli');
+        await fsp.mkdir(renamed, { recursive: true });
+        await fsp.writeFile(path.join(renamed, '11111111-1111-1111-1111-111111111111.jsonl'),
+            JSON.stringify({ type: 'user', cwd: workspace }) + '\n', 'utf-8');
+        process.env.CLAUDE_CONFIG_DIR = configDir;
+
+        const lines = [];
+        const loader = new ClaudeDataLoader(workspace, (m) => lines.push(m));
+        const scans = () => lines.filter((l) => l.includes('matching on recorded cwd')).length;
+
+        expect(await loader.getProjectDataDirectory()).toBe(renamed);
+        expect(scans()).toBe(1);
+        expect(await loader.getProjectDataDirectory()).toBe(renamed);
+        expect(scans()).toBe(1);
+
+        await fsp.rm(renamed, { recursive: true });
+        expect(await loader.getProjectDataDirectory()).toBeNull();
     });
 });
 

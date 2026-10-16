@@ -10,8 +10,9 @@
 //                tokensAtThreshold = window * (percent / 100)
 //                runway = window - tokensAtThreshold - compactReserve
 //
-//            Write target: claudemeter.thresholds.tokens.profiles
-//                          .<currentProfile>.thresholds.<newField>
+//            Write target: <currentProfile>.thresholds.<newField> inside
+//                          claudemeter.thresholds.tokens.profiles, merged
+//                          into the existing object and written whole.
 //            Scope: ConfigurationTarget.Global only. Workspace-scoped
 //            legacy values are noted in the log and skipped.
 //
@@ -26,6 +27,8 @@ const LEGACY_PERCENT_KEYS = Object.freeze({
     'thresholds.tokens.warning': 'warningRunwayTokens',
     'thresholds.tokens.error':   'errorRunwayTokens',
 });
+
+const PROFILES_KEY = 'thresholds.tokens.profiles';
 
 /**
  * Run legacy-settings migration. Idempotent.
@@ -48,6 +51,11 @@ async function migrateLegacySettings(vscode, contextWindow, profile, logger, con
     const config = vscode.workspace.getConfiguration(configNamespace);
     const compactReserve = profile.thresholds.compactReserveTokens;
 
+    // The profile map is one registered setting, and VS Code refuses a write
+    // to a dotted path inside it, so it is read, merged and written whole.
+    // A copy, because the object VS Code hands back may be frozen.
+    const profiles = JSON.parse(JSON.stringify(config.inspect(PROFILES_KEY)?.globalValue ?? {}));
+
     for (const [legacyKey, newField] of Object.entries(LEGACY_PERCENT_KEYS)) {
         const legacyInspect = config.inspect(legacyKey);
         if (!legacyInspect) {
@@ -65,9 +73,8 @@ async function migrateLegacySettings(vscode, contextWindow, profile, logger, con
         }
 
         // Idempotency check: is the new field already set?
-        const newKey = `thresholds.tokens.profiles.${profile.name}.thresholds.${newField}`;
-        const newInspect = config.inspect(newKey);
-        if (newInspect?.globalValue !== undefined) {
+        const newKey = `${PROFILES_KEY}.${profile.name}.thresholds.${newField}`;
+        if (profiles[profile.name]?.thresholds?.[newField] !== undefined) {
             logger?.appendLine?.(`[claudemeter] migrate: ${legacyKey} skipped — ${newKey} already set (no overwrite)`);
             result.skipped.push(legacyKey);
             continue;
@@ -83,8 +90,14 @@ async function migrateLegacySettings(vscode, contextWindow, profile, logger, con
         }
 
         // Write new value first
+        const entry = profiles[profile.name] ?? {};
+        const merged = {
+            ...profiles,
+            [profile.name]: { ...entry, thresholds: { ...entry.thresholds, [newField]: runway } },
+        };
         try {
-            await config.update(newKey, runway, vscode.ConfigurationTarget.Global);
+            await config.update(PROFILES_KEY, merged, vscode.ConfigurationTarget.Global);
+            Object.assign(profiles, merged);
         } catch (err) {
             logger?.appendLine?.(`[claudemeter] migrate: failed to write ${newKey}: ${err.message} — skipping legacy delete to allow retry next activation`);
             result.skipped.push(legacyKey);

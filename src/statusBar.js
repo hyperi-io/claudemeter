@@ -9,7 +9,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { COMMANDS, CONFIG_NAMESPACE, calculateResetClockTime, getCurrencySymbol, getUse24HourTime } = require('./utils');
+const { COMMANDS, CONFIG_NAMESPACE, DAY_MS, calculateResetClockTime, formatCompact, formatLongDateTime, getCurrencySymbol, getUse24HourTime, toResetDate, getDebugChannel, fileLog, clientSideRemoteName } = require('./utils');
 const {
     STATUS_PAGE_URL,
     refreshStatus: refreshServiceStatusInternal,
@@ -18,24 +18,32 @@ const {
 const {
     formatTokensDisplay,
     formatTokensDisplayCompact,
-    formatAsBar,
+    formatIndicator,
     DISPLAY_DEFAULT,
 } = require('./statusBarFormatters');
 const { composeTooltip } = require('./tooltipComposer');
 const { gaugeLabels, scopedShortLabel, resolveGauges, mergeDefinitions, isGenericPanel } = require('./gauges');
 const { composeClaudeLabel } = require('./claudeLabelComposer');
 const { describeAuthFailure } = require('./authFailure');
+const { escapeMarkdown } = require('./markdown');
 const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = require('./happyHour');
-const { isCoreApplied, globalScopeReader } = require('./declutter/state');
+const { isCoreApplied, globalScopeReader, isDeclared } = require('./declutter/state');
 const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolver');
 const simulator = require('./simulator');
 const { selectProfile } = require('./tk/profileSelector');
+
+// Where the one-time 'unknown' profile warning goes. The channel is created
+// only if the warning fires.
+const profileLogger = {
+    appendLine: (msg) => {
+        getDebugChannel().appendLine(msg);
+        fileLog(msg);
+    },
+};
 const { getTkLevel, rotGradientT } = require('./tk/thresholds');
 const { lerpHexOklab } = require('./tk/gradient');
 const { ROT_GRADIENT } = require('./tk/colorMap');
 const { TIER_RECOMMENDATIONS } = require('./tk/recommendations');
-
-const LABEL_TEXT = 'Claude';
 
 // Weekly reset time switches from hour to minute precision once you're within
 // 24h of reset AND at/above this weekly-usage %. A niche display-precision
@@ -75,15 +83,21 @@ function getBrandIconDataUri() {
     return assetDataUri('hyperi-brand.png');
 }
 
-// Build a MarkdownString for an error / not-logged-in tooltip, carrying the
-// same slim logo header as the main tooltip. isTrusted so the header's data-URI
-// image renders (the error copy itself has no command links); supportThemeIcons
-// for parity with the main tooltip.
-function makeErrorTooltip(errorLines) {
-    const md = new vscode.MarkdownString(getTooltipLogoHeader() + errorLines.join('  \n'));
-    md.isTrusted = true;
+// The only command links a tooltip may execute, whatever outside text reaches
+// it. `isTrusted: true` would run any `command:` link in that text.
+const TOOLTIP_COMMANDS = [COMMANDS.NOPILOT, COMMANDS.NOPILOT_DISMISS];
+
+function makeTooltip(markdown, enabledCommands = []) {
+    const md = new vscode.MarkdownString(markdown);
+    md.isTrusted = { enabledCommands: [...enabledCommands] };
     md.supportThemeIcons = true;
     return md;
+}
+
+// An error / not-logged-in tooltip, under the same slim logo header as the
+// main tooltip. Its copy links no commands.
+function makeErrorTooltip(errorLines) {
+    return makeTooltip(getTooltipLogoHeader() + errorLines.join('  \n'));
 }
 
 /**
@@ -178,7 +192,7 @@ function resolveNopilotOffer() {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     if (!config.get('nopilot.enabled', true)) return false;
     const root = vscode.workspace.getConfiguration();
-    return !isCoreApplied(globalScopeReader(root));
+    return !isCoreApplied(globalScopeReader(root), (key) => isDeclared(root, key));
 }
 
 /**
@@ -239,16 +253,14 @@ function resolveHappyHourState() {
  * "S-45% Wk-10%" reads cleanly; omitted for bar formats because
  * the bar visually separates the values already).
  *
- * @param {number} percent - Percentage (0-100)
+ * @param {number|null} percent - Percentage (0-100), or null/NaN for "-"
  * @param {boolean} forCompact - Whether this is for compact mode
  * @returns {string} Formatted value
  */
 function formatPercent(percent, forCompact = false) {
     const format = getUsageFormat();
-    if (format !== 'percent') {
-        return formatAsBar(percent, format);
-    }
-    return forCompact ? `-${percent}%` : `${percent}%`;
+    const indicator = formatIndicator(percent, format);
+    return forCompact && format === 'percent' && indicator !== '-' ? `-${indicator}` : indicator;
 }
 
 /**
@@ -256,13 +268,10 @@ function formatPercent(percent, forCompact = false) {
  * and service-status tooltip lines. Happy hour has its own dedicated
  * panel (renderHappyHourPanel) and is not threaded through here.
  */
-function composeCurrentLabel({ isRefreshing = false } = {}) {
+function composeCurrentLabel() {
     const serviceStatus = isServiceStatusEnabled() ? getServiceStatusFromCache() : null;
 
-    const result = composeClaudeLabel({
-        serviceStatus,
-        isRefreshing,
-    });
+    const result = composeClaudeLabel({ serviceStatus });
 
     // Service-status footer: only shown when the service is in a
     // non-operational state. When the service is operational, the
@@ -273,7 +282,7 @@ function composeCurrentLabel({ isRefreshing = false } = {}) {
     // know how fresh the outage description is.
     //
     // The time format here matches the footer's "Updated" row
-    // (toLocaleTimeString, honouring claudemeter.use24HourTime) so
+    // (toLocaleTimeString, honouring statusBar.timeFormat) so
     // the two stamps line up visually when both are visible.
     if (serviceStatus
         && serviceStatus.indicator
@@ -295,39 +304,19 @@ function composeCurrentLabel({ isRefreshing = false } = {}) {
     };
 }
 
-function getActivityQuipOverride() {
-    return composeCurrentLabel().quirkyOverride;
-}
-
-// Back-compat thin wrappers. Many call sites in this file already read
-// one piece of the label state at a time; rather than rewrite every
-// site, these helpers route through composeCurrentLabel so there's a
-// single source of truth.
+// The label text without its trailing double-space (callers add their own
+// spacing when they need a spinner frame).
 function getLabelTextWithStatus() {
-    // Returns just the text without the trailing double-space (callers
-    // add their own spacing when they need a spinner frame).
     const { text } = composeCurrentLabel();
     return text.replace(/\s+$/, '');
 }
 
-function getServiceStatusColor() {
-    return composeCurrentLabel().color;
-}
-
-// VS Code only honours two backgroundColor values on a StatusBarItem:
-// 'statusBarItem.errorBackground' and 'statusBarItem.warningBackground'.
-// We surface this so partial/major outages paint the whole item red -
-// far more visible than text colour alone.
-function getServiceStatusBackground() {
-    return composeCurrentLabel().backgroundColor;
-}
-
-// Apply the outage background to every claudemeter status-bar item so
-// the whole cluster lights up red/yellow, not just the leftmost label.
-// Items that own transient state (spinner, happy-hour panel) are skipped.
-function setAllBackgrounds(background) {
-    forEachPanel((item, key) => {
-        if (key === 'spinner' || key === 'happyHour') return;
+// Paint the outage background on every primary panel so the whole cluster
+// lights up red/yellow, not just the leftmost label. VS Code only honours
+// 'statusBarItem.errorBackground' and 'statusBarItem.warningBackground' here.
+function applyServiceStatusBackground() {
+    const background = composeCurrentLabel().backgroundColor;
+    forEachPrimaryPanel((item) => {
         item.backgroundColor = background;
     });
 }
@@ -352,21 +341,11 @@ async function refreshServiceStatus() {
 
     const result = await refreshServiceStatusInternal();
 
-    // Update label text if initialised (only show icon when there's an issue)
     if (statusBarItems.label) {
-        statusBarItems.label.text = getLabelTextWithStatus();
-        statusBarItems.label.color = getServiceStatusColor();
+        drawHead(lastFetchError?.tokenError ?? null);
     }
-    setAllBackgrounds(getServiceStatusBackground());
+    applyServiceStatusBackground();
     return result;
-}
-
-/**
- * Get current service status (cached) - reads from serviceStatus module.
- * @returns {object|null}
- */
-function getServiceStatus() {
-    return getServiceStatusFromCache();
 }
 
 const DISPLAY_MODES = {
@@ -399,14 +378,42 @@ let statusBarItems = {
     compact: null
 };
 
-let lastDisplayedValues = {
-    sessionText: null,
-    weeklyText: null,
-    scopedTexts: [],
-    tokensText: null,
-    creditsText: null,
-    compactText: null
-};
+// Text last drawn per panel, keyed `<panel>Text`. show() runs only on a text
+// change, so every hide drops the entry (hidePanel).
+let lastDisplayedValues;
+
+// Compact content minus the Claude label, so label status and error marker are
+// redrawn rather than appended. Null while compact is hidden.
+let compactParts = null;
+
+// The last web fetch failure, kept until a fetch succeeds so local ticks redraw it.
+let lastFetchError = null;
+
+// VS Code re-opens a visible hover on every tooltip change, and one that lands
+// as the mouse leaves is never closed, so usage tooltips change at most this often.
+const TOOLTIP_REFRESH_MS = 30 * 1000;
+let usageTooltip;
+
+function resetUsageTooltip() {
+    clearTimeout(usageTooltip?.timer);
+    usageTooltip = { value: null, scope: null, at: 0, timer: null };
+}
+
+function resetRenderState() {
+    resetUsageTooltip();
+    lastDisplayedValues = {
+        sessionText: null,
+        weeklyText: null,
+        scopedTexts: [],
+        tokensText: null,
+        creditsText: null,
+        compactText: null,
+    };
+    compactParts = null;
+    lastFetchError = null;
+}
+
+resetRenderState();
 
 // Helper functions
 
@@ -514,6 +521,12 @@ function getGaugeLabelOverrides() {
     return vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get('gauges.labels', {}) || {};
 }
 
+// On the client of a remote window the transcripts sit on the remote host, so
+// the context gauge has nothing to show (#58).
+function isRemoteWindow() {
+    return !!clientSideRemoteName();
+}
+
 function hideScopedItems() {
     statusBarItems.scoped.forEach((item, i) => {
         item.hide();
@@ -521,106 +534,161 @@ function hideScopedItems() {
     });
 }
 
-function hideAllMetricItems() {
-    statusBarItems.session.hide();
-    statusBarItems.weekly.hide();
-    hideScopedItems();
-    statusBarItems.tokens.hide();
-    statusBarItems.credits.hide();
-    statusBarItems.compact.hide();
+// key: session | weekly | tokens | credits | compact
+function hidePanel(key) {
+    statusBarItems[key].hide();
+    lastDisplayedValues[`${key}Text`] = null;
+    if (key === 'compact') compactParts = null;
 }
 
-// Apply the main Claude usage tooltip to every primary panel.
-// Transient panels that own their own tooltip are excluded: spinner
-// ("Checking Claude...") and happyHour (off-peak countdown).
+function drawPanel(key, text) {
+    if (text !== lastDisplayedValues[`${key}Text`]) {
+        statusBarItems[key].text = text;
+        statusBarItems[key].show();
+        lastDisplayedValues[`${key}Text`] = text;
+    }
+}
+
+function hideAllMetricItems() {
+    hidePanel('session');
+    hidePanel('weekly');
+    hideScopedItems();
+    hidePanel('tokens');
+    hidePanel('credits');
+    hidePanel('compact');
+}
+
+// The status-bar glyph and colour for a recorded fetch failure.
+function fetchErrorMarker(webError, tokenError) {
+    if (!webError.authReason && tokenError) return { glyph: '✗', color: 'claudemeter.outageRed' };
+    return { glyph: '⚠', color: 'charts.yellow' };
+}
+
+function fetchErrorTooltip({ webError, at }, tokenError) {
+    // Checked before the combined branch: tokenError is set in every window
+    // without a live Claude Code session, so the combined wording would
+    // otherwise bury the auth message in the common case.
+    if (webError.authReason) {
+        const authFailure = describeAuthFailure(webError.authReason, webError.authContext);
+        const errorLines = [`**${authFailure.title}**`, '', ...authFailure.lines];
+        if (tokenError) {
+            errorLines.push('', 'No Claude Code session in this window, so no context gauge either.');
+        }
+        errorLines.push('', authFailure.canRelogin
+            ? '• **Click to log into Claude Code**'
+            : '• Run "Claudemeter: Show Debug Output" for details');
+        return makeErrorTooltip(errorLines);
+    }
+    const when = `Time: ${at.toLocaleString()}`;
+    const actions = ['**Actions**', '• Click to retry', '• Run "Claudemeter: Show Debug Output" for details'];
+    if (tokenError) {
+        return makeErrorTooltip([
+            '**Complete Fetch Failed**', '',
+            `Web: ${escapeMarkdown(webError.message)}`,
+            `Tokens: ${escapeMarkdown(tokenError.message)}`, '',
+            '**Debug Info**', when, '',
+            ...actions,
+        ]);
+    }
+    return makeErrorTooltip([
+        '**Web Fetch Failed**', '',
+        `Error: ${escapeMarkdown(webError.message)}`, '',
+        '**Debug Info**', when, '',
+        'Token data may still be available', '',
+        ...actions,
+    ]);
+}
+
+// Draw the Claude label, or the compact panel standing in for it, marked with
+// any recorded fetch failure, and swap in that failure's tooltip.
+function drawHead(tokenError) {
+    const marker = lastFetchError ? fetchErrorMarker(lastFetchError.webError, tokenError) : null;
+    if (lastFetchError) setAllTooltips(fetchErrorTooltip(lastFetchError, tokenError));
+    const suffix = marker ? ` ${marker.glyph}` : '';
+    const markerColor = marker ? new vscode.ThemeColor(marker.color) : undefined;
+
+    if (compactParts) {
+        statusBarItems.label.hide();
+        const body = compactParts.body ? ` ${compactParts.body}` : '';
+        drawPanel('compact', `${compactParts.icon}${getLabelTextWithStatus()}${body}${suffix}`);
+        statusBarItems.compact.color = markerColor || compactParts.color || composeCurrentLabel().color;
+        return;
+    }
+    statusBarItems.label.text = `${getLabelTextWithStatus()}${suffix}`;
+    statusBarItems.label.color = markerColor || composeCurrentLabel().color;
+    statusBarItems.label.show();
+}
+
+// Apply a tooltip to every primary panel at once, ending any held usage tooltip.
 function setAllTooltips(tooltip) {
-    forEachPanel((item, key) => {
-        if (key === 'spinner' || key === 'happyHour') return;
+    resetUsageTooltip();
+    forEachPrimaryPanel((item) => {
         item.tooltip = tooltip;
     });
 }
 
-// Walk every registered panel, flattening the scoped slot array so callers
-// treat one item and a group of items the same way.
-function forEachPanel(fn) {
+// The usage tooltip, held to TOOLTIP_REFRESH_MS unless its scope (account,
+// which data is present) changed, so another account's numbers never linger.
+function setUsageTooltip(tooltip, scope) {
+    clearTimeout(usageTooltip.timer);
+    usageTooltip.timer = null;
+    if (tooltip.value === usageTooltip.value && scope === usageTooltip.scope) return;
+    const wait = scope === usageTooltip.scope ? usageTooltip.at + TOOLTIP_REFRESH_MS - Date.now() : 0;
+    if (wait > 0) {
+        usageTooltip.timer = setTimeout(() => setUsageTooltip(tooltip, scope), wait);
+        return;
+    }
+    forEachPrimaryPanel((item) => {
+        item.tooltip = tooltip;
+    });
+    usageTooltip = { value: tooltip.value, scope, at: Date.now(), timer: null };
+}
+
+// Panels that own their own tooltip and background: spinner ("Checking
+// Claude...") and happyHour (off-peak countdown).
+const TRANSIENT_PANELS = new Set(['spinner', 'happyHour']);
+
+// Walk every registered panel but the transient ones, flattening the scoped
+// slot array so callers treat one item and a group of items the same way.
+function forEachPrimaryPanel(fn) {
     Object.entries(statusBarItems).forEach(([key, value]) => {
-        if (!value) return;
+        if (!value || TRANSIENT_PANELS.has(key)) return;
         if (Array.isArray(value)) {
-            value.forEach(item => item && fn(item, key));
+            value.forEach(item => item && fn(item));
             return;
         }
-        fn(value, key);
+        fn(value);
     });
 }
 
-// Convert a future Date into a duration-string like "2h 30m" / "5d 21h"
-// that calculateResetClockTime understands. Used only for the happy-hour
-// panel - other panels already receive duration strings from the API.
-function dateToDurationString(futureDate) {
-    if (!(futureDate instanceof Date)) return '0m';
-    const diffMs = futureDate.getTime() - Date.now();
-    const totalMinutes = Math.max(0, Math.floor(diffMs / 60000));
-    const days = Math.floor(totalMinutes / (24 * 60));
-    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
-    const minutes = totalMinutes % 60;
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
-}
-
-// Long-form ends-at datetime for tooltips. Matches tooltipComposer's
-// "Resets Sunday 19 April at 2:01 pm" style so the happy-hour row
-// sits alongside session/weekly rows without format drift.
-function formatEndsAt(date, use24Hour) {
-    if (!(date instanceof Date)) return '';
-    return date.toLocaleString(undefined, {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: !use24Hour,
-    });
-}
-
-function renderHappyHourPanel() {
+function renderHappyHourPanel(hh) {
     const item = statusBarItems.happyHour;
     if (!item) return;
 
-    const hh = resolveHappyHourState();
     if (!hh.active) {
         item.hide();
         return;
     }
 
-    const countdown = hh.endsAt
-        ? calculateResetClockTime(dateToDurationString(hh.endsAt))
-        : '';
+    const countdown = hh.endsAt ? calculateResetClockTime(hh.endsAt) : '';
     item.text = countdown ? `${hh.icon} ${countdown}` : hh.icon;
 
     const endsText = hh.endsAt
-        ? ` — off-peak, ends ${formatEndsAt(hh.endsAt, getUse24HourTime())}`
+        ? ` — off-peak, ends ${formatLongDateTime(hh.endsAt, getUse24HourTime())}`
         : ' — off-peak';
-    const md = new vscode.MarkdownString(`**Happy hour**${endsText}`);
-    md.isTrusted = true;
-    md.supportThemeIcons = true;
-    item.tooltip = md;
+    item.tooltip = makeTooltip(`**Happy hour**${endsText}`);
     item.show();
 }
 
-function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo = null, scopedEntries = []) {
-    statusBarItems.label.hide();
-    statusBarItems.session.hide();
-    statusBarItems.weekly.hide();
+function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo, scopedEntries, scopedThresholds) {
+    hidePanel('session');
+    hidePanel('weekly');
     hideScopedItems();
-    statusBarItems.tokens.hide();
-    statusBarItems.credits.hide();
-    lastDisplayedValues.sessionText = null;
-    lastDisplayedValues.weeklyText = null;
-    lastDisplayedValues.tokensText = null;
+    hidePanel('tokens');
+    hidePanel('credits');
 
     const labels = getGaugeLabelOverrides();
-    const parts = [getLabelTextWithStatus()];
+    const parts = [];
     if (sessionPercent !== null) {
         parts.push(`${gaugeLabels('session', labels).compact}${formatPercent(sessionPercent, true)}`);
     }
@@ -633,24 +701,26 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
     // Tk rendering uses the new tokensDisplay setting to choose between
     // bar/percent, k-count, or both. In compact mode the 'bar' variant
     // becomes 'percent' because compact mode has no room for a literal
-    // progress bar.
-    if (tokenPercent !== null) {
-        parts.push(formatTokensDisplayCompact({
-            display: getTokensDisplay(),
-            percent: tokenPercent,
-            current: tokensInfo?.current ?? null,
-            limit: tokensInfo?.limit ?? null,
-            knownLimit: tokensInfo?.knownLimit ?? false,
-        }));
-    } else {
-        parts.push(`${gaugeLabels('tokens', labels).compact}-`);
+    // progress bar. A remote window has no context gauge to show.
+    const tokensLabel = gaugeLabels('tokens', labels).compact;
+    if (!isRemoteWindow()) {
+        parts.push(tokenPercent !== null
+            ? formatTokensDisplayCompact({
+                display: getTokensDisplay(),
+                percent: tokenPercent,
+                current: tokensInfo?.current ?? null,
+                limit: tokensInfo?.limit ?? null,
+                knownLimit: tokensInfo?.knownLimit ?? false,
+                label: tokensLabel,
+            })
+            : `${tokensLabel}-`);
     }
 
-    const compactText = parts.join(' ');
-
-    let compactColor = getServiceStatusColor();
+    let compactColor;
     if (getColorMode() !== 'basic') {
-        const levels = [sessionStatus.level, weeklyStatus.level, tokenStatus.level];
+        const scopedLevels = scopedEntries.map(entry =>
+            getIconAndColor(entry.percent, scopedThresholds.warning, scopedThresholds.error).level);
+        const levels = [sessionStatus.level, weeklyStatus.level, tokenStatus.level, ...scopedLevels];
         if (levels.includes('error')) {
             compactColor = new vscode.ThemeColor('claudemeter.outageRed');
         } else if (levels.includes('warning')) {
@@ -673,12 +743,7 @@ function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionS
         ? '$(warning) '
         : '';
 
-    statusBarItems.compact.color = compactColor;
-    if (compactText !== lastDisplayedValues.compactText) {
-        statusBarItems.compact.text = `${icon}${compactText}`;
-        statusBarItems.compact.show();
-        lastDisplayedValues.compactText = compactText;
-    }
+    compactParts = { icon, body: parts.join(' '), color: compactColor };
 }
 
 function renderMultiPanelMode(
@@ -698,105 +763,50 @@ function renderMultiPanelMode(
     creditsThresholds,
     tokensInfo = null
 ) {
-    statusBarItems.compact.hide();
-    lastDisplayedValues.compactText = null;
-    statusBarItems.label.show();
+    hidePanel('compact');
 
     const isMinimal = displayMode === DISPLAY_MODES.MINIMAL;
 
     const labels = getGaugeLabelOverrides();
 
-    let newSessionText = null;
-    let sessionVisible = false;
-    if (sessionPercent !== null) {
-        const sessionDisplay = formatPercent(sessionPercent);
-        const sessionIcon = gaugeIconForLevel(sessionStatus.level, 'session');
-        const sessionLabel = gaugeLabels('session', labels).short;
-        if (isMinimal) {
-            newSessionText = `${sessionIcon ? sessionIcon + ' ' : ''}${sessionLabel} ${sessionDisplay}`;
-        } else {
-            newSessionText = `${sessionIcon ? sessionIcon + ' ' : ''}${sessionLabel} ${sessionDisplay} $(history) ${sessionResetTime}`;
+    const resetGauges = [
+        ['session', sessionPercent, sessionStatus, sessionResetTime],
+        ['weekly', weeklyPercent, weeklyStatus, weeklyResetTime],
+    ];
+    for (const [key, percent, status, resetTime] of resetGauges) {
+        if (percent === null) {
+            hidePanel(key);
+            continue;
         }
-        sessionVisible = true;
-    }
-
-    if (sessionVisible) {
+        const icon = gaugeIconForLevel(status.level, key);
+        const reset = isMinimal ? '' : ` $(history) ${resetTime}`;
         // Colour reacts to tier changes even when the text is unchanged
         // (e.g. simulator switching the level), so update it on every tick.
-        statusBarItems.session.color = gaugeColorOrUndefined(sessionStatus);
-    }
-    if (newSessionText !== lastDisplayedValues.sessionText) {
-        if (sessionVisible) {
-            statusBarItems.session.text = newSessionText;
-            statusBarItems.session.show();
-        } else {
-            statusBarItems.session.hide();
-        }
-        lastDisplayedValues.sessionText = newSessionText;
+        statusBarItems[key].color = gaugeColorOrUndefined(status);
+        drawPanel(key, `${icon ? icon + ' ' : ''}${gaugeLabels(key, labels).short} ${formatPercent(percent)}${reset}`);
     }
 
-    let newWeeklyText = null;
-    let weeklyVisible = false;
-    if (weeklyPercent !== null) {
-        const weeklyDisplay = formatPercent(weeklyPercent);
-        const weeklyIcon = gaugeIconForLevel(weeklyStatus.level, 'weekly');
-        const weeklyLabel = gaugeLabels('weekly', labels).short;
-        if (isMinimal) {
-            newWeeklyText = `${weeklyIcon ? weeklyIcon + ' ' : ''}${weeklyLabel} ${weeklyDisplay}`;
-        } else {
-            newWeeklyText = `${weeklyIcon ? weeklyIcon + ' ' : ''}${weeklyLabel} ${weeklyDisplay} $(history) ${weeklyResetTime}`;
-        }
-        weeklyVisible = true;
-    }
-
-    if (weeklyVisible) {
-        statusBarItems.weekly.color = gaugeColorOrUndefined(weeklyStatus);
-    }
-    if (newWeeklyText !== lastDisplayedValues.weeklyText) {
-        if (weeklyVisible) {
-            statusBarItems.weekly.text = newWeeklyText;
-            statusBarItems.weekly.show();
-        } else {
-            statusBarItems.weekly.hide();
-        }
-        lastDisplayedValues.weeklyText = newWeeklyText;
-    }
-
-    let newTokensText;
-    let tokensVisible;
-    if (tokenPercent !== null) {
-        const tokenDisplay = formatTokensDisplay({
-            display: getTokensDisplay(),
-            percent: tokenPercent,
-            current: tokensInfo?.current ?? null,
-            limit: tokensInfo?.limit ?? null,
-            knownLimit: tokensInfo?.knownLimit ?? false,
-            usageFormat: getUsageFormat(),
-        });
+    if (isRemoteWindow()) {
+        hidePanel('tokens');
+    } else {
         // Tk deliberately has no icon at any level - the colour alone
         // signals warning/error. See gaugeIconForLevel for rationale.
-        newTokensText = `${gaugeLabels('tokens', labels).short} ${tokenDisplay}`;
-        tokensVisible = true;
-    } else {
-        newTokensText = `${gaugeLabels('tokens', labels).short} -`;
-        tokensVisible = true;
-    }
-
-    if (tokensVisible) {
+        const tokenDisplay = tokenPercent !== null
+            ? formatTokensDisplay({
+                display: getTokensDisplay(),
+                percent: tokenPercent,
+                current: tokensInfo?.current ?? null,
+                limit: tokensInfo?.limit ?? null,
+                knownLimit: tokensInfo?.knownLimit ?? false,
+                usageFormat: getUsageFormat(),
+            })
+            : '-';
         // Tk colour MUST update on every tick - the rot tiers
         // (rotLight/rotDeep) often fire when the gauge text stays
         // identical (e.g. 80% bar with a 1m limit), so gating colour on
         // text-change leaves the gauge in the previous tier's colour.
         statusBarItems.tokens.color = gaugeColorOrUndefined(tokenStatus);
-    }
-    if (newTokensText !== lastDisplayedValues.tokensText) {
-        if (tokensVisible) {
-            statusBarItems.tokens.text = newTokensText;
-            statusBarItems.tokens.show();
-        } else {
-            statusBarItems.tokens.hide();
-        }
-        lastDisplayedValues.tokensText = newTokensText;
+        drawPanel('tokens', `${gaugeLabels('tokens', labels).short} ${tokenDisplay}`);
     }
 
     // Simulator overrides for the scoped gauges and credits panel. Each
@@ -837,22 +847,15 @@ function renderMultiPanelMode(
         const credits = effectiveCredits;
         const creditsStatus = getIconAndColor(credits.percent, creditsThresholds.warning, creditsThresholds.error);
         const currencySymbol = getCurrencySymbol(credits.currency);
-        const usedDisplay = credits.used >= 1000
-            ? `${(credits.used / 1000).toFixed(1)}K`
-            : Math.round(credits.used);
+        const usedDisplay = formatCompact(credits.used);
         const creditsDisplay = formatPercent(credits.percent);
         const creditsIcon = gaugeIconForLevel(creditsStatus.level, 'credits');
         newCreditsText = `${creditsIcon ? creditsIcon + ' ' : ''}${currencySymbol}${usedDisplay}/${creditsDisplay}`;
 
         statusBarItems.credits.color = gaugeColorOrUndefined(creditsStatus);
-        if (newCreditsText !== lastDisplayedValues.creditsText) {
-            statusBarItems.credits.text = newCreditsText;
-            statusBarItems.credits.show();
-            lastDisplayedValues.creditsText = newCreditsText;
-        }
+        drawPanel('credits', newCreditsText);
     } else {
-        statusBarItems.credits.hide();
-        lastDisplayedValues.creditsText = null;
+        hidePanel('credits');
     }
 }
 
@@ -873,84 +876,42 @@ function renderMultiPanelMode(
 function createStatusBarItem(context) {
     const alignment = getStatusBarAlignment();
     const basePriority = getStatusBarPriority();
+    // New items start blank, so no cached text may suppress their first render.
+    resetRenderState();
 
-    statusBarItems.label = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.9
-    );
-    statusBarItems.label.command = COMMANDS.FETCH_NOW;
+    // Every panel is a click target for a fetch.
+    const panel = (offset) => {
+        const item = vscode.window.createStatusBarItem(alignment, basePriority + offset);
+        item.command = COMMANDS.FETCH_NOW;
+        context.subscriptions.push(item);
+        return item;
+    };
+
+    statusBarItems.label = panel(0.9);
     statusBarItems.label.text = getLabelTextWithStatus();
     statusBarItems.label.show();
-    context.subscriptions.push(statusBarItems.label);
 
     // Transient spinner panel - appears only while a fetch is in flight.
     // Sits just right of the label using $(sync~spin) which VS Code
     // auto-animates, so we don't need an interval-driven frame loop.
-    statusBarItems.spinner = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.85
-    );
+    // Initially hidden - shown only during startSpinner().
+    statusBarItems.spinner = panel(0.85);
     statusBarItems.spinner.text = '$(sync~spin)';
     statusBarItems.spinner.tooltip = 'Checking Claude...';
-    statusBarItems.spinner.command = COMMANDS.FETCH_NOW;
-    // Initially hidden - shown only during startSpinner().
-    context.subscriptions.push(statusBarItems.spinner);
 
     // Transient happy-hour panel - visible only during Anthropic's
     // off-peak window. Positioned between spinner and session.
-    statusBarItems.happyHour = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.8
-    );
-    statusBarItems.happyHour.command = COMMANDS.FETCH_NOW;
-    context.subscriptions.push(statusBarItems.happyHour);
-
-    statusBarItems.session = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.7
-    );
-    statusBarItems.session.command = COMMANDS.FETCH_NOW;
-    context.subscriptions.push(statusBarItems.session);
-
-    statusBarItems.weekly = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.6
-    );
-    statusBarItems.weekly.command = COMMANDS.FETCH_NOW;
-    context.subscriptions.push(statusBarItems.weekly);
-
+    statusBarItems.happyHour = panel(0.8);
+    statusBarItems.session = panel(0.7);
+    statusBarItems.weekly = panel(0.6);
     // Scoped weekly slots sit between Weekly and Tokens.
     statusBarItems.scoped = [];
     for (let i = 0; i < SCOPED_SLOTS; i++) {
-        const item = vscode.window.createStatusBarItem(
-            alignment,
-            basePriority + 0.5 - i * 0.05
-        );
-        item.command = COMMANDS.FETCH_NOW;
-        statusBarItems.scoped.push(item);
-        context.subscriptions.push(item);
+        statusBarItems.scoped.push(panel(0.5 - i * 0.05));
     }
-
-    statusBarItems.credits = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.3
-    );
-    statusBarItems.credits.command = COMMANDS.FETCH_NOW;
-    context.subscriptions.push(statusBarItems.credits);
-
-    statusBarItems.tokens = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.2
-    );
-    statusBarItems.tokens.command = COMMANDS.FETCH_NOW;
-    context.subscriptions.push(statusBarItems.tokens);
-
-    statusBarItems.compact = vscode.window.createStatusBarItem(
-        alignment,
-        basePriority + 0.7
-    );
-    statusBarItems.compact.command = COMMANDS.FETCH_NOW;
-    context.subscriptions.push(statusBarItems.compact);
+    statusBarItems.credits = panel(0.3);
+    statusBarItems.tokens = panel(0.2);
+    statusBarItems.compact = panel(0.7);
 
     return statusBarItems.label;
 }
@@ -958,7 +919,8 @@ function createStatusBarItem(context) {
 function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null) {
     // Happy-hour panel is independent of fetch state - render on
     // every tick so the countdown stays fresh.
-    renderHappyHourPanel();
+    const happyHourState = resolveHappyHourState();
+    renderHappyHourPanel(happyHourState);
 
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
@@ -969,14 +931,13 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     const globalError = config.get('thresholds.error', 90);
 
     // Per-gauge thresholds: the schema declares each key with default 0,
-    // and 0 here means "inherit the global". Anything > 0 wins over the
-    // gauge-specific fallback, which itself wins over the global.
-    const getThresholds = (gauge, defaultWarning = globalWarning, defaultError = globalError) => {
+    // and anything not above 0 inherits the global.
+    const getThresholds = (gauge) => {
         const warning = config.get(`thresholds.${gauge}.warning`);
         const error = config.get(`thresholds.${gauge}.error`);
         return {
-            warning: (warning !== undefined && warning !== null && warning > 0) ? warning : defaultWarning,
-            error: (error !== undefined && error !== null && error > 0) ? error : defaultError
+            warning: warning > 0 ? warning : globalWarning,
+            error: error > 0 ? error : globalError,
         };
     };
 
@@ -986,36 +947,30 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     const creditsThresholds = getThresholds('credits');
 
     const tokenOnlyMode = config.get('tokenOnlyMode', false);
+    // No web fetch runs in token-only mode, so no web failure can still apply.
+    if (tokenOnlyMode) lastFetchError = null;
+    const tokenError = sessionData?.tokenUsage ? null : (lastFetchError?.tokenError ?? null);
+
+    applyServiceStatusBackground();
 
     if (!usageData && !sessionData) {
-        if (statusBarItems.label) {
-            statusBarItems.label.text = getLabelTextWithStatus();
-            statusBarItems.label.color = getServiceStatusColor();
-        }
-        setAllBackgrounds(getServiceStatusBackground());
-        if (tokenOnlyMode) {
-            // In token-only mode, show token gauge as waiting (no web fetch needed)
+        hideAllMetricItems();
+        if (tokenOnlyMode && !isRemoteWindow()) {
+            // The token gauge waits for a session; no web fetch is needed.
             setAllTooltips('Waiting for Claude Code session...');
-            hideAllMetricItems();
+            const labels = getGaugeLabelOverrides();
             if (displayMode === DISPLAY_MODES.COMPACT) {
-                statusBarItems.compact.text = `${getLabelTextWithStatus()} Tk --`;
-                statusBarItems.compact.show();
+                compactParts = { icon: '', body: `${gaugeLabels('tokens', labels).compact} --`, color: undefined };
             } else {
-                statusBarItems.tokens.text = 'Tk --';
-                statusBarItems.tokens.show();
+                statusBarItems.tokens.color = undefined;
+                drawPanel('tokens', `${gaugeLabels('tokens', labels).short} --`);
             }
         } else {
             setAllTooltips('Click to fetch Claude usage data');
-            hideAllMetricItems();
         }
+        drawHead(tokenError);
         return;
     }
-
-    if (statusBarItems.label) {
-        statusBarItems.label.text = getLabelTextWithStatus();
-        statusBarItems.label.color = getServiceStatusColor();
-    }
-    setAllBackgrounds(getServiceStatusBackground());
 
     // Compute derived values used by both the tooltip composer and
     // the renderers below.
@@ -1051,8 +1006,9 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             tokenProfile = selectProfile({
                 subscriptionType: credentialsInfo?.subscriptionType,
                 rateLimitTier: credentialsInfo?.rateLimitTier,
-                orgType: usageData?.accountInfo?.orgType,
-            });
+                organizationType: usageData?.accountInfo?.organizationType
+                    || credentialsInfo?.organizationType,
+            }, profileLogger);
         }
 
         // Apply per-profile threshold overrides from claudemeter.thresholds.tokens.profiles
@@ -1116,7 +1072,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     if (usageData) {
         sessionPercent = usageData.usagePercent;
-        sessionResetTime = calculateResetClockTime(usageData.resetTime);
+        sessionResetTime = calculateResetClockTime(usageData.resetsAt);
         sessionStatus = getIconAndColor(sessionPercent, sessionThresholds.warning, sessionThresholds.error);
     }
     const simSession = simulator.getSessionPercent();
@@ -1131,13 +1087,13 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
 
     if (usageData && usageData.usagePercentWeek !== undefined) {
         weeklyPercent = usageData.usagePercentWeek;
-        const resetTimeStr = usageData.resetTimeWeek || '';
-        const isWithin24hrs = !resetTimeStr.includes('d');
+        const weeklyResetDate = toResetDate(usageData.resetsAtWeek);
+        const isWithin24hrs = !!weeklyResetDate && weeklyResetDate.getTime() - Date.now() < DAY_MS;
         const needsMinutePrecision = isWithin24hrs && weeklyPercent >= WEEKLY_MINUTE_PRECISION_PCT;
         const weeklyTimeFormat = needsMinutePrecision
             ? { hour: 'numeric', minute: '2-digit' }
             : { hour: 'numeric' };
-        weeklyResetTime = calculateResetClockTime(usageData.resetTimeWeek, weeklyTimeFormat);
+        weeklyResetTime = calculateResetClockTime(weeklyResetDate, weeklyTimeFormat);
         weeklyStatus = getIconAndColor(weeklyPercent, weeklyThresholds.warning, weeklyThresholds.error);
     }
     const simWeekly = simulator.getWeeklyPercent();
@@ -1161,6 +1117,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         ? `https://marketplace.visualstudio.com/items?itemName=${extPackageJson.publisher}.${extPackageJson.name}&ssr=false#review-details`
         : '';
     const platformTooltipLines = getServiceStatusTooltipLines();
+    const scopedWeekly = getScopedWeekly(usageData);
+    const gaugeLabelOverrides = getGaugeLabelOverrides();
 
     const markdownBody = composeTooltip({
         usageData,
@@ -1168,15 +1126,17 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         credentialsInfo,
         activityStats,
         platformTooltipLines,
-        activityQuipOverride: getActivityQuipOverride(),
-        happyHourState: resolveHappyHourState(),
+        activityQuipOverride: composeCurrentLabel().quirkyOverride,
+        happyHourState,
         showNopilotOffer: resolveNopilotOffer(),
         extensionVersion: extVersion,
         repositoryUrl,
         marketplaceUrl,
         brandIconDataUri: getBrandIconDataUri(),
         claudeCodeSelectedModel: vscode.workspace.getConfiguration('claudeCode').get('selectedModel', ''),
-        remoteName: vscode.env.remoteName || null,
+        remoteName: clientSideRemoteName(),
+        scopedWeekly,
+        gaugeLabelOverrides,
         tokensInfo,
         config: {
             tokenLimitOverride: config.get('tokenLimit', 0),
@@ -1185,20 +1145,25 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         },
     });
 
-    const markdown = new vscode.MarkdownString(getTooltipLogoHeader() + markdownBody);
-    markdown.isTrusted = true;  // Enable clickable links
-    markdown.supportThemeIcons = true;  // Render $(codicon-name) glyphs
-    setAllTooltips(markdown);
+    if (!lastFetchError) {
+        const scope = [
+            credentialsInfo?.accountUuid || credentialsInfo?.orgId || credentialsInfo?.email || '',
+            usageData ? 'web' : '',
+            sessionData?.tokenUsage ? 'tk' : '',
+        ].join('|');
+        setUsageTooltip(makeTooltip(getTooltipLogoHeader() + markdownBody, TOOLTIP_COMMANDS), scope);
+    }
 
     // A scoped limit is drawn only once it registers above 0%: an account that
     // has never touched the model reports 0 and would otherwise carry a
     // permanent dead gauge.
     const visibleScoped = showScopedWeekly
-        ? getScopedWeekly(usageData).filter(e => typeof e.percent === 'number' && e.percent > 0)
+        ? scopedWeekly.filter(e => typeof e.percent === 'number' && e.percent > 0)
         : [];
 
     if (displayMode === DISPLAY_MODES.COMPACT) {
-        renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo, visibleScoped);
+        renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus,
+            tokensInfo, visibleScoped, scopedThresholds);
     } else {
         renderMultiPanelMode(
             displayMode,
@@ -1218,6 +1183,7 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             tokensInfo
         );
     }
+    drawHead(tokenError);
 }
 
 function startSpinner() {
@@ -1228,99 +1194,19 @@ function startSpinner() {
     }
 }
 
+// Records the fetch outcome and draws a failure at once. A clean result only
+// clears the record: the render that follows owns the normal text and colours,
+// including the compact panel's threshold and rot colours.
 function stopSpinner(webError = null, tokenError = null) {
     isSpinnerActive = false;
     if (statusBarItems.spinner) {
         statusBarItems.spinner.hide();
     }
 
-    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    const displayMode = config.get('statusBar.displayMode', DISPLAY_MODES.DEFAULT);
-    const isCompactMode = displayMode === DISPLAY_MODES.COMPACT;
-
-    // Checked before the combined branch: tokenError is set in every window
-    // without a live Claude Code session, so the combined wording would
-    // otherwise bury the auth message in the common case.
-    const authFailure = webError && webError.authReason
-        ? describeAuthFailure(webError.authReason, webError.authContext)
-        : null;
-
-    if (authFailure) {
-        const errorLines = [`**${authFailure.title}**`, '', ...authFailure.lines];
-        if (tokenError) {
-            errorLines.push('', 'No Claude Code session in this window, so no context gauge either.');
-        }
-        errorLines.push('', authFailure.canRelogin
-            ? '• **Click to log into Claude Code**'
-            : '• Run "Claudemeter: Show Debug Output" for details');
-
-        setAllTooltips(makeErrorTooltip(errorLines));
-
-        if (isCompactMode && statusBarItems.compact) {
-            statusBarItems.compact.text = `${statusBarItems.compact.text || getLabelTextWithStatus()} ⚠`;
-            statusBarItems.compact.color = new vscode.ThemeColor('charts.yellow');
-        } else if (statusBarItems.label) {
-            statusBarItems.label.text = `${getLabelTextWithStatus()} ⚠`;
-            statusBarItems.label.color = new vscode.ThemeColor('charts.yellow');
-        }
-    } else if (webError && tokenError) {
-        const errorLines = [
-            '**Complete Fetch Failed**',
-            '',
-            `Web: ${webError.message}`,
-            `Tokens: ${tokenError.message}`,
-            '',
-            '**Debug Info**',
-            `Time: ${new Date().toLocaleString()}`,
-            '',
-            '**Actions**',
-            '• Click to retry',
-            '• Run "Claudemeter: Show Debug Output" for details',
-        ];
-        const errorTooltip = makeErrorTooltip(errorLines);
-
-        setAllTooltips(errorTooltip);
-
-        if (isCompactMode && statusBarItems.compact) {
-            statusBarItems.compact.text = `${statusBarItems.compact.text || LABEL_TEXT} ✗`;
-            statusBarItems.compact.color = new vscode.ThemeColor('claudemeter.outageRed');
-        } else if (statusBarItems.label) {
-            statusBarItems.label.text = `${getLabelTextWithStatus()} ✗`;
-            statusBarItems.label.color = new vscode.ThemeColor('claudemeter.outageRed');
-        }
-    } else if (webError) {
-        // tokenOnlyMode is NOT handled here: performFetch short-circuits before
-        // any web fetch when it's on, so webError is never set in that mode.
-        const errorLines = [
-            '**Web Fetch Failed**',
-            '',
-            `Error: ${webError.message}`,
-            '',
-            '**Debug Info**',
-            `Time: ${new Date().toLocaleString()}`,
-            '',
-            'Token data may still be available',
-            '',
-            '**Actions**',
-            '• Click to retry',
-            '• Run "Claudemeter: Show Debug Output" for details',
-        ];
-        const errorTooltip = makeErrorTooltip(errorLines);
-
-        setAllTooltips(errorTooltip);
-
-        if (isCompactMode && statusBarItems.compact) {
-            statusBarItems.compact.text = `${statusBarItems.compact.text || getLabelTextWithStatus()} ⚠`;
-            statusBarItems.compact.color = new vscode.ThemeColor('charts.yellow');
-        } else if (statusBarItems.label) {
-            statusBarItems.label.text = `${getLabelTextWithStatus()} ⚠`;
-            statusBarItems.label.color = new vscode.ThemeColor('charts.yellow');
-        }
+    lastFetchError = webError ? { webError, tokenError, at: new Date() } : null;
+    if (lastFetchError && statusBarItems.label) {
+        drawHead(tokenError);
     }
-    // No error: nothing to decorate. updateStatusBar runs immediately before
-    // this and owns the normal text and colour, including the compact panel's
-    // threshold and rot colours, so re-applying the service-status colour here
-    // would erase them on every successful fetch.
 }
 
 module.exports = {
@@ -1329,6 +1215,4 @@ module.exports = {
     startSpinner,
     stopSpinner,
     refreshServiceStatus,
-    getServiceStatus,
-    DISPLAY_MODES
 };

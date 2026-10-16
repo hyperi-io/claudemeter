@@ -14,7 +14,9 @@
 //   - otherwise it fetches, but under a file lock so concurrent windows
 //     serialise instead of bursting the endpoint (the classic thundering herd),
 //   - on a fetch error (429 / timeout) it serves the last-known cached value so
-//     the gauges keep showing rather than vanishing.
+//     the gauges keep showing rather than vanishing,
+//   - an entry is tagged with the account it was fetched for and is ignored by
+//     a window on any other account, fresh or stale.
 //
 // The token itself is fine - this is purely about request volume, not access.
 //
@@ -31,10 +33,14 @@ const CACHE_FILE = path.join(PATHS.CONFIG_DIR, 'usage-cache.json');
 
 // The cache may have been written by a different resident claudemeter version,
 // so derived fields the writer never stored are recomputed on the way out.
-async function readCache() {
+// An entry tagged for another account reads as no entry, but an untagged one is shared.
+async function readCache(cacheFile, account) {
     try {
-        const cache = JSON.parse(await fs.readFile(CACHE_FILE, 'utf8'));
-        if (cache && cache.usageData) upgradeCachedUsage(cache.usageData);
+        const cache = JSON.parse(await fs.readFile(cacheFile, 'utf8'));
+        if (!cache) return null;
+        const owner = cache.account ?? null;
+        if (owner !== null && owner !== (account ?? null)) return null;
+        if (cache.usageData) upgradeCachedUsage(cache.usageData);
         return cache;
     } catch {
         return null; // missing / unreadable / malformed
@@ -52,15 +58,18 @@ function isFresh(cache, maxAgeMs) {
 // otherwise a fresh fetch (written back to the cache). Serialised via a lock so
 // concurrent windows make at most one network call per maxAgeMs. Throws only
 // when there is no data at all (fetch failed AND no cache to fall back on).
-async function cachedFetchUsage(fetchFn, maxAgeMs) {
-    const cached = await readCache();
+//
+// account is the identity the entry is keyed by (accountUuid, else the org
+// uuid); null shares an entry only with other windows that also have none.
+async function cachedFetchUsage(fetchFn, maxAgeMs, { account = null, cacheFile = CACHE_FILE } = {}) {
+    const cached = await readCache(cacheFile, account);
     if (isFresh(cached, maxAgeMs)) {
         return { usageData: cached.usageData, fromCache: true };
     }
 
     let lock;
     try {
-        lock = await acquireFileLock(CACHE_FILE, { timeoutMs: 20000 });
+        lock = await acquireFileLock(cacheFile, { timeoutMs: 20000 });
     } catch (lockErr) {
         // Another window is holding the lock (slow fetch). Serve stale rather
         // than block or blank; the holder will refresh the cache shortly.
@@ -71,14 +80,14 @@ async function cachedFetchUsage(fetchFn, maxAgeMs) {
     }
     try {
         // Another window may have refreshed the cache while we waited on the lock.
-        const again = await readCache();
+        const again = await readCache(cacheFile, account);
         if (isFresh(again, maxAgeMs)) {
             return { usageData: again.usageData, fromCache: true };
         }
 
         try {
             const usageData = await fetchFn();
-            await atomicWriteJson(CACHE_FILE, { usageData, fetchedAt: Date.now() });
+            await atomicWriteJson(cacheFile, { usageData, fetchedAt: Date.now(), account });
             return { usageData, fromCache: false };
         } catch (err) {
             // Auth-absence (token gone / API-key override) must NOT be masked
@@ -100,4 +109,4 @@ async function cachedFetchUsage(fetchFn, maxAgeMs) {
     }
 }
 
-module.exports = { cachedFetchUsage, CACHE_FILE };
+module.exports = { cachedFetchUsage };

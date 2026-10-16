@@ -99,10 +99,10 @@ rotLight 300K -> 400K, rotDeep 500K -> 650K. They had been sitting at the old
 off while 4.8 at 256K is still scoring 85.9% BFS, which is plainly premature for
 this model. We kept them at the cautious end of the reasoned band rather than
 the naive-endpoint end, to respect the CAG pull. The change lives in both
-`src/tk/profiles.js` (`STANDARD_ROT`, the `max-*`/`team-standard` profiles) and
+`src/tk/profiles.js` (`STANDARD_ROT`, shared by every profile) and
 `src/tk/thresholds.js` (`DEFAULT_ROT_*`), so the frontier is the same whether it
-comes from a profile or the window-gated default. Pro/200K profiles are
-untouched - rot never fires below the window anyway. Still a judgement call.
+comes from a profile or the window-gated default. Rot is gated on the window
+(over 200K), not the profile, so a 200K window never shows it. Still a judgement call.
 Revisit if real binned 4.8 data ever lands.
 
 ## Read this before you re-run for 4.9

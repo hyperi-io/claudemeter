@@ -27,7 +27,7 @@ const { TIER_COLORS } = require('./tk/colorMap');
 /**
  * Resolve the colour for a Tk-tier name.
  *
- * @param {'normal'|'rotLight'|'rotDeep'|'warning'|'error'|'happyHour'|string} tier
+ * @param {'normal'|'rotLight'|'rotDeep'|'warning'|'error'|string} tier
  * @returns {{themeColor: string|vscode.ThemeColor|undefined, hex: string|null}}
  */
 function resolveColor(tier) {

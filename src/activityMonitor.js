@@ -34,11 +34,20 @@ function getActivityLevel(usageData = null, sessionData = null) {
     }
 }
 
+// Any change to the tooltip text makes VS Code re-render an open hover, so
+// a quip re-rolled every tick pins the hover open and swallows new ones.
+const QUIP_HOLD_MS = 5 * 60 * 1000;
+let heldQuip = null;
+
 function getActivityDescription(level) {
     const levelDescriptions = ACTIVITY_DESCRIPTIONS[level] || ACTIVITY_DESCRIPTIONS['idle'];
+    const now = Date.now();
+    if (!heldQuip || heldQuip.level !== level || now - heldQuip.at > QUIP_HOLD_MS) {
+        heldQuip = { level, at: now, quirky: pickRandom(levelDescriptions.quirkyOptions) };
+    }
     return {
         short: levelDescriptions.short,
-        quirky: pickRandom(levelDescriptions.quirkyOptions),
+        quirky: heldQuip.quirky,
     };
 }
 

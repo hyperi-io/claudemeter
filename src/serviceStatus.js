@@ -78,15 +78,9 @@ let cachedStatus = null;
 let lastFetchTime = 0;
 const CACHE_TTL_MS = 60000; // Cache for 1 minute
 
-// UI-observable state (previously lived in statusBar.js):
-//   - currentStatus: last successful fetch result, consumed by renderers
-//   - currentError:  set when a refresh fails; cleared on next success
-// These are separate from `cachedStatus` above (which is the 60s API-
-// result cache used inside fetchServiceStatus). Two caches, two jobs:
-// the API cache limits outbound calls; the UI cache holds the last-
-// good result for rendering between refresh ticks.
+// The last successful refresh for renderers, null after a failed one. Distinct
+// from `cachedStatus`, which only rate-limits outbound calls inside fetchServiceStatus.
 let currentStatus = null;
-let currentError = null;
 
 function humaniseComponentStatus(status) {
     const words = String(status).split('_');
@@ -143,29 +137,35 @@ function parseServiceStatus(summary) {
     };
 }
 
-/**
- * Fetch the watched component status from status.claude.com
- * @returns {Promise<{indicator: string, description: string, updatedAt: string}>}
- */
-async function fetchServiceStatus() {
-    // Return cached result if still fresh
-    const now = Date.now();
-    if (cachedStatus && (now - lastFetchTime) < CACHE_TTL_MS) {
-        return cachedStatus;
-    }
+// Bounds what one status fetch can buffer, a body past it fails the fetch.
+const MAX_STATUS_BODY_BYTES = 1024 * 1024;
 
+/**
+ * GET a JSON document, failing on a non-200, a timeout or a body over
+ * MAX_STATUS_BODY_BYTES.
+ * @param {string} url
+ * @param {object} client - the https module, or http for a local server
+ * @returns {Promise<object>}
+ */
+function fetchJson(url, client = https) {
     return new Promise((resolve, reject) => {
-        const request = https.get(STATUS_API_URL, {
+        const request = client.get(url, {
             timeout: 10000,
             headers: {
                 'Accept': 'application/json',
                 'User-Agent': 'Claudemeter-VSCode/1.0'
             }
         }, (response) => {
-            let data = '';
+            const chunks = [];
+            let bytes = 0;
 
             response.on('data', (chunk) => {
-                data += chunk;
+                bytes += chunk.length;
+                if (bytes > MAX_STATUS_BODY_BYTES) {
+                    request.destroy(new Error(`response larger than ${MAX_STATUS_BODY_BYTES} bytes`));
+                    return;
+                }
+                chunks.push(chunk);
             });
 
             response.on('end', () => {
@@ -173,14 +173,7 @@ async function fetchServiceStatus() {
                     if (response.statusCode !== 200) {
                         throw new Error(`HTTP ${response.statusCode}`);
                     }
-
-                    const result = parseServiceStatus(JSON.parse(data));
-
-                    // Update cache
-                    cachedStatus = result;
-                    lastFetchTime = now;
-
-                    resolve(result);
+                    resolve(JSON.parse(Buffer.concat(chunks).toString('utf-8')));
                 } catch (parseError) {
                     reject(new Error(`Failed to parse status response: ${parseError.message}`));
                 }
@@ -199,43 +192,25 @@ async function fetchServiceStatus() {
 }
 
 /**
- * Get display info for a status indicator
- * @param {string} indicator - Status indicator from API (none, minor, major, critical)
- * @returns {{icon: string, label: string, color: string|undefined, level: string}}
+ * Fetch the watched component status from status.claude.com
+ * @returns {Promise<{indicator: string, description: string, updatedAt: string}>}
  */
-function getStatusDisplay(indicator) {
-    return STATUS_INDICATORS[indicator] || STATUS_INDICATORS.unknown;
-}
-
-/**
- * Format the updated_at timestamp for display
- * @param {string} isoTimestamp - ISO 8601 timestamp
- * @returns {string} Formatted time string
- */
-function formatStatusTime(isoTimestamp) {
-    if (!isoTimestamp) return 'Unknown';
-
-    try {
-        const date = new Date(isoTimestamp);
-        return date.toLocaleString();
-    } catch (e) {
-        return 'Unknown';
+async function fetchServiceStatus() {
+    // Return cached result if still fresh
+    const now = Date.now();
+    if (cachedStatus && (now - lastFetchTime) < CACHE_TTL_MS) {
+        return cachedStatus;
     }
+
+    const result = parseServiceStatus(await fetchJson(STATUS_API_URL));
+    cachedStatus = result;
+    lastFetchTime = now;
+    return result;
 }
 
 /**
- * Clear the cached status (useful for forcing a refresh)
- */
-function clearStatusCache() {
-    cachedStatus = null;
-    lastFetchTime = 0;
-}
-
-/**
- * Refresh the service-status UI state. Wraps fetchServiceStatus with
- * state persistence: on success, stores into `currentStatus` and clears
- * `currentError`; on failure, stores into `currentError` and nulls out
- * the status so the caller knows the data is stale.
+ * Refresh the service-status UI state: `currentStatus` holds the fetch
+ * result, or null after a failure so the caller knows the data is stale.
  *
  * Callers should re-render after this resolves (state is now updated).
  *
@@ -249,10 +224,8 @@ async function refreshStatus() {
     }
     try {
         currentStatus = await fetchServiceStatus();
-        currentError = null;
         return currentStatus;
-    } catch (error) {
-        currentError = error;
+    } catch {
         currentStatus = null;
         return null;
     }
@@ -269,7 +242,6 @@ function setSimulatedStatus(indicator) {
         // Returning to live mode - null out so the next refresh repopulates
         // from the real API rather than leaving a stale simulated status.
         currentStatus = null;
-        currentError = null;
         return;
     }
     if (!STATUS_INDICATORS[indicator]) {
@@ -282,11 +254,6 @@ function setSimulatedStatus(indicator) {
         updatedAt: new Date().toISOString(),
         pageUrl: STATUS_PAGE_URL
     };
-    currentError = null;
-}
-
-function getSimulatedStatus() {
-    return simulatedIndicator;
 }
 
 /**
@@ -298,34 +265,12 @@ function getCurrentStatus() {
     return currentStatus;
 }
 
-/**
- * Return the error from the last refresh, if any. Cleared on next
- * successful refresh.
- */
-function getCurrentError() {
-    return currentError;
-}
-
-/**
- * Reset the UI-observable state. Used by tests; not called in prod.
- */
-function resetState() {
-    currentStatus = null;
-    currentError = null;
-}
-
 module.exports = {
-    fetchServiceStatus,
+    fetchJson,
     parseServiceStatus,
-    getStatusDisplay,
-    formatStatusTime,
-    clearStatusCache,
     refreshStatus,
     getCurrentStatus,
-    getCurrentError,
-    resetState,
     setSimulatedStatus,
-    getSimulatedStatus,
     STATUS_PAGE_URL,
-    STATUS_INDICATORS
+    MAX_STATUS_BODY_BYTES,
 };
