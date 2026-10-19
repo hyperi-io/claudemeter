@@ -1,3 +1,10 @@
+## [2.5.23](https://github.com/hyperi-io/claudemeter/compare/v2.5.22...v2.5.23) (2026-10-19)
+
+
+### Bug Fixes
+
+* keep Tk and the usage bars legible on any status bar ([#69](https://github.com/hyperi-io/claudemeter/issues/69)) ([4f4de4d](https://github.com/hyperi-io/claudemeter/commit/4f4de4db063dda5a5a1a2425f21de2359733ecaf)), closes [#163a63](https://github.com/hyperi-io/claudemeter/issues/163a63)
+
 ## [2.5.22](https://github.com/hyperi-io/claudemeter/compare/v2.5.21...v2.5.22) (2026-10-16)
 
 
