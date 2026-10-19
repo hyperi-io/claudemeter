@@ -28,7 +28,7 @@ const { describeAuthFailure } = require('./authFailure');
 const { escapeMarkdown } = require('./markdown');
 const { isHappyHour, nextTransition, validatePeakWindow, HAPPY_HOUR_ICONS } = require('./happyHour');
 const { isCoreApplied, globalScopeReader, isDeclared } = require('./declutter/state');
-const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolver');
+const { resolveColor, resolveRotGradient, getColorMode: realGetColorMode } = require('./colorResolver');
 const simulator = require('./simulator');
 const { selectProfile } = require('./tk/profileSelector');
 
@@ -42,7 +42,6 @@ const profileLogger = {
 };
 const { getTkLevel, rotGradientT } = require('./tk/thresholds');
 const { lerpHexOklab } = require('./tk/gradient');
-const { ROT_GRADIENT } = require('./tk/colorMap');
 const { TIER_RECOMMENDATIONS } = require('./tk/recommendations');
 
 // Weekly reset time switches from hour to minute precision once you're within
@@ -157,6 +156,12 @@ function getUsageFormat() {
     // (SF Mono / Menlo) and most Linux fonts (DejaVu / Liberation / Noto)
     // all include the Geometric Shapes glyphs, so barCircle stays default
     // there.
+    //
+    // In a remote window process.platform names the remote host, but the
+    // client draws the glyphs and VS Code does not say which OS that is. A
+    // Linux remote viewed from Windows would get barCircle and the uneven
+    // circles, so a remote window takes barLight, which renders everywhere.
+    if (vscode.env.remoteName) return 'barLight';
     return process.platform === 'win32' ? 'barLight' : 'barCircle';
 }
 
@@ -1050,9 +1055,10 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         if (simLevel === null && getColorMode() === 'color') {
             const t = rotGradientT(effectiveUsed, tokenProfile, limit);
             if (t !== null) {
+                const ramp = resolveRotGradient();
                 tokenStatus = {
                     ...tokenStatus,
-                    color: lerpHexOklab(ROT_GRADIENT.start, ROT_GRADIENT.end, t),
+                    color: lerpHexOklab(ramp.start, ramp.end, t),
                 };
             }
         }

@@ -496,13 +496,13 @@
           "type": "string",
           "pattern": "^(|#[0-9a-fA-F]{6})$",
           "default": "",
-          "markdownDescription": "Custom hex (e.g. `#6ca0c4`) overriding the rotLight tier colour. Empty (default) inherits from the `claudemeter.rotLight` theme colour. Setting this here is theme-agnostic."
+          "markdownDescription": "Custom hex (e.g. `#6ca0c4`) overriding the rotLight tier colour, and the start of the Tk rot gradient on windows above 200K. Empty (default) inherits from the `claudemeter.rotLight` theme colour, and the gradient starts at near-white `#eef5fc`. Setting this here is theme-agnostic."
         },
         "claudemeter.colors.rotDeep": {
           "type": "string",
           "pattern": "^(|#[0-9a-fA-F]{6})$",
           "default": "",
-          "markdownDescription": "Custom hex overriding the rotDeep tier colour. Empty inherits from the `claudemeter.rotDeep` theme colour. Theme-agnostic."
+          "markdownDescription": "Custom hex overriding the rotDeep tier colour, and the end of the Tk rot gradient (just before the yellow warning). Set it if the default deep navy `#163a63` is hard to see on your status bar. Empty inherits from the `claudemeter.rotDeep` theme colour, and the gradient ends at `#163a63`. Theme-agnostic."
         },
         "claudemeter.colors.warning": {
           "type": "string",

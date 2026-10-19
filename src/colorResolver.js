@@ -22,7 +22,7 @@
 
 const vscode = require('vscode');
 const { CONFIG_NAMESPACE } = require('./utils');
-const { TIER_COLORS } = require('./tk/colorMap');
+const { TIER_COLORS, ROT_GRADIENT } = require('./tk/colorMap');
 
 /**
  * Resolve the colour for a Tk-tier name.
@@ -36,14 +36,35 @@ function resolveColor(tier) {
         // 'normal' tier or unknown - no decoration
         return { themeColor: undefined, hex: null };
     }
-    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
-    const customHex = config.get(entry.setting, '');
-    if (typeof customHex === 'string' && /^#[0-9a-fA-F]{6}$/.test(customHex)) {
+    const customHex = customTierHex(entry);
+    if (customHex) {
         return { themeColor: customHex, hex: customHex };
     }
     return {
         themeColor: new vscode.ThemeColor(entry.theme),
         hex: entry.hex,
+    };
+}
+
+// The user's claudemeter.colors.<setting> hex for a tier, or null.
+function customTierHex(entry) {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    const customHex = config.get(entry.setting, '');
+    return typeof customHex === 'string' && /^#[0-9a-fA-F]{6}$/.test(customHex) ? customHex : null;
+}
+
+/**
+ * Anchors of the continuous Tk rot gradient. colors.rotLight sets the start
+ * and colors.rotDeep the end, each falling back to ROT_GRADIENT. The ramp
+ * is a hex interpolation, so the theme colours (layer 2) cannot take part:
+ * an unset anchor keeps the built-in hex, not the theme's.
+ *
+ * @returns {{start: string, end: string}}
+ */
+function resolveRotGradient() {
+    return {
+        start: customTierHex(TIER_COLORS.rotLight) || ROT_GRADIENT.start,
+        end: customTierHex(TIER_COLORS.rotDeep) || ROT_GRADIENT.end,
     };
 }
 
@@ -61,5 +82,6 @@ function getColorMode() {
 
 module.exports = {
     resolveColor,
+    resolveRotGradient,
     getColorMode,
 };

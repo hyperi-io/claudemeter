@@ -561,13 +561,13 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
 
 - **Type**: String (hex colour or `""`)
 - **Default**: `""` (inherits theme colour `claudemeter.rotLight`)
-- **Description**: Custom hex (e.g. `#6ca0c4`) overriding the light-blue rot tier colour. Theme-agnostic - applies to both the status bar and tooltip.
+- **Description**: Custom hex (e.g. `#6ca0c4`) overriding the light-blue rot tier colour. Theme-agnostic - applies to both the status bar and tooltip. Also sets the start of the Tk rot gradient on windows above 200K (default near-white `#eef5fc`).
 
 ### `claudemeter.colors.rotDeep`
 
 - **Type**: String (hex colour or `""`)
 - **Default**: `""` (inherits theme colour `claudemeter.rotDeep`)
-- **Description**: Custom hex overriding the dark-blue deep-rot tier colour. Theme-agnostic.
+- **Description**: Custom hex overriding the dark-blue deep-rot tier colour. Theme-agnostic. Also sets the end of the Tk rot gradient, just before the yellow warning (default deep navy `#163a63`). Set it if Tk fades into a dark blue status bar as context grows.
 
 ### `claudemeter.colors.warning`
 
