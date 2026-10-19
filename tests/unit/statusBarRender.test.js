@@ -274,6 +274,22 @@ describe('remote windows', () => {
         expect(tip(panels.label)).not.toContain('unavailable here');
     });
 
+    it('default to block bars, since the client OS drawing them is unknown', () => {
+        vscode._setRemoteName('ssh-remote', vscode.ExtensionKind.Workspace);
+        const panels = freshPanels();
+        updateStatusBar(null, usage(), null, SESSION, null);
+        expect(panels.session.text).toContain('░');
+        expect(panels.session.text).not.toContain('○');
+    });
+
+    it('keep an explicit usageFormat over the remote default', () => {
+        vscode._setRemoteName('ssh-remote', vscode.ExtensionKind.Workspace);
+        const panels = freshPanels();
+        vscode._setConfigInspectValues('statusBar.usageFormat', { globalValue: 'barCircle' });
+        updateStatusBar(null, usage(), null, SESSION, null);
+        expect(panels.session.text).toContain('○');
+    });
+
     it('still hide Tk when running on the client of the remote window', () => {
         vscode._setRemoteName('ssh-remote', vscode.ExtensionKind.UI);
         const panels = freshPanels();

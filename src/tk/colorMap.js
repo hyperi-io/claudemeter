@@ -6,8 +6,8 @@
 //                a fallback hex (used when ThemeColor isn't applicable).
 //
 //                src/colorResolver.js reads TIER_COLORS (status-bar text
-//                colour) and src/statusBar.js reads ROT_GRADIENT directly
-//                for the continuous rot ramp. No hex constants live
+//                colour) and ROT_GRADIENT (the continuous rot ramp, whose
+//                anchors colors.rotLight/rotDeep override). No hex constants live
 //                anywhere else.
 //
 //                'normal' maps to null - colorResolver treats null as

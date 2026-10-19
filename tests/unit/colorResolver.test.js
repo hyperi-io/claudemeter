@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 const vscode = require('vscode');
-const { resolveColor, getColorMode } = require('../../src/colorResolver');
+const { resolveColor, resolveRotGradient, getColorMode } = require('../../src/colorResolver');
 
 describe('colorResolver — three-layer precedence', () => {
     beforeEach(() => {
@@ -75,5 +75,33 @@ describe('getColorMode — defensive coercion', () => {
         vscode._setConfigValues({ 'statusBar.colorMode': 'rainbow' });
 
         expect(getColorMode()).toBe('color');
+    });
+});
+
+describe('resolveRotGradient — rot ramp anchors', () => {
+    beforeEach(() => {
+        vscode._resetConfigValues();
+    });
+
+    it('defaults to the built-in near-white to deep-navy ramp', () => {
+        expect(resolveRotGradient()).toEqual({ start: '#eef5fc', end: '#163a63' });
+    });
+
+    it('takes the start from colors.rotLight and the end from colors.rotDeep', () => {
+        vscode._setConfigValues({ 'colors.rotLight': '#ffffff', 'colors.rotDeep': '#c4a7ff' });
+
+        expect(resolveRotGradient()).toEqual({ start: '#ffffff', end: '#c4a7ff' });
+    });
+
+    it('overrides one anchor and keeps the built-in for the other', () => {
+        vscode._setConfigValues({ 'colors.rotDeep': '#8fd3ff' });
+
+        expect(resolveRotGradient()).toEqual({ start: '#eef5fc', end: '#8fd3ff' });
+    });
+
+    it('ignores a malformed override', () => {
+        vscode._setConfigValues({ 'colors.rotDeep': 'navy' });
+
+        expect(resolveRotGradient().end).toBe('#163a63');
     });
 });
