@@ -28,8 +28,10 @@ const path = require('path');
 const { PATHS } = require('./utils');
 const { acquireFileLock, releaseFileLock, atomicWriteJson } = require('./sessionTracker');
 const { upgradeCachedUsage } = require('./apiSchema');
+const { appendUsageSample, historyFileFor } = require('./usageHistory');
 
 const CACHE_FILE = path.join(PATHS.CONFIG_DIR, 'usage-cache.json');
+const HISTORY_FILE = historyFileFor(CACHE_FILE);
 
 // The cache may have been written by a different resident claudemeter version,
 // so derived fields the writer never stored are recomputed on the way out.
@@ -54,6 +56,18 @@ function isFresh(cache, maxAgeMs) {
         && (Date.now() - cache.fetchedAt) < maxAgeMs;
 }
 
+// The fetch time last recorded per history file, so a window does not re-lock for a fetch it already saw.
+const lastRecorded = new Map();
+
+// Record a fetch in the history, whichever window made it: another window, or an older
+// claudemeter build, may do every fetch. History is a bonus, so a failed append never fails the read.
+async function recordSample(cacheFile, entry, account) {
+    const file = historyFileFor(cacheFile);
+    if (lastRecorded.get(file) === entry.fetchedAt) return;
+    lastRecorded.set(file, entry.fetchedAt);
+    await appendUsageSample(entry.usageData, { file, account, ts: entry.fetchedAt }).catch(() => {});
+}
+
 // Return the freshest available usage: the cache if it's younger than maxAgeMs,
 // otherwise a fresh fetch (written back to the cache). Serialised via a lock so
 // concurrent windows make at most one network call per maxAgeMs. Throws only
@@ -64,6 +78,7 @@ function isFresh(cache, maxAgeMs) {
 async function cachedFetchUsage(fetchFn, maxAgeMs, { account = null, cacheFile = CACHE_FILE } = {}) {
     const cached = await readCache(cacheFile, account);
     if (isFresh(cached, maxAgeMs)) {
+        await recordSample(cacheFile, cached, account);
         return { usageData: cached.usageData, fromCache: true };
     }
 
@@ -82,12 +97,15 @@ async function cachedFetchUsage(fetchFn, maxAgeMs, { account = null, cacheFile =
         // Another window may have refreshed the cache while we waited on the lock.
         const again = await readCache(cacheFile, account);
         if (isFresh(again, maxAgeMs)) {
+            await recordSample(cacheFile, again, account);
             return { usageData: again.usageData, fromCache: true };
         }
 
         try {
             const usageData = await fetchFn();
-            await atomicWriteJson(cacheFile, { usageData, fetchedAt: Date.now(), account });
+            const fetchedAt = Date.now();
+            await atomicWriteJson(cacheFile, { usageData, fetchedAt, account });
+            await recordSample(cacheFile, { usageData, fetchedAt }, account);
             return { usageData, fromCache: false };
         } catch (err) {
             // Auth-absence (token gone / API-key override) must NOT be masked
@@ -109,4 +127,4 @@ async function cachedFetchUsage(fetchFn, maxAgeMs, { account = null, cacheFile =
     }
 }
 
-module.exports = { cachedFetchUsage };
+module.exports = { cachedFetchUsage, HISTORY_FILE };

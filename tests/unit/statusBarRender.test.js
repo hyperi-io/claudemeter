@@ -7,7 +7,7 @@ const { createStatusBarItem, updateStatusBar, stopSpinner } = require('../../src
 const { processApiResponse, upgradeCachedUsage } = require('../../src/apiSchema');
 const { COMMANDS } = require('../../src/utils');
 
-const PANEL_ORDER = ['label', 'spinner', 'happyHour', 'session', 'weekly', 'scoped0', 'scoped1', 'credits', 'tokens', 'compact'];
+const PANEL_ORDER = ['label', 'spinner', 'happyHour', 'session', 'weekly', 'scoped0', 'scoped1', 'credits', 'tokens', 'compact', 'codex'];
 
 function freshPanels(settings = {}) {
     vscode._resetConfigValues();
@@ -249,6 +249,31 @@ describe('the tooltip follows the gauge settings the status bar uses', () => {
     });
 });
 
+describe('the tooltip carries the simulator overrides the gauges show', () => {
+    const simulator = require('../../src/simulator');
+
+    afterEach(() => simulator.clearAll());
+
+    it('names the simulated session, weekly and context figures', () => {
+        const panels = freshPanels();
+        simulator.applyScenario({ sessionPercent: 91, weeklyPercent: 85, tokenUsed: 150_000 });
+        updateStatusBar(null, usage(), null, SESSION, null);
+        const text = tip(panels.label);
+        expect(text).toContain('**Session - 91%**');
+        expect(text).toContain('**Weekly - 85%**');
+        expect(text).toContain('**Current context - 75%**');
+    });
+
+    it('names the live figures when nothing is simulated', () => {
+        const panels = freshPanels();
+        updateStatusBar(null, usage(), null, SESSION, null);
+        const text = tip(panels.label);
+        expect(text).toContain('**Session - 10%**');
+        expect(text).toContain('**Weekly - 20%**');
+        expect(text).toContain('**Current context - 25%**');
+    });
+});
+
 describe('remote windows', () => {
     it('hide the Tk panel but keep the tooltip explanation', () => {
         vscode._setRemoteName('ssh-remote');
@@ -283,7 +308,7 @@ describe('remote windows', () => {
 });
 
 describe('tooltip command trust', () => {
-    it('enables only the Nopilot commands the tooltip links', () => {
+    it('enables only the commands the tooltip links', () => {
         const panels = freshPanels();
         updateStatusBar(null, usage(), null, SESSION, null);
         expect(panels.label.tooltip.isTrusted).toEqual({
@@ -312,7 +337,7 @@ describe('panel layout', () => {
     it('creates every panel with its priority offset and the fetch command', () => {
         const panels = freshPanels({ 'statusBar.priority': 500, 'statusBar.alignment': 'left' });
         const offsets = panels.all.map((i) => Math.round((i.priority - 500) * 100) / 100);
-        expect(offsets).toEqual([0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.45, 0.3, 0.2, 0.7]);
+        expect(offsets).toEqual([0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.45, 0.3, 0.2, 0.7, 0.15]);
         expect(panels.all.every((i) => i.alignment === vscode.StatusBarAlignment.Left)).toBe(true);
         expect(panels.all.every((i) => i.command === COMMANDS.FETCH_NOW)).toBe(true);
         expect(panels.spinner.text).toBe('$(sync~spin)');
@@ -431,5 +456,293 @@ describe('Tk profile detection from the render path', () => {
         freshPanels();
         updateStatusBar(null, usage({ accountInfo: { organizationType: 'claude_team' } }), null, SESSION, {});
         expect(warnings()).toHaveLength(0);
+    });
+});
+
+describe('strip gauge in the status bar', () => {
+    const simulator = require('../../src/simulator');
+    afterEach(() => simulator.clearAll());
+
+    const MIN = 60_000;
+    const STRIP = /(\$\(claudemeter-(?:bar|barh)-\d\)|\$\(claudemeter-blocked\)){5}/;
+    const DOTS = /(\$\(claudemeter-dot(?:-empty)?\)){5}/;
+
+    // Four samples 15 minutes apart rising `step` points each, the last one now, windows resetting in the given minutes.
+    function history({ step = 1, last = 60, fiveResetsInMin = 240, weekPct = 40, weekResetsInMin = 3 * 24 * 60, count = 4, scopedKey } = {}) {
+        const now = Date.now();
+        return Array.from({ length: count }, (_, i) => {
+            const ago = (count - 1 - i) * 15;
+            return {
+                ts: now - ago * MIN,
+                fiveHour: { pct: last - (count - 1 - i) * step, resetsAt: now + fiveResetsInMin * MIN },
+                sevenDay: { pct: weekPct, resetsAt: now + weekResetsInMin * MIN },
+                scoped: scopedKey ? { [scopedKey]: { pct: last - (count - 1 - i) * step, resetsAt: now + weekResetsInMin * MIN } } : {},
+            };
+        });
+    }
+    const render = (hist, settings = {}, sessionData = SESSION, data = usage()) => {
+        const panels = freshPanels(settings);
+        updateStatusBar(null, data, null, sessionData, null, hist);
+        return panels;
+    };
+
+    it('draws the strip on Se once three samples are in, with the reset clock beside it', () => {
+        const panels = render(history());
+        expect(panels.session.text).toMatch(new RegExp(`^Se ${STRIP.source} \\$\\(history\\) `));
+    });
+
+    it.each([
+        ['no history yet', null],
+        ['an empty history', []],
+        ['two samples', history({ count: 2 })],
+    ])('falls back to dots with %s', (_name, hist) => {
+        const panels = render(hist);
+        expect(panels.session.text).toMatch(new RegExp(`^Se ${DOTS.source} \\$\\(history\\) `));
+        expect(panels.session.text).not.toContain('claudemeter-bar');
+    });
+
+    it.each([
+        ['gaugeStyle dots', { 'statusBar.gaugeStyle': 'dots' }, null, DOTS],
+        ['usageFormat percent', {}, 'percent', /^Se 10%/],
+        ['usageFormat barLight', {}, 'barLight', /^Se [▓░]{5} /],
+    ])('keeps what the user chose: %s', (_name, settings, usageFormat, expected) => {
+        const hist = history();
+        const panels = freshPanels(settings);
+        if (usageFormat) vscode._setConfigInspectValues('statusBar.usageFormat', { globalValue: usageFormat });
+        updateStatusBar(null, usage(), null, SESSION, null, hist);
+        expect(panels.session.text).toMatch(expected);
+    });
+
+    it('draws the icon-font dots on win32 too, where the squares used to be the default', () => {
+        const original = Object.getOwnPropertyDescriptor(process, 'platform');
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+        try {
+            expect(render(null).session.text).toMatch(DOTS);
+        } finally {
+            Object.defineProperty(process, 'platform', original);
+        }
+    });
+
+    it('keeps the reset clock and tints the gauge the warning colour while projected to run out', () => {
+        // 20 points an hour from 60% runs out in 2h, 10 minutes before the 2h10m reset.
+        const panels = render(history({ step: 5, last: 60, fiveResetsInMin: 130 }));
+        expect(panels.session.text).toMatch(/\$\(history\) \d+h \d+m$/);
+        expect(panels.session.text).not.toContain('$(watch)');
+        expect(panels.session.color?.id).toBe('charts.yellow');
+        expect(panels.weekly.color).toBeUndefined();
+    });
+
+    it('keeps the tier colour when showProjection is off', () => {
+        const panels = render(history({ step: 5, last: 60, fiveResetsInMin: 130 }), { 'statusBar.showProjection': false });
+        expect(panels.session.text).toContain('$(history)');
+        expect(panels.session.color).toBeUndefined();
+    });
+
+    it('holds the run-out tint until the projection is 15 minutes past the reset, then clears it', () => {
+        // 20 an hour from 60% exhausts 120 minutes out.
+        const panels = freshPanels();
+        const tinted = (fiveResetsInMin) => {
+            updateStatusBar(null, usage(), null, SESSION, null, history({ step: 5, fiveResetsInMin }));
+            expect(panels.session.text).toContain('$(history)');
+            return panels.session.color?.id === 'charts.yellow';
+        };
+        expect(tinted(110)).toBe(false);
+        expect(tinted(125)).toBe(true);
+        expect(tinted(110)).toBe(true);
+        expect(tinted(100)).toBe(false);
+        expect(tinted(110)).toBe(false);
+    });
+
+    it.each([
+        ['ahead of the week by 13 points', 70, true, / \+13$/],
+        ['ahead by 8 points is under the threshold', 65, true, /(?<!\+\d+)$/],
+        ['ahead by 13 with showProjection off', 70, false, /(?<!\+\d+)$/],
+    ])('Wk pace: %s', (_name, weekPct, showProjection, expected) => {
+        // 3 of 7 days left puts the clock at 57.1%.
+        const panels = render(history({ weekPct }), { 'statusBar.showProjection': showProjection });
+        expect(panels.weekly.text).toMatch(expected);
+        if (showProjection === false || weekPct === 65) expect(panels.weekly.text).not.toMatch(/\+\d+/);
+    });
+
+    it('shows pace on Wk only, not Se', () => {
+        expect(render(history({ weekPct: 90 })).session.text).not.toMatch(/\+\d+/);
+    });
+
+    it('draws a strip for a scoped cap that has history under its key', () => {
+        const data = usage({ scopedWeekly: [{ key: 'scoped:fable', label: 'Fable', percent: 40, resetsAt: null }] });
+        const panels = render(history({ scopedKey: 'scoped:fable', step: 1, last: 40 }), {}, SESSION, data);
+        expect(panels.scoped0.text).toMatch(new RegExp(`^Fb ${STRIP.source}`));
+    });
+
+    describe('Tk', () => {
+        const turn = (agoMin, k) => ({ ts: Date.now() - agoMin * MIN, tokens: k * 1000 });
+        const withTurns = (turns) => ({ ...SESSION, turns });
+
+        it('draws the strip from the turn series', () => {
+            const panels = render(null, {}, withTurns([turn(6, 20), turn(4, 40), turn(2, 60), turn(0, 80)]));
+            expect(panels.tokens.text).toMatch(new RegExp(`^Tk ${STRIP.source}`));
+        });
+
+        it.each([
+            ['two turns', [turn(2, 20), turn(0, 40)]],
+            ['no turns', []],
+            ['no series', undefined],
+        ])('falls back to dots with %s', (_name, turns) => {
+            const panels = render(null, {}, withTurns(turns));
+            expect(panels.tokens.text).toMatch(new RegExp(`^Tk ${DOTS.source}`));
+        });
+
+        it('keeps the rot colour on the Tk item', () => {
+            simulator.applyScenario({ tokenLevel: 'rotDeep', contextWindow: 1_000_000 });
+            const panels = render(null, {}, withTurns([turn(6, 400), turn(4, 450), turn(2, 500), turn(0, 550)]));
+            expect(panels.tokens.text).toMatch(new RegExp(`^Tk ${STRIP.source}`));
+            expect(panels.tokens.color?.id).toBe('claudemeter.rotDeep');
+        });
+    });
+
+    it('keeps dots in compact mode, where there is no room for a strip', () => {
+        const panels = render(history(), { 'statusBar.displayMode': 'compact' });
+        expect(panels.compact.text).not.toContain('claudemeter-bar');
+        expect(panels.compact.text).toMatch(DOTS);
+    });
+
+    it('draws the strip from the simulator history, a forced run-out and a forced pace delta', () => {
+        simulator.applyScenario({
+            usageHistory: { fiveResetsInMin: 180, weekResetsInMin: 3 * 24 * 60, samples: [[45, 10, 40], [30, 20, 40], [15, 30, 40], [0, 40, 40]] },
+            runsOut: { session: 45 },
+            paceDelta: 14,
+        });
+        const panels = render(null);
+        expect(panels.session.text).toMatch(new RegExp(`^Se ${STRIP.source} \\$\\(history\\) `));
+        expect(panels.session.color?.id).toBe('charts.yellow');
+        expect(panels.weekly.text).toMatch(/ \+14$/);
+    });
+});
+
+describe('tooltip chart', () => {
+    const MIN = 60_000;
+    const samples = (step = 5, fiveResetsInMin = 130) => {
+        const now = Date.now();
+        return Array.from({ length: 4 }, (_, i) => ({
+            ts: now - (3 - i) * 15 * MIN,
+            fiveHour: { pct: 60 - (3 - i) * step, resetsAt: now + fiveResetsInMin * MIN },
+            sevenDay: { pct: 40, resetsAt: now + 3 * 24 * 60 * MIN },
+            scoped: {},
+        }));
+    };
+    const draw = (hist, settings = {}) => {
+        const panels = freshPanels(settings);
+        updateStatusBar(null, usage(), null, SESSION, null, hist);
+        return panels;
+    };
+
+    it('adds the chart and its sentences once there is history', () => {
+        const panels = draw(samples());
+        const md = tip(panels.session);
+        expect(md).toMatch(/<img src="data:image\/png;base64,[^"]+" width="240" alt="Se out in [^"]+ blocked/);
+        expect(md).toMatch(/Se out in \S+, \S+ blocked/);
+        expect(panels.session.tooltip.supportHtml).toBe(true);
+    });
+
+    it('takes the window length and labels from the gauge settings', () => {
+        // 40% used with the reset 3 days off: on pace for a 7 day week, 40 points ahead for a 3 day one.
+        expect(draw(samples()).weekly.text).not.toMatch(/\+\d+$/);
+        const panels = draw(samples(), {
+            'gauges.definitions': { weekly: { windowHours: 72 } },
+            'gauges.labels': { session: { short: 'S4' } },
+        });
+        expect(panels.weekly.text).toMatch(/ \+40$/);
+        expect(tip(panels.session)).toContain('S4 out in');
+    });
+
+    it.each([
+        ['no history', null],
+        ['an empty history', []],
+    ])('has no chart and no HTML with %s', (_name, hist) => {
+        const panels = draw(hist);
+        expect(tip(panels.session)).not.toContain('<img');
+        expect(panels.session.tooltip.supportHtml).toBe(false);
+    });
+
+    it('draws the same picture again for the same samples', () => {
+        const hist = samples();
+        const a = tip(draw(hist).session).match(/base64,([^"]+)"/)[1];
+        const b = tip(draw(hist).session).match(/base64,([^"]+)"/)[1];
+        expect(b).toBe(a);
+    });
+
+    it('draws the Tk panel from the turn series, and still draws with a chart fault swallowed', () => {
+        const turns = [[6, 20], [4, 40], [2, 60], [0, 80]].map(([ago, k]) => ({ ts: Date.now() - ago * MIN, tokens: k * 1000 }));
+        const panels = freshPanels();
+        updateStatusBar(null, usage(), null, { ...SESSION, turns }, null, null);
+        expect(tip(panels.session)).toContain('Tk compacts in');
+    });
+
+    it('leaves the tooltip HTML off on an error tooltip', () => {
+        const panels = draw(samples());
+        stopSpinner(new Error('API_ERROR_500'), null);
+        expect(panels.session.tooltip.supportHtml).toBe(false);
+    });
+});
+
+describe('supplementary agent panels', () => {
+    const MIN = 60_000;
+    const agent = (percent, resetsInMin = 90) => [{
+        id: 'codex', name: 'Codex', shortLabel: 'Cx',
+        usage: { plan: 'pro', limits: [{ label: '7d', percent: 5, windowMinutes: 10080, resetsAt: null }, { label: '5h', percent, windowMinutes: 300, resetsAt: Date.now() + resetsInMin * MIN }], notes: [] },
+    }];
+    const draw = (agents, settings = {}) => {
+        const panels = freshPanels(settings);
+        updateStatusBar(null, usage(), null, SESSION, null, null, agents);
+        return panels;
+    };
+
+    it('shows the fullest limit as Cx with its reset, coloured by the global thresholds', () => {
+        const panels = draw(agent(85));
+        expect(panels.codex.visible).toBe(true);
+        expect(panels.codex.text).toMatch(/^Cx .+ \$\(history\) 1h \d+m$/);
+        expect(panels.codex.color).toBeDefined();
+        expect(tip(panels.codex)).toContain('**Codex - 85%**');
+    });
+
+    it.each([
+        ['no agents', [], {}],
+        ['compact mode', agent(10), { 'statusBar.displayMode': 'compact' }],
+    ])('hides Cx with %s', (_name, agents, settings) => {
+        expect(draw(agents, settings).codex.visible).toBe(false);
+    });
+});
+
+describe('supplementary agents follow the gauge style', () => {
+    const MIN = 60_000;
+    const STRIP = /^Cx (\$\(claudemeter-(?:bar|barh)-\d\)|\$\(claudemeter-blocked\)){5} \$\(history\) /;
+    const agents = (percent, resetsAt) => [{
+        id: 'codex', name: 'Codex', shortLabel: 'Cx', readAt: 0,
+        usage: { plan: null, limits: [{ label: '5h', percent, windowMinutes: 300, resetsAt }], notes: [] },
+    }];
+    // Codex samples 15 minutes apart, climbing 2 points each, in a 5h window that began 2h ago.
+    const history = (resetsAt) => Array.from({ length: 4 }, (_, i) => ({
+        ts: Date.now() - (3 - i) * 15 * MIN,
+        fiveHour: { pct: null, resetsAt: null },
+        sevenDay: { pct: null, resetsAt: null },
+        scoped: { 'agent:codex': { pct: 20 + 2 * i, resetsAt } },
+    }));
+    const draw = (hist, settings = {}) => {
+        const resetsAt = Date.now() + 180 * MIN;
+        const panels = freshPanels(settings);
+        updateStatusBar(null, usage(), null, SESSION, null, null, agents(26, resetsAt), hist ? hist(resetsAt) : null);
+        return panels.codex.text;
+    };
+
+    it('draws the strip from the agent history, as Se does', () => {
+        expect(draw(history)).toMatch(STRIP);
+    });
+
+    it.each([
+        ['no history yet', null, {}],
+        ['the dots gauge style', history, { 'statusBar.gaugeStyle': 'dots' }],
+    ])('falls back to the dots with %s', (_name, hist, settings) => {
+        expect(draw(hist, settings)).not.toMatch(STRIP);
+        expect(draw(hist, settings)).toMatch(/^Cx \$\(claudemeter-dot/);
     });
 });

@@ -20,7 +20,12 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const oauthFetcher = require('./src/oauthFetcher');
-const { cachedFetchUsage } = require('./src/usageCache');
+const { cachedFetchUsage, HISTORY_FILE } = require('./src/usageCache');
+const { readUsageHistory, appendSample } = require('./src/usageHistory');
+const { readTurnSeries } = require('./src/tk/series');
+const { readAgents, agentSample } = require('./src/agents/registry');
+
+const AGENT_HISTORY_FILE = path.join(path.dirname(HISTORY_FILE), 'agent-history.json');
 const { readToken, watchToken, detectAuthOverride, describeStores } = require('./src/tokenSource');
 const {
     AUTH_REASONS,
@@ -31,7 +36,7 @@ const {
     describeRemoteLogin,
 } = require('./src/authFailure');
 const { redactIdentity } = require('./src/redact');
-const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus } = require('./src/statusBar');
+const { createStatusBarItem, updateStatusBar, startSpinner, stopSpinner, refreshServiceStatus, releaseTooltipHold } = require('./src/statusBar');
 const { getStats: getActivityStats } = require('./src/activityMonitor');
 const { SessionTracker } = require('./src/sessionTracker');
 const { ClaudeDataLoader } = require('./src/claudeDataLoader');
@@ -63,6 +68,10 @@ let statusBarItem;
 //                        own transcript read. The session tracker is history
 //                        only and never feeds the display.
 let usageData = null;
+let usageHistory = null;
+// Supplementary agents' usage (Codex and the like), from src/agents/registry, and its history for the strip.
+let agentUsage = [];
+let agentHistory = null;
 let currentSessionData = null;
 let credentialsInfo = null;
 let autoRefreshTimer;
@@ -289,6 +298,7 @@ async function performFetch(isManual = false, { fresh = false } = {}) {
 // first startup) -- only then do we surface the login prompt.
 async function performFetchInner(isManual = false) {
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    refreshAgents(config);
     let webError = null;
     let tokenError = null;
     // handled = this branch already showed its own UX (login prompt / info),
@@ -320,6 +330,7 @@ async function performFetchInner(isManual = false) {
             if (!res.error) lastAuthFailure = null;
             usageData = res.usageData;
             applyProfileSignals(usageData.accountInfo);
+            usageHistory = await readUsageHistory({ file: HISTORY_FILE, account }).catch(() => null);
         }
         if (res.fromCache) {
             fileLog(res.error
@@ -419,7 +430,27 @@ function applyProfileSignals(accountInfo) {
 
 function updateStatusBarWithAllData() {
     const activityStats = getActivityStats(usageData, currentSessionData);
-    updateStatusBar(statusBarItem, usageData, activityStats, currentSessionData, credentialsInfo);
+    updateStatusBar(statusBarItem, usageData, activityStats, currentSessionData, credentialsInfo, usageHistory, agentUsage, agentHistory);
+}
+
+// Supplementary agents are read beside the Claude fetch, never blocking or failing it.
+function refreshAgents(config) {
+    const settingsFor = (id) => ({
+        enabled: config.get(`agents.${id}.enabled`, true),
+        command: config.get(`agents.${id}.command`, id) || id,
+    });
+    readAgents(settingsFor)
+        .then(async (agents) => {
+            const sample = agentSample(agents, Math.max(0, ...agents.map((a) => a.readAt)));
+            // The 15 s dedupe drops a cached read already recorded, so every tick may append.
+            if (sample) await appendSample(sample, { file: AGENT_HISTORY_FILE }).catch(() => {});
+            const history = await readUsageHistory({ file: AGENT_HISTORY_FILE }).catch(() => null);
+            const changed = JSON.stringify(agents) !== JSON.stringify(agentUsage) || history?.length !== agentHistory?.length;
+            agentUsage = agents;
+            agentHistory = history;
+            if (changed) updateStatusBarWithAllData();
+        })
+        .catch((err) => fileLog(`Agent usage read failed: ${err.message}`));
 }
 
 // Matches the declared default of claudemeter.localRefreshSeconds.
@@ -448,6 +479,7 @@ function applyTokenOnlyMode(on) {
     if (on) {
         stopTokenWatcher();
         usageData = null;
+        usageHistory = null;
         return;
     }
     startTokenWatcher();
@@ -721,6 +753,7 @@ function setupCredentialsMonitoring(context) {
         if (switched) {
             // The old account's usage must not stay on screen as the new one's.
             usageData = null;
+            usageHistory = null;
             resetUnknownWarning();
         }
         // The re-read replaced the token-seeded plan (null on macOS) and the
@@ -783,6 +816,12 @@ function scheduleJsonlUpdate() {
     }, JSONL_UPDATE_DEBOUNCE_MS);
 }
 
+// The context size per main-session turn for the Tk strip, empty when it cannot be read.
+async function readTkTurns(transcriptPath) {
+    if (!transcriptPath) return [];
+    return (await readTurnSeries(transcriptPath))?.turns ?? [];
+}
+
 async function updateTokensFromJsonl(silent = false) {
     // Absent wherever the Tk pipeline was never set up, which includes a
     // remote window (#58). The refresh timer fires regardless of that.
@@ -829,6 +868,7 @@ async function updateTokensFromJsonl(silent = false) {
                         limitSource: resolved.source,
                         limitConfidence: resolved.confidence,
                     },
+                    turns: await readTkTurns(usage.transcriptPath),
                 };
             } else {
                 // No active session for this workspace (or no workspace at all).
@@ -1099,10 +1139,13 @@ function registerCommands(context) {
     );
 
     // Dev-only simulator commands - see src/commands/simulator.js.
-    // All 13 are gated by `config.claudemeter.debug` in package.json
+    // All are gated by `config.claudemeter.debug` in package.json
     // (enablement clause) so they only appear when claudemeter.debug=true.
     const { registerSimulatorCommands } = require('./src/commands/simulator');
-    registerSimulatorCommands(context, performFetch);
+    registerSimulatorCommands(context, performFetch, async () => {
+        releaseTooltipHold();
+        await updateTokensFromJsonl(true);
+    });
 
     // Nopilot - see src/commands/declutter.js. The callback redraws the
     // tooltip so the offer line goes as soon as it is answered.

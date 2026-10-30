@@ -452,6 +452,17 @@ describe('composeTooltip - Session / Current context / Weekly section split', ()
         expect(sessionIdx).toBeLessThan(weeklyIdx);
     });
 
+    it('reads the context figures from tokensInfo, which carries a simulated override', () => {
+        const out = composeTooltip({
+            usageData: { usagePercent: 50 },
+            sessionData: { tokenUsage: { current: 15_300, limit: 1_000_000 } },
+            tokensInfo: { current: 700_000, limit: 1_000_000, recommendation: null },
+            config: baseConfig,
+        });
+        expect(out).toContain('**Current context - 70%**');
+        expect(out).toContain('Tokens 700.0K / 1.0M');
+    });
+
     it('Tokens row appears under Current context, NOT under Session', () => {
         const out = composeTooltip({
             usageData: { usagePercent: 50, resetTime: '2h' },
@@ -589,5 +600,93 @@ describe('composeTooltip - Nopilot offer', () => {
         const updated = lines.findIndex((l) => l.startsWith('Updated'));
         expect(offer).toBeGreaterThanOrEqual(0);
         expect(updated).toBe(offer + 1);
+    });
+});
+
+describe('composeTooltip - usage chart', () => {
+    const chart = (over = {}) => ({
+        uri: 'data:image/png;base64,AAAA',
+        width: 240,
+        lines: [
+            { key: 'session', label: 'Se', text: 'out in 1h20, 50m blocked', colour: '#3987e5' },
+            { key: 'weekly', label: 'Wk', text: '60% at reset', colour: '#d95926' },
+        ],
+        ...over,
+    });
+    const usageData = { usagePercent: 10, resetsAt: '2026-10-28T05:00:00Z', usagePercentWeek: 20, resetsAtWeek: '2026-11-01T05:00:00Z', timestamp: new Date() };
+    const compose = (usageChart) => composeTooltip({ config: baseConfig, usageData, usageChart });
+
+    it('puts the chart after the weekly block and before credits', () => {
+        const out = compose(chart());
+        expect(out.indexOf('**Weekly - 20%**')).toBeLessThan(out.indexOf('<img'));
+        expect(out.indexOf('<img')).toBeLessThan(out.indexOf('Updated'));
+    });
+
+    it('sizes the image by width and gives it the lines as plain alt text', () => {
+        const out = compose(chart());
+        expect(out).toContain('<img src="data:image/png;base64,AAAA" width="240" alt="Se out in 1h20, 50m blocked; Wk 60% at reset">');
+    });
+
+    it('prints one line per gauge under the image, the label in its line colour', () => {
+        const lines = compose(chart()).split('  \n');
+        const at = lines.findIndex((l) => l.startsWith('<img'));
+        // The blank line ends the image's HTML paragraph, or the lines would run on beside it.
+        expect(lines[at + 1]).toBe('');
+        expect(lines.slice(at + 2, at + 4)).toEqual([
+            '<span style="color:#3987e5;">Se</span> out in 1h20, 50m blocked',
+            '<span style="color:#d95926;">Wk</span> 60% at reset',
+        ]);
+    });
+
+    it.each([
+        ['a colour that is not a plain hex', 'red;background:url(x)'],
+        ['no colour', undefined],
+    ])('prints the label uncoloured for %s', (_name, colour) => {
+        const out = compose(chart({ lines: [{ key: 'session', label: 'Se', text: '60% at reset', colour }] }));
+        expect(out).toContain('  \nSe 60% at reset');
+        expect(out).not.toContain('<span');
+    });
+
+    it('has no command link of its own', () => {
+        const lines = compose(chart()).split('  \n');
+        const at = lines.findIndex((l) => l.startsWith('<img'));
+        expect(lines[at - 1]).toBe('');
+        expect(lines.slice(at, at + 4).join('\n')).not.toContain('command:');
+    });
+
+    it('keeps quotes and angle brackets out of the alt attribute', () => {
+        const out = compose(chart({ sentences: ['Se: a "quoted" <b>bold</b> & more'] }));
+        expect(out.match(/<img[^\n]*>/)[0]).toMatch(/^<img src="[^"]*" width="240" alt="[^"<>&]*">$/);
+    });
+
+    it('adds nothing without a chart', () => {
+        expect(compose(null)).not.toContain('<img');
+    });
+});
+
+describe('composeTooltip - supplementary agents', () => {
+    const usageData = { usagePercent: 10, resetsAt: '2026-10-28T05:00:00Z', usagePercentWeek: 20, resetsAtWeek: '2026-11-01T05:00:00Z', timestamp: new Date() };
+    const codex = (limits, extra = {}) => ({ id: 'codex', name: 'Codex', shortLabel: 'Cx', usage: { plan: 'pro', limits, notes: [], ...extra } });
+    const lines = (agents) => composeTooltip({ config: baseConfig, usageData, agents }).split('  \n');
+
+    it('heads the block with the fullest limit and lists every limit with its reset', () => {
+        const out = lines([codex([
+            { label: '5h', percent: 42.4, windowMinutes: 300, resetsAt: Date.parse('2026-10-28T04:00:00Z') },
+            { label: '7d', percent: 12.5, windowMinutes: 10080, resetsAt: null },
+        ], { notes: ['1 free limit reset available'] })]);
+        const at = out.indexOf('**Codex - 42%**');
+        expect(at).toBeGreaterThan(out.findIndex((l) => l.startsWith('**Weekly')));
+        expect(out[at + 1]).toBe('Plan pro');
+        expect(out[at + 2]).toMatch(/^5h 42%, resets /);
+        expect(out.slice(at + 2).join(' ')).toContain('7d 13%');
+        expect(out).toContain('1 free limit reset available');
+    });
+
+    it.each([
+        ['no agents', []],
+        ['an agent with no limits', [codex([])]],
+        ['agents left out', undefined],
+    ])('adds nothing for %s', (_name, agents) => {
+        expect(composeTooltip({ config: baseConfig, usageData, agents })).not.toContain('Codex');
     });
 });

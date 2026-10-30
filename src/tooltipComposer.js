@@ -28,6 +28,7 @@
 //     scopedWeekly,                // scoped caps resolved with gauges.definitions
 //     gaugeLabelOverrides,         // claudemeter.gauges.labels
 //     tokensInfo,                  // { current, limit, knownLimit, recommendation }
+//     usageChart,                  // { uri, width, lines } from statusBar, or null
 //     config: {                    // pre-resolved config values
 //       tokenLimitOverride,
 //       use24HourTime,
@@ -45,17 +46,17 @@ const {
 const { formatSubscriptionType, formatRateLimitTier } = require('./credentialsReader');
 const { parseModelAlias, STANDARD_LIMIT } = require('./modelContextWindows');
 const { scopedTooltipLabel } = require('./gauges');
+const { headlineLimit } = require('./agents/limits');
 const { escapeMarkdown: esc } = require('./markdown');
 
 // A codicon such as $(sparkle) has to reach the renderer unescaped to draw.
 const CODICON_RE = /^\$\([\w~-]+\)$/;
 
-// The activity quip is free-text and can be long. A VS Code markdown tooltip
-// has no width control - its widest line sets the whole tooltip's width - so an
-// unwrapped quip stretches the tooltip. Hard-wrap it to roughly the width of
-// the normal text lines (e.g. "Resets Wednesday 8 July at 12:52 pm"). Just a
-// quip, so an approximate character column is fine.
-const QUIP_WRAP_COLUMN = 42;
+// A VS Code markdown tooltip has no width control - its widest line sets the
+// whole tooltip's width - so free text (the activity quip, the projection
+// sentences) is hard-wrapped to roughly the width of the normal text lines
+// (e.g. "Resets Wednesday 8 July at 12:52 pm").
+const TEXT_WRAP_COLUMN = 42;
 
 // Greedy word-wrap to at most `width` chars per line, breaking only on spaces
 // (a single word longer than width stays whole rather than chopped). Returns
@@ -91,7 +92,9 @@ function composeTooltip(state) {
     add(renderCurrentContextBlock);
     add(renderSessionBlock);
     add(renderWeeklyBlock);
+    add(renderUsageChartBlock);
     add(renderCreditsBlock);
+    add(renderAgentsBlock);
     add(renderHappyHourRow);
     add(renderActivityQuip);
     add(renderPlatformBlock);
@@ -187,7 +190,7 @@ function renderSessionBlock(state) {
     const lines = [''];  // leading blank line for visual separation
     const sessionPercent = usageData.usagePercent;
     const resetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetsAt);
-    lines.push(`**Session - ${sessionPercent}%**`);
+    lines.push(`**Session - ${esc(sessionPercent)}%**`);
     lines.push(`Resets ${resetTimeExpanded}`);
     if (config?.tokenLimitOverride > 0) {
         lines.push(`⚙ Context window override ${formatCompact(config.tokenLimitOverride)}`);
@@ -206,15 +209,15 @@ function renderCurrentContextBlock(state) {
     }
     if (!sessionData || !sessionData.tokenUsage) return [];
 
-    const tokenPercent = Math.round(
-        (sessionData.tokenUsage.current / sessionData.tokenUsage.limit) * 100
-    );
+    // tokensInfo carries the simulator's override, so the tooltip agrees with the gauge.
+    const current = tokensInfo?.current ?? sessionData.tokenUsage.current;
+    const limit = tokensInfo?.limit ?? sessionData.tokenUsage.limit;
+    const tokenPercent = Math.round((current / limit) * 100);
 
     const lines = [
         '',  // blank line for visual separation
         `**Current context - ${tokenPercent}%**`,
-        `Tokens ${formatCompact(sessionData.tokenUsage.current)} / `
-        + `${formatCompact(sessionData.tokenUsage.limit)}`,
+        `Tokens ${formatCompact(current)} / ${formatCompact(limit)}`,
     ];
 
 
@@ -239,7 +242,7 @@ function renderWeeklyBlock(state) {
 
     const weeklyPercent = usageData.usagePercentWeek;
     const weeklyResetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetsAtWeek);
-    const lines = ['', `**Weekly - ${weeklyPercent}%**`];
+    const lines = ['', `**Weekly - ${esc(weeklyPercent)}%**`];
 
     // Every scoped cap the status bar resolves, including any it has no slot for.
     const scopedWeekly = Array.isArray(state.scopedWeekly) ? state.scopedWeekly : (usageData.scopedWeekly || []);
@@ -249,6 +252,44 @@ function renderWeeklyBlock(state) {
     }
 
     lines.push(`Resets ${weeklyResetTimeExpanded}`);
+    return lines;
+}
+
+const HEX_COLOUR = /^#[0-9a-f]{6}$/i;
+
+// The chart, then one line per gauge with its label in that gauge's line colour. The lines are
+// the image's alt text too. The tooltip must allow HTML: only <img width> sizes a markdown image,
+// and only a styled span colours text.
+function renderUsageChartBlock(state) {
+    const chart = state.usageChart;
+    if (!chart) return [];
+    const lines = chart.lines || [];
+    const alt = lines.map((l) => `${l.label} ${l.text}`).join('; ').replace(/["<>&]/g, ' ');
+    const label = (l) => (HEX_COLOUR.test(l.colour) ? `<span style="color:${l.colour};">${esc(l.label)}</span>` : esc(l.label));
+    return [
+        '',
+        `<img src="${chart.uri}" width="${chart.width}" alt="${alt}">`,
+        // Lines after a raw HTML line join it as one paragraph unless a blank line ends it.
+        '',
+        ...lines.map((l) => `${label(l)} ${esc(l.text)}`),
+    ];
+}
+
+// One block per supplementary agent, each limit on its own line where the status bar shows only the fullest.
+function renderAgentsBlock(state) {
+    const lines = [];
+    for (const agent of state.agents || []) {
+        const { usage } = agent;
+        const head = headlineLimit(usage.limits);
+        if (!head) continue;
+        lines.push('', `**${esc(agent.name)} - ${Math.round(head.percent)}%**`);
+        if (usage.plan) lines.push(`Plan ${esc(usage.plan)}`);
+        for (const limit of usage.limits) {
+            const reset = limit.resetsAt ? `, resets ${calculateResetClockTimeExpanded(new Date(limit.resetsAt).toISOString())}` : '';
+            lines.push(...wrapText(`${limit.label} ${Math.round(limit.percent)}%${reset}`, TEXT_WRAP_COLUMN).map(esc));
+        }
+        for (const note of usage.notes || []) lines.push(...wrapText(note, TEXT_WRAP_COLUMN).map(esc));
+    }
     return lines;
 }
 
@@ -296,7 +337,7 @@ function renderActivityQuip(state) {
     // Wrap to a fixed column so a long quip can't stretch the tooltip width.
     // composeTooltip joins array elements with a markdown hard break, so each
     // emphasised line renders on its own line.
-    return ['', ...wrapText(quip, QUIP_WRAP_COLUMN).map((line) => `*${line}*`)];
+    return ['', ...wrapText(quip, TEXT_WRAP_COLUMN).map((line) => `*${esc(line)}*`)];
 }
 
 function renderPlatformBlock(state) {

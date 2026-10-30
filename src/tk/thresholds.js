@@ -36,6 +36,28 @@ const DEFAULT_ROT_LIGHT_TOKENS = 400_000;
 const DEFAULT_ROT_DEEP_TOKENS = 650_000;
 
 /**
+ * Tokens at which Claude Code auto-compacts: the window less its fixed reserve.
+ *
+ * @param {object} profile - profile object from src/tk/profiles.js (with .thresholds)
+ * @param {number} contextWindow - context window size in tokens
+ * @returns {number}
+ */
+function compactPointOf(profile, contextWindow) {
+    return contextWindow - profile.thresholds.compactReserveTokens;
+}
+
+/**
+ * The used-token counts where rot starts and deepens, or null on a window that never reaches them.
+ *
+ * @returns {{light: number, deep: number}|null}
+ */
+function rotFrontiers(profile, contextWindow) {
+    if (!profile?.thresholds || contextWindow <= STANDARD_LIMIT) return null;
+    const T = profile.thresholds;
+    return { light: T.rotLightTokens ?? DEFAULT_ROT_LIGHT_TOKENS, deep: T.rotDeepTokens ?? DEFAULT_ROT_DEEP_TOKENS };
+}
+
+/**
  * Resolve the Tk tier for a given (used, profile, contextWindow) tuple.
  *
  * @param {number} used - tokens used in the current context (>= 0)
@@ -49,7 +71,7 @@ function getTkLevel(used, profile, contextWindow) {
 
     // Yellow / red: computed against the auto-compact reserve so the
     // visible threshold scales with window size automatically.
-    const compactPoint = contextWindow - T.compactReserveTokens;
+    const compactPoint = compactPointOf(profile, contextWindow);
     if (used >= compactPoint - T.errorRunwayTokens)   return 'error';
     if (used >= compactPoint - T.warningRunwayTokens) return 'warning';
 
@@ -87,7 +109,7 @@ function rotGradientT(used, profile, contextWindow) {
     if (contextWindow <= STANDARD_LIMIT) return null;
     const T = profile.thresholds;
 
-    const compactPoint = contextWindow - T.compactReserveTokens;
+    const compactPoint = compactPointOf(profile, contextWindow);
     const yellowThreshold = compactPoint - T.warningRunwayTokens;
 
     const floor = T.rotLightTokens ?? DEFAULT_ROT_LIGHT_TOKENS;
@@ -98,4 +120,4 @@ function rotGradientT(used, profile, contextWindow) {
     return (used - floor) / (yellowThreshold - floor);
 }
 
-module.exports = { getTkLevel, rotGradientT };
+module.exports = { getTkLevel, rotGradientT, compactPointOf, rotFrontiers };

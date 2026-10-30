@@ -68,6 +68,17 @@ module.exports = [
         },
     },
     {
+        // The e2e harness is plain CommonJS and its page.evaluate callbacks run in the browser.
+        files: ['tests/e2e/**/*.js'],
+        languageOptions: {
+            sourceType: 'commonjs',
+            globals: {
+                document: 'readonly',
+                getComputedStyle: 'readonly',
+            },
+        },
+    },
+    {
         // The base block above forces commonjs on every file.
         files: ['**/*.mjs'],
         languageOptions: {
@@ -78,6 +89,8 @@ module.exports = [
         ignores: [
             'node_modules/**',
             '.tmp/**',
+            // Downloaded VS Code builds used by the e2e harness.
+            '.vscode-test/**',
             '*.vsix',
             // Build output — we ship the bundle, not source it.
             'dist/**',

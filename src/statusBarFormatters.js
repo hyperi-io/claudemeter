@@ -45,14 +45,13 @@ const DISPLAY_BOTH     = 'both';
 
 const EXTENDED_THRESHOLD = 200000;
 
-// Character sets for each bar style. barLight is the fallback for
-// unknown styles (barSolid/barSquare/barCircle are the other three
-// values accepted by claudemeter.statusBar.usageFormat).
+// Glyph sets for each bar style, barLight the fallback for unknown styles.
+// barCircle draws from the bundled icon font, so it looks the same on every platform.
 const BAR_STYLES = {
     barLight:  { filled: '▓', empty: '░' },
     barSolid:  { filled: '█', empty: '░' },
     barSquare: { filled: '■', empty: '□' },
-    barCircle: { filled: '●', empty: '○' },
+    barCircle: { filled: '$(claudemeter-dot)', empty: '$(claudemeter-dot-empty)' },
 };
 
 // Placeholder shown when there's no data to render.
@@ -165,6 +164,7 @@ function formatTokensDisplay(opts) {
         limit,
         knownLimit = false,
         usageFormat = 'barCircle',
+        indicator = null,
     } = opts || {};
 
     if (percent == null && current == null) {
@@ -173,16 +173,18 @@ function formatTokensDisplay(opts) {
 
     const mode = normaliseTokensDisplay(display);
     const count = formatKCount(current, limit, knownLimit, mode);
+    // A caller-drawn indicator (the strip) stands in for the bar.
+    const drawn = () => indicator ?? formatIndicator(percent, usageFormat);
 
     if (mode === DISPLAY_COUNT) {
         // count-only mode - no bar. If count came back empty (unknown
         // limit on a limit-mode that needs it), fall back to bar so
         // the user sees *something*.
-        return count || formatIndicator(percent, usageFormat);
+        return count || drawn();
     }
 
     // Everything else shows the bar. The numeric count follows if non-empty.
-    const bar = formatIndicator(percent, usageFormat);
+    const bar = drawn();
     return count ? `${bar} ${count}` : bar;
 }
 

@@ -14,6 +14,8 @@
 - Session limits
 - Weekly limits
 - Limit consumption and reset times
+- When your current burn will run out, against the reset
+- Weekly pace, and a usage chart in the tooltip
 - Claude service status (working, partial outage, major outage)
 - Context rot indication
 - Claude session and login all local to device
@@ -25,9 +27,23 @@
 
 ![Status Bar Default](assets/status-bar-default.png)
 
+Each gauge is a strip of five cells along its window's time axis, from the start to the reset. A cell's height is the usage at the end of its slice. Filled cells are time already lived, hollow cells are the projection at your current burn, and a chequered cell is blocked until the reset. Se and Wk are the 5 hour and weekly limits, a scoped cap such as Fb gets its own strip, and Tk runs from the start of the session (or the last compaction) to the projected auto-compact point.
+
+Until a gauge has three usage samples it shows dots filled to the current percentage. Set `claudemeter.statusBar.gaugeStyle` to `dots` to keep them.
+
 ## Status Bar All Warnings
 
 ![Status Bar All Warnings](assets/status-bar-all-warnings.png)
+
+When a gauge is projected to hit 100% before it resets, it turns the warning colour, and the tooltip says when it runs out. Wk adds `+N` when the week is more than 10 points ahead of the clock. Both go away with `claudemeter.statusBar.showProjection`.
+
+## Usage Chart
+
+The tooltip carries one chart with a line each for Se, Wk and Tk. Across is how far through its own window each gauge is, start to reset (Tk: how much of the auto-compact point is used), and up is % used, so the faint diagonal is on pace. Each line is solid so far and faded at the current burn, and a red diamond marks a projection that hits 100% before its reset. Under the chart is one short line per gauge, its label in that line's colour, with what the status bar does not show, such as "Se out in 56m, 2h04 blocked", "Wk 70% at reset" or "Tk compacts in 9h25". Labels follow `claudemeter.gauges.labels`.
+
+## Codex and Other Agents
+
+Claude stays the main event, but if the Codex CLI is installed and signed in, a `Cx` gauge shows Codex's fullest limit beside Claude's, drawn in the same gauge style, and the tooltip lists every Codex limit with its reset. It's read from `codex app-server` (the same call Codex's own editor extension makes) at most every 5 minutes. Turn it off with `claudemeter.agents.codex.enabled`, or point `claudemeter.agents.codex.command` at the CLI when `codex` isn't on VS Code's PATH. Each agent is one provider file under `src/agents/`, so another one (a local model, say) slots in the same way.
 
 ## Like Claudemeter?
 
@@ -381,6 +397,7 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
 - **Type**: Object
 - **Default**: `{}`
 - **Description**: Add or redefine a gauge without waiting for a release. Merges over the built-in registry in `src/gauges.js`, one field at a time. A gauge's `source` says where its value comes from: `limitKind` / `limitGroup` match an entry in the API's `limits[]`, `scoped: true` expands into one gauge per matching entry, and `percentPath` / `resetsAtPath` are dot paths to a named field.
+- **Window lengths**: `windowHours` is how long a limit's window runs, start to reset: `session` 5, `weekly` and `scoped` 168. The API reports only the reset time, so the burn, projection, pace and chart take the length from here. If Anthropic changes it, set it here, e.g. a 5 day week is `{"weekly": {"windowHours": 120}}`.
 
 ### `claudemeter.statusBar.showCredits`
 
@@ -433,16 +450,46 @@ Keep `sessionWindowMinutes` <= `sessionMaxAgeMinutes`.
 ### `claudemeter.statusBar.usageFormat`
 
 - **Type**: String
-- **Default**: `barCircle` on macOS/Linux, `barLight` on Windows (platform-aware - Windows status-bar fonts often lack the Geometric Shapes glyphs `barCircle` uses, so the default falls back to Block Elements which render reliably). Any explicit user setting overrides the platform default.
+- **Default**: `barCircle` on every platform. The dots come from a font bundled with the extension, so they render evenly and take the gauge colour.
 - **Options**: `percent`, `barLight`, `barSolid`, `barSquare`, `barCircle`
 - **Description**: How to display usage values in the status bar:
   - **percent**: Percentage (e.g., 60%)
-  - **barLight**: Light blocks (e.g., ▓▓▓░░) - universal default for Windows
+  - **barLight**: Light blocks (e.g., ▓▓▓░░)
   - **barSolid**: Solid blocks (e.g., ███░░)
   - **barSquare**: Squares (e.g., ■■■□□)
-  - **barCircle**: Circles (e.g., ●●●○○) - default on macOS/Linux
+  - **barCircle**: Dots - the default, and the only format the strip gauge replaces
 
-If your chosen style renders unevenly (mismatched cell widths), pick `barLight` or `barSolid` - Block Elements are the most font-portable option across all three platforms.
+`barLight` and `barSolid` are Block Elements, the most font-portable Unicode bars if you would rather not use the bundled font.
+
+### `claudemeter.statusBar.gaugeStyle`
+
+- **Type**: String
+- **Default**: `strip`
+- **Options**: `strip`, `dots`
+- **Description**: How Se, Wk, scoped caps and Tk are drawn when `usageFormat` is `barCircle`:
+  - **strip**: five cells along the window's time axis, from its start to its reset. Each cell's height is the usage at the end of its slice, filled for time already lived and hollow at the current burn. A chequered cell is blocked until the reset. Tk runs from the session start (or the last compaction) to the projected auto-compact point.
+  - **dots**: five dots filled to the current percentage
+- The strip needs three usage samples before it draws, so a fresh install shows dots for the first few minutes.
+
+### `claudemeter.statusBar.showProjection`
+
+- **Type**: Boolean
+- **Default**: `true`
+- **Description**: Shows when the burn will run out. A gauge projected to hit 100% before its reset swaps the reset clock for the run-out time and takes the warning colour. Wk adds `+N` when the week's usage is more than 10 points ahead of the clock.
+
+- The tooltip chart draws the same projection as a dashed line per gauge, and writes it under the chart.
+
+### `claudemeter.agents.codex.enabled`
+
+- **Type**: Boolean
+- **Default**: `true`
+- **Description**: Show Codex usage beside Claude's when the Codex CLI is installed and signed in. Nothing shows when it isn't.
+
+### `claudemeter.agents.codex.command`
+
+- **Type**: String
+- **Default**: `codex`
+- **Description**: The Codex CLI to run, as a full path when `codex` isn't on the PATH VS Code started with. Machine scope, so a workspace can't change it.
 
 ### `claudemeter.statusBar.tokensDisplay`
 
@@ -456,7 +503,7 @@ If your chosen style renders unevenly (mismatched cell widths), pick `barLight` 
   - **limit** _(default)_: bar + max, shown only when greater than the 200K standard context window - `Tk ●●○○○ 1m` on a 1M session, just the bar on a 200K session
   - **count**: token count only, no bar - `Tk 518k/1m`
 - The max is suppressed when the context window limit is inferred rather than authoritative, so the display doesn't misrepresent an uncertain value.
-- The existing `claudemeter.statusBar.usageFormat` setting still controls the bar/percent half.
+- The existing `claudemeter.statusBar.usageFormat` setting still controls the bar/percent half. The dots in these examples are the `dots` gauge style, and the default strip takes their place.
 - **Migration**: existing configs with `tokensDisplay: both` are auto-rewritten to `extended` on startup. No visible change for those users.
 
 ### `claudemeter.statusBar.alignment`

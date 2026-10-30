@@ -22,7 +22,7 @@ const {
     DISPLAY_DEFAULT,
 } = require('./statusBarFormatters');
 const { composeTooltip } = require('./tooltipComposer');
-const { gaugeLabels, scopedShortLabel, resolveGauges, mergeDefinitions, isGenericPanel } = require('./gauges');
+const { gaugeLabels, gaugeWindowMs, scopedShortLabel, resolveGauges, mergeDefinitions, isGenericPanel } = require('./gauges');
 const { composeClaudeLabel } = require('./claudeLabelComposer');
 const { describeAuthFailure } = require('./authFailure');
 const { escapeMarkdown } = require('./markdown');
@@ -31,6 +31,11 @@ const { isCoreApplied, globalScopeReader, isDeclared } = require('./declutter/st
 const { resolveColor, getColorMode: realGetColorMode } = require('./colorResolver');
 const simulator = require('./simulator');
 const { selectProfile } = require('./tk/profileSelector');
+const { usageGauge, tkGauge, runOutWarning, paceText } = require('./stripGauge');
+const { renderUsageChart, seriesColours, LAYOUT: CHART_LAYOUT } = require('./usageChart');
+const { projectionLines } = require('./projectionText');
+const { PROVIDERS: AGENT_PROVIDERS, agentSeries } = require('./agents/registry');
+const { headlineLimit } = require('./agents/limits');
 
 // Where the one-time 'unknown' profile warning goes. The channel is created
 // only if the warning fires.
@@ -87,10 +92,11 @@ function getBrandIconDataUri() {
 // it. `isTrusted: true` would run any `command:` link in that text.
 const TOOLTIP_COMMANDS = [COMMANDS.NOPILOT, COMMANDS.NOPILOT_DISMISS];
 
-function makeTooltip(markdown, enabledCommands = []) {
+function makeTooltip(markdown, enabledCommands = [], { html = false } = {}) {
     const md = new vscode.MarkdownString(markdown);
     md.isTrusted = { enabledCommands: [...enabledCommands] };
     md.supportThemeIcons = true;
+    md.supportHtml = html;
     return md;
 }
 
@@ -149,15 +155,14 @@ function getUsageFormat() {
         if (inspected.workspaceValue !== undefined) return inspected.workspaceValue;
         if (inspected.globalValue !== undefined) return inspected.globalValue;
     }
-    // Platform-aware default: Windows status-bar fonts commonly lack U+25CB
-    // (○ - White Circle), which forces a fallback font with mismatched
-    // metrics and renders barCircle as uneven `●●OO` instead of `●●○○○`.
-    // Block Elements (▓░) sit in a Unicode range that every standard
-    // monospace font ships, so barLight renders cleanly on Windows. macOS
-    // (SF Mono / Menlo) and most Linux fonts (DejaVu / Liberation / Noto)
-    // all include the Geometric Shapes glyphs, so barCircle stays default
-    // there.
-    return process.platform === 'win32' ? 'barLight' : 'barCircle';
+    // barCircle draws from the bundled icon font, so no platform needs a fallback.
+    return 'barCircle';
+}
+
+// The strip shows only for the default usage format, so a user who picked
+// percent or a Unicode bar keeps it.
+function isStripOn(config) {
+    return config.get('statusBar.gaugeStyle', 'strip') === 'strip' && getUsageFormat() === 'barCircle';
 }
 
 /**
@@ -382,6 +387,9 @@ let statusBarItems = {
 // change, so every hide drops the entry (hidePanel).
 let lastDisplayedValues;
 
+// Whether each gauge's run-out flag is held, keyed by gauge, so it clears only past the hysteresis margin.
+const runOutFlags = {};
+
 // Compact content minus the Claude label, so label status and error marker are
 // redrawn rather than appended. Null while compact is hidden.
 let compactParts = null;
@@ -399,6 +407,11 @@ function resetUsageTooltip() {
     usageTooltip = { value: null, scope: null, at: 0, timer: null };
 }
 
+// Lets the next tooltip change land at once. The simulator calls it so a new state shows without the refresh wait.
+function releaseTooltipHold() {
+    if (usageTooltip) usageTooltip.at = 0;
+}
+
 function resetRenderState() {
     resetUsageTooltip();
     lastDisplayedValues = {
@@ -411,6 +424,7 @@ function resetRenderState() {
     };
     compactParts = null;
     lastFetchError = null;
+    for (const key of Object.keys(runOutFlags)) delete runOutFlags[key];
 }
 
 resetRenderState();
@@ -556,6 +570,40 @@ function hideAllMetricItems() {
     hidePanel('tokens');
     hidePanel('credits');
     hidePanel('compact');
+    for (const provider of AGENT_PROVIDERS) hidePanel(agentPanelKey(provider.id));
+}
+
+const agentPanelKey = (id) => `agent:${id}`;
+
+// One panel per supplementary agent: its fullest limit, drawn exactly as Se and Wk are (strip or
+// dots, run-out tint, reset clock). Hidden for an agent with no usage, and in compact mode, which
+// holds Claude's gauges only.
+function renderAgentPanels({ agents, history, thresholds, hidden, config, now }) {
+    const stripOn = isStripOn(config);
+    const showProjection = config.get('statusBar.showProjection', true);
+    for (const provider of AGENT_PROVIDERS) {
+        const key = agentPanelKey(provider.id);
+        const agent = hidden ? null : agents.find((a) => a.id === provider.id);
+        const limit = agent ? headlineLimit(agent.usage.limits) : null;
+        if (!limit) {
+            runOutFlags[key] = false;
+            hidePanel(key);
+            continue;
+        }
+        let strip = null;
+        let runsOut = false;
+        if (history?.length && limit.windowMinutes) {
+            const gauge = usageGauge(history, agentSeries(provider.id), { now, flagged: runOutFlags[key] === true, windowMs: limit.windowMinutes * 60 * 1000 });
+            runOutFlags[key] = !!gauge.analysis?.runsOut;
+            runsOut = runOutWarning(gauge.analysis, showProjection);
+            strip = stripOn ? gauge.strip : null;
+        }
+        const status = getIconAndColor(limit.percent, thresholds.warning, thresholds.error);
+        const tinted = runsOut && status.level === 'normal' ? { ...status, color: new vscode.ThemeColor('charts.yellow') } : status;
+        statusBarItems[key].color = gaugeColorOrUndefined(tinted);
+        const reset = limit.resetsAt ? ` $(history) ${calculateResetClockTime(new Date(limit.resetsAt))}` : '';
+        drawPanel(key, `${provider.shortLabel} ${strip ?? formatPercent(limit.percent)}${reset}`);
+    }
 }
 
 // The status-bar glyph and colour for a recorded fetch failure.
@@ -680,6 +728,88 @@ function renderHappyHourPanel(hh) {
     item.show();
 }
 
+const EMPTY_BURN = Object.freeze({ session: null, weekly: null, scoped: [], tokens: null, analyses: {}, turns: [], history: [] });
+
+// The simulator's forced run-out and weekly pace delta, applied over the real analysis.
+function applySimulatedProjection(key, analysis, now) {
+    if (!analysis) return analysis;
+    let out = analysis;
+    const runIn = simulator.getRunsOut(key);
+    if (runIn !== null) out = { ...out, runsOut: true, exhaustsAt: now + runIn * 60 * 1000 };
+    const pace = key === 'weekly' ? simulator.getPaceDelta() : null;
+    if (pace !== null) out = { ...out, paceDelta: pace };
+    return out;
+}
+
+// A scoped cap is keyed in the history by its gauge key, or by its label when the payload gave none.
+const scopedSeries = (entry) => entry.key || `scoped:${String(entry.label).toLowerCase()}`;
+
+/**
+ * The strip, countdown and pace each gauge draws this tick, from the usage history and the Tk turn
+ * series. Anything that cannot be measured yet comes back null, which the renderer draws as dots.
+ */
+function computeBurn({ history, turns, config, tokenProfile, tokensInfo, scoped, now }) {
+    const showProjection = config.get('statusBar.showProjection', true);
+    const stripOn = isStripOn(config);
+
+    const definitions = mergeDefinitions(config.get('gauges.definitions', {}) || {});
+    const usage = (flagKey, series, gaugeKey) => {
+        if (!history || history.length === 0) {
+            runOutFlags[flagKey] = false;
+            return null;
+        }
+        const windowMs = gaugeWindowMs(gaugeKey, definitions);
+        const gauge = usageGauge(history, series, { now, flagged: runOutFlags[flagKey] === true, windowMs });
+        const analysis = applySimulatedProjection(flagKey, gauge.analysis, now);
+        runOutFlags[flagKey] = !!analysis?.runsOut;
+        return {
+            analysis,
+            strip: stripOn ? gauge.strip : null,
+            runsOut: runOutWarning(analysis, showProjection),
+            pace: flagKey === 'weekly' ? paceText(analysis, showProjection) : '',
+        };
+    };
+
+    let tokens = null;
+    let tokensAnalysis = null;
+    const tkTurns = simulator.getTkSeries(now) ?? turns ?? [];
+    if (tokenProfile && tokensInfo && tkTurns.length) {
+        const tk = tkGauge(tkTurns, { profile: tokenProfile, contextWindow: tokensInfo.limit, now });
+        tokensAnalysis = tk.analysis;
+        tokens = stripOn ? tk.strip : null;
+    }
+
+    const session = usage('session', 'fiveHour', 'session');
+    const weekly = usage('weekly', 'sevenDay', 'weekly');
+    return {
+        session,
+        weekly,
+        scoped: scoped.map((entry) => (stripOn ? usage(scopedSeries(entry), scopedSeries(entry), 'scoped')?.strip ?? null : null)),
+        tokens,
+        analyses: { session: session?.analysis ?? null, weekly: weekly?.analysis ?? null, tokens: tokensAnalysis },
+        turns: tkTurns,
+        history,
+    };
+}
+
+// The tooltip chart: its PNG data URI and the projection lines under it, each with its line's colour.
+// Null when no gauge has anything to draw.
+function composeUsageChart({ burn, now }) {
+    try {
+        const themeKind = vscode.window.activeColorTheme?.kind ?? 2;
+        const uri = renderUsageChart({ analyses: burn.analyses, turns: burn.turns, themeKind, now });
+        if (!uri) return null;
+        const labelOverrides = getGaugeLabelOverrides();
+        const labels = Object.fromEntries(['session', 'weekly', 'tokens'].map((key) => [key, gaugeLabels(key, labelOverrides).short]));
+        const colours = seriesColours(themeKind);
+        const lines = projectionLines({ ...burn.analyses, now, labels }).map((l) => ({ ...l, colour: colours[l.key] }));
+        return { uri, width: CHART_LAYOUT.width, lines };
+    } catch (chartError) {
+        fileLog(`Tooltip chart skipped: ${chartError.message}`);
+        return null;
+    }
+}
+
 function renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus, tokensInfo, scopedEntries, scopedThresholds) {
     hidePanel('session');
     hidePanel('weekly');
@@ -761,7 +891,8 @@ function renderMultiPanelMode(
     showCredits,
     scopedThresholds,
     creditsThresholds,
-    tokensInfo = null
+    tokensInfo = null,
+    burn = EMPTY_BURN
 ) {
     hidePanel('compact');
 
@@ -779,11 +910,18 @@ function renderMultiPanelMode(
             continue;
         }
         const icon = gaugeIconForLevel(status.level, key);
+        const b = burn[key];
+        // A projected run-out tints a normal gauge warning. The reset clock stays.
         const reset = isMinimal ? '' : ` $(history) ${resetTime}`;
+        const tinted = b?.runsOut && status.level === 'normal'
+            ? { ...status, color: new vscode.ThemeColor('charts.yellow') }
+            : status;
         // Colour reacts to tier changes even when the text is unchanged
         // (e.g. simulator switching the level), so update it on every tick.
-        statusBarItems[key].color = gaugeColorOrUndefined(status);
-        drawPanel(key, `${icon ? icon + ' ' : ''}${gaugeLabels(key, labels).short} ${formatPercent(percent)}${reset}`);
+        statusBarItems[key].color = gaugeColorOrUndefined(tinted);
+        const pace = b?.pace ? ` ${b.pace}` : '';
+        const body = simulator.getPanelBody(key) ?? `${b?.strip ?? formatPercent(percent)}${reset}${pace}`;
+        drawPanel(key, `${icon ? icon + ' ' : ''}${gaugeLabels(key, labels).short} ${body}`);
     }
 
     if (isRemoteWindow()) {
@@ -799,6 +937,7 @@ function renderMultiPanelMode(
                 limit: tokensInfo?.limit ?? null,
                 knownLimit: tokensInfo?.knownLimit ?? false,
                 usageFormat: getUsageFormat(),
+                indicator: burn.tokens,
             })
             : '-';
         // Tk colour MUST update on every tick - the rot tiers
@@ -825,7 +964,7 @@ function renderMultiPanelMode(
         const status = getIconAndColor(entry.percent, scopedThresholds.warning, scopedThresholds.error);
         const icon = gaugeIconForLevel(status.level, [entry.label, 'scoped']);
         // Label leads the value, as it does on Se / Wk / Tk.
-        const text = `${icon ? icon + ' ' : ''}${scopedShortLabel(entry.label, labels)} ${formatPercent(entry.percent)}`;
+        const text = `${icon ? icon + ' ' : ''}${scopedShortLabel(entry.label, labels)} ${burn.scoped[i] ?? formatPercent(entry.percent)}`;
         item.color = gaugeColorOrUndefined(status);
         if (text !== lastDisplayedValues.scopedTexts[i]) {
             item.text = text;
@@ -912,11 +1051,15 @@ function createStatusBarItem(context) {
     statusBarItems.credits = panel(0.3);
     statusBarItems.tokens = panel(0.2);
     statusBarItems.compact = panel(0.7);
+    // Supplementary agents sit right of Claude's gauges.
+    AGENT_PROVIDERS.forEach((provider, i) => {
+        statusBarItems[agentPanelKey(provider.id)] = panel(0.15 - i * 0.01);
+    });
 
     return statusBarItems.label;
 }
 
-function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null) {
+function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null, usageHistory = null, agents = [], agentHistory = null) {
     // Happy-hour panel is independent of fetch state - render on
     // every tick so the countdown stays fresh.
     const happyHourState = resolveHappyHourState();
@@ -1120,8 +1263,39 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
     const scopedWeekly = getScopedWeekly(usageData);
     const gaugeLabelOverrides = getGaugeLabelOverrides();
 
+    // The gauge percentages already carry any simulator override, so the tooltip is given the same figures.
+    const tooltipUsage = usageData
+        ? { ...usageData, usagePercent: sessionPercent, usagePercentWeek: weeklyPercent ?? usageData.usagePercentWeek }
+        : usageData;
+
+    // A scoped limit is drawn only once it registers above 0%: an account that
+    // has never touched the model reports 0 and would otherwise carry a
+    // permanent dead gauge.
+    const visibleScoped = showScopedWeekly
+        ? scopedWeekly.filter(e => typeof e.percent === 'number' && e.percent > 0)
+        : [];
+
+    const visibleScopedSlots = visibleScoped.slice(0, SCOPED_SLOTS);
+    const now = Date.now();
+    // The strip and chart are extras over the percentages, so a fault in them draws the dots instead of blanking the bar.
+    let burn = EMPTY_BURN;
+    try {
+        burn = computeBurn({
+            history: simulator.getUsageHistory(now) ?? usageHistory,
+            turns: sessionData?.turns ?? null,
+            config,
+            tokenProfile,
+            tokensInfo,
+            scoped: visibleScopedSlots,
+            now,
+        });
+    } catch (burnError) {
+        fileLog(`Strip gauge skipped: ${burnError.message}`);
+    }
+    const usageChart = composeUsageChart({ burn, now });
+
     const markdownBody = composeTooltip({
-        usageData,
+        usageData: tooltipUsage,
         sessionData,
         credentialsInfo,
         activityStats,
@@ -1138,6 +1312,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
         scopedWeekly,
         gaugeLabelOverrides,
         tokensInfo,
+        usageChart,
+        agents: displayMode === DISPLAY_MODES.COMPACT ? [] : agents,
         config: {
             tokenLimitOverride: config.get('tokenLimit', 0),
             use24HourTime: getUse24HourTime(),
@@ -1151,15 +1327,8 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             usageData ? 'web' : '',
             sessionData?.tokenUsage ? 'tk' : '',
         ].join('|');
-        setUsageTooltip(makeTooltip(getTooltipLogoHeader() + markdownBody, TOOLTIP_COMMANDS), scope);
+        setUsageTooltip(makeTooltip(getTooltipLogoHeader() + markdownBody, TOOLTIP_COMMANDS, { html: !!usageChart }), scope);
     }
-
-    // A scoped limit is drawn only once it registers above 0%: an account that
-    // has never touched the model reports 0 and would otherwise carry a
-    // permanent dead gauge.
-    const visibleScoped = showScopedWeekly
-        ? scopedWeekly.filter(e => typeof e.percent === 'number' && e.percent > 0)
-        : [];
 
     if (displayMode === DISPLAY_MODES.COMPACT) {
         renderCompactMode(sessionPercent, weeklyPercent, tokenPercent, sessionStatus, weeklyStatus, tokenStatus,
@@ -1176,13 +1345,22 @@ function updateStatusBar(item, usageData, activityStats = null, sessionData = nu
             weeklyStatus,
             tokenPercent,
             tokenStatus,
-            visibleScoped.slice(0, SCOPED_SLOTS),
+            visibleScopedSlots,
             showCredits,
             scopedThresholds,
             creditsThresholds,
-            tokensInfo
+            tokensInfo,
+            burn
         );
     }
+    renderAgentPanels({
+        agents,
+        history: agentHistory,
+        thresholds: { warning: globalWarning, error: globalError },
+        hidden: displayMode === DISPLAY_MODES.COMPACT,
+        config,
+        now,
+    });
     drawHead(tokenError);
 }
 
@@ -1215,4 +1393,5 @@ module.exports = {
     startSpinner,
     stopSpinner,
     refreshServiceStatus,
+    releaseTooltipHold,
 };

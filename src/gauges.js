@@ -45,6 +45,8 @@ const BUILTIN_GAUGES = {
         compactLabel: 'S',
         tooltipLabel: 'Session',
         order: 10,
+        // Window length, start to reset. The API reports only the reset.
+        windowHours: 5,
         source: {
             limitKind: 'session',
             percentPath: 'five_hour.utilization',
@@ -60,6 +62,7 @@ const BUILTIN_GAUGES = {
         compactLabel: 'Wk',
         tooltipLabel: 'Weekly',
         order: 20,
+        windowHours: 168,
         source: {
             limitKind: 'weekly_all',
             percentPath: 'seven_day.utilization',
@@ -78,6 +81,7 @@ const BUILTIN_GAUGES = {
         compactLabel: '?',
         tooltipLabel: 'Scoped',
         order: 30,
+        windowHours: 168,
         source: { scoped: true },
         thresholdKey: 'scoped',
         showSettingKey: 'showScopedWeekly',
@@ -286,8 +290,15 @@ function isGenericPanel(gauge) {
     return !DEDICATED_PANELS.has(gauge?.descriptor?.key ?? gauge?.key);
 }
 
+// A gauge's window length in ms, or null when it has none (credits, tokens).
+function gaugeWindowMs(key, definitions = BUILTIN_GAUGES) {
+    const hours = (definitions[key] || BUILTIN_GAUGES[key])?.windowHours;
+    return typeof hours === 'number' && hours > 0 ? hours * 60 * 60 * 1000 : null;
+}
+
 module.exports = {
     BUILTIN_GAUGES,
+    gaugeWindowMs,
     isGenericPanel,
     mergeDefinitions,
     gaugeLabels,

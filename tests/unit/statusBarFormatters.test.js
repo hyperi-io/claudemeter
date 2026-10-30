@@ -20,6 +20,19 @@ const {
     BAR_STYLES,
 } = require('../../src/statusBarFormatters');
 
+// The barCircle bar is drawn from the bundled icon font, one glyph per cell.
+const dots = (filled, total) => '$(claudemeter-dot)'.repeat(filled) + '$(claudemeter-dot-empty)'.repeat(total - filled);
+
+describe('formatTokensDisplay - drawn indicator', () => {
+    it.each([
+        ['value', '$(claudemeter-bar-3)', '$(claudemeter-bar-3) 275k'],
+        ['bar', '$(claudemeter-bar-3)', '$(claudemeter-bar-3)'],
+        ['count', '$(claudemeter-bar-3)', '275k/1m'],
+    ])('%s mode puts the caller indicator where the dots go', (display, indicator, expected) => {
+        expect(formatTokensDisplay({ display, percent: 27, current: 275000, limit: 1000000, knownLimit: true, indicator })).toBe(expected);
+    });
+});
+
 describe('formatTokenCount', () => {
     it('formats 0 as 0k', () => {
         expect(formatTokenCount(0)).toBe('0k');
@@ -96,36 +109,36 @@ describe('formatTokenCount', () => {
 
 describe('formatAsBar', () => {
     it('renders 0% as all empty', () => {
-        expect(formatAsBar(0, 'barCircle')).toBe('○○○○○');
+        expect(formatAsBar(0, 'barCircle')).toBe(dots(0, 5));
     });
 
     it('renders 100% as all filled', () => {
-        expect(formatAsBar(100, 'barCircle')).toBe('●●●●●');
+        expect(formatAsBar(100, 'barCircle')).toBe(dots(5, 5));
     });
 
     it('renders 50% as half filled', () => {
         // 50% of 5 width rounds to 3 (Math.round(2.5))
-        expect(formatAsBar(50, 'barCircle')).toBe('●●●○○');
+        expect(formatAsBar(50, 'barCircle')).toBe(dots(3, 5));
     });
 
     it('renders 27% with barCircle', () => {
         // 27% of 5 -> 1.35 -> rounds to 1
-        expect(formatAsBar(27, 'barCircle')).toBe('●○○○○');
+        expect(formatAsBar(27, 'barCircle')).toBe(dots(1, 5));
     });
 
     it('clamps negative values to 0', () => {
-        expect(formatAsBar(-10, 'barCircle')).toBe('○○○○○');
+        expect(formatAsBar(-10, 'barCircle')).toBe(dots(0, 5));
     });
 
     it('clamps above-100 values to 100', () => {
-        expect(formatAsBar(150, 'barCircle')).toBe('●●●●●');
+        expect(formatAsBar(150, 'barCircle')).toBe(dots(5, 5));
     });
 
     it('supports all four bar styles', () => {
         expect(formatAsBar(100, 'barLight')).toBe('▓▓▓▓▓');
         expect(formatAsBar(100, 'barSolid')).toBe('█████');
         expect(formatAsBar(100, 'barSquare')).toBe('■■■■■');
-        expect(formatAsBar(100, 'barCircle')).toBe('●●●●●');
+        expect(formatAsBar(100, 'barCircle')).toBe(dots(5, 5));
     });
 
     it('falls back to barLight for unknown style', () => {
@@ -133,8 +146,8 @@ describe('formatAsBar', () => {
     });
 
     it('accepts custom width', () => {
-        expect(formatAsBar(100, 'barCircle', 3)).toBe('●●●');
-        expect(formatAsBar(100, 'barCircle', 10)).toBe('●●●●●●●●●●');
+        expect(formatAsBar(100, 'barCircle', 3)).toBe(dots(3, 3));
+        expect(formatAsBar(100, 'barCircle', 10)).toBe(dots(10, 10));
     });
 });
 
@@ -143,7 +156,7 @@ describe('BAR_STYLES', () => {
         expect(BAR_STYLES.barLight).toEqual({ filled: '▓', empty: '░' });
         expect(BAR_STYLES.barSolid).toEqual({ filled: '█', empty: '░' });
         expect(BAR_STYLES.barSquare).toEqual({ filled: '■', empty: '□' });
-        expect(BAR_STYLES.barCircle).toEqual({ filled: '●', empty: '○' });
+        expect(BAR_STYLES.barCircle).toEqual({ filled: dots(1, 1), empty: dots(0, 1) });
     });
 });
 
@@ -158,7 +171,7 @@ describe('formatTokensDisplay — bar mode', () => {
             limit: 1000000,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○');
+        expect(result).toBe(dots(1, 5));
     });
 
     it('bar mode with usageFormat=percent shows percent', () => {
@@ -328,7 +341,7 @@ describe('formatTokensDisplay — both mode (default)', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○ 275k/1m');
+        expect(result).toBe(`${dots(1, 5)} 275k/1m`);
     });
 
     it('both mode with unknown limit omits denominator', () => {
@@ -343,7 +356,7 @@ describe('formatTokensDisplay — both mode (default)', () => {
         // Bar still shown based on snapped percent (but we pass percent=0
         // to simulate the inferred case where we don't pretend to know);
         // count side omits denominator.
-        expect(result).toBe('○○○○○ 275k');
+        expect(result).toBe(`${dots(0, 5)} 275k`);
     });
 
     it('both mode with usageFormat=percent shows percent + count', () => {
@@ -367,7 +380,7 @@ describe('formatTokensDisplay — both mode (default)', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●●●●● 1m/1m');
+        expect(result).toBe(`${dots(5, 5)} 1m/1m`);
     });
 });
 
@@ -382,7 +395,7 @@ describe('formatTokensDisplay — fallback and edge cases', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○ 1m');
+        expect(result).toBe(`${dots(1, 5)} 1m`);
     });
 
     it('default on 200K session shows just the bar (limit mode suppresses max at baseline)', () => {
@@ -393,7 +406,7 @@ describe('formatTokensDisplay — fallback and edge cases', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○');
+        expect(result).toBe(dots(1, 5));
     });
 
     it('treats unknown display value as limit (default) — shows max on 1M', () => {
@@ -405,7 +418,7 @@ describe('formatTokensDisplay — fallback and edge cases', () => {
             knownLimit: true,
             usageFormat: 'barCircle',
         });
-        expect(result).toBe('●○○○○ 1m');
+        expect(result).toBe(`${dots(1, 5)} 1m`);
     });
 });
 

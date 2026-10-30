@@ -81,7 +81,12 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "test:e2e": "bash scripts/e2e.sh run",
+    "test:e2e:live": "bash scripts/e2e.sh run --live",
+    "assets": "bash scripts/e2e.sh assets",
+    "show": "bash scripts/e2e.sh show",
+    "show:close": "node tests/e2e/show.js --close"
   },
   "contributes": {
     "commands": [
@@ -209,6 +214,12 @@
         "category": "Claudemeter (debug)"
       },
       {
+        "command": "claudemeter.simulate.scenario",
+        "title": "Claudemeter: Simulate Scenario From File",
+        "enablement": "config.claudemeter.debug",
+        "category": "Claudemeter (debug)"
+      },
+      {
         "command": "claudemeter.simulate.clear",
         "title": "Claudemeter: Simulate — Clear All",
         "enablement": "config.claudemeter.debug",
@@ -309,7 +320,18 @@
         "claudemeter.gauges.definitions": {
           "type": "object",
           "default": {},
-          "markdownDescription": "Add or redefine a gauge without a new extension version. Merges over the built-in registry (`src/gauges.js`), one field at a time. A gauge's `source` says where its value comes from in the usage payload: `limitKind` / `limitGroup` match an entry in the API's `limits[]`, `scoped: true` expands into one gauge per matching entry, and `percentPath` / `resetsAtPath` are dot paths to a named field. Example: `{\"scoped\": {\"source\": {\"limitGroup\": \"weekly\", \"scoped\": true}}}`."
+          "markdownDescription": "Add or redefine a gauge without a new extension version. Merges over the built-in registry (`src/gauges.js`), one field at a time. A gauge's `source` says where its value comes from in the usage payload: `limitKind` / `limitGroup` match an entry in the API's `limits[]`, `scoped: true` expands into one gauge per matching entry, and `percentPath` / `resetsAtPath` are dot paths to a named field. `windowHours` is the limit's window length, start to reset (`session` 5, `weekly` and `scoped` 168). The API reports only the reset, so if Anthropic changes a window, set it here. Examples: `{\"scoped\": {\"source\": {\"limitGroup\": \"weekly\", \"scoped\": true}}}`, `{\"weekly\": {\"windowHours\": 120}}`."
+        },
+        "claudemeter.agents.codex.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show Codex usage beside Claude's when the Codex CLI is installed and signed in. The status bar shows Codex's fullest limit as `Cx`, and the tooltip lists every limit. Read from `codex app-server` at most every 5 minutes."
+        },
+        "claudemeter.agents.codex.command": {
+          "type": "string",
+          "default": "codex",
+          "scope": "machine",
+          "markdownDescription": "The Codex CLI to run. Set a full path when `codex` is not on the PATH VS Code started with."
         },
         "claudemeter.statusBar.showServiceStatus": {
           "type": "boolean",
@@ -364,7 +386,25 @@
             "Squares (e.g., ■■■□□)",
             "Circles (e.g., ●●●○○)"
           ],
-          "markdownDescription": "How to display usage values in the status bar.\n\n**Platform-aware default**: when this setting is not explicitly configured, Windows uses `barLight` (Block Elements render reliably in the default Windows status-bar font), while macOS and Linux use `barCircle`. Override here to force a specific style on any platform — `barLight` and `barSolid` use Block Elements and are the safest fallback if your chosen style renders unevenly."
+          "markdownDescription": "How to display usage values in the status bar.\n\n`barCircle` is the default on every platform. Its dots come from a font bundled with the extension, so they render evenly everywhere. The other bars use Unicode characters and `percent` shows a number. Anything other than `barCircle` replaces the strip gauge (see `#claudemeter.statusBar.gaugeStyle#`)."
+        },
+        "claudemeter.statusBar.gaugeStyle": {
+          "type": "string",
+          "enum": [
+            "strip",
+            "dots"
+          ],
+          "default": "strip",
+          "enumDescriptions": [
+            "Five cells along the window's time axis. Height is the usage at the end of each slice, filled so far and hollow at the current burn.",
+            "Five dots filled to the current percentage"
+          ],
+          "markdownDescription": "How the Se, Wk, scoped and Tk gauges are drawn when `#claudemeter.statusBar.usageFormat#` is `barCircle`.\n\nThe strip needs three usage samples (a few minutes of running) before it draws. Until then the gauge shows dots."
+        },
+        "claudemeter.statusBar.showProjection": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show when the burn will run out. A gauge that is projected to hit 100% before it resets swaps the reset clock for the run-out time and takes the warning colour. Wk also shows `+N` when the week's usage is more than 10 points ahead of the clock."
         },
         "claudemeter.statusBar.tokensDisplay": {
           "type": "string",
@@ -656,6 +696,141 @@
           "description": "Maximum debug log file size in KB. Oldest entries are trimmed when exceeded (64-2048 KB, default 256 KB)"
         }
       }
+    },
+    "icons": {
+      "claudemeter-bar-1": {
+        "description": "Claudemeter used bar, 1/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E000"
+        }
+      },
+      "claudemeter-bar-2": {
+        "description": "Claudemeter used bar, 2/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E001"
+        }
+      },
+      "claudemeter-bar-3": {
+        "description": "Claudemeter used bar, 3/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E002"
+        }
+      },
+      "claudemeter-bar-4": {
+        "description": "Claudemeter used bar, 4/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E003"
+        }
+      },
+      "claudemeter-bar-5": {
+        "description": "Claudemeter used bar, 5/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E004"
+        }
+      },
+      "claudemeter-bar-6": {
+        "description": "Claudemeter used bar, 6/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E005"
+        }
+      },
+      "claudemeter-bar-7": {
+        "description": "Claudemeter used bar, 7/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E006"
+        }
+      },
+      "claudemeter-bar-8": {
+        "description": "Claudemeter used bar, 8/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E007"
+        }
+      },
+      "claudemeter-barh-1": {
+        "description": "Claudemeter projected bar, 1/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E008"
+        }
+      },
+      "claudemeter-barh-2": {
+        "description": "Claudemeter projected bar, 2/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E009"
+        }
+      },
+      "claudemeter-barh-3": {
+        "description": "Claudemeter projected bar, 3/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E00A"
+        }
+      },
+      "claudemeter-barh-4": {
+        "description": "Claudemeter projected bar, 4/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E00B"
+        }
+      },
+      "claudemeter-barh-5": {
+        "description": "Claudemeter projected bar, 5/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E00C"
+        }
+      },
+      "claudemeter-barh-6": {
+        "description": "Claudemeter projected bar, 6/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E00D"
+        }
+      },
+      "claudemeter-barh-7": {
+        "description": "Claudemeter projected bar, 7/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E00E"
+        }
+      },
+      "claudemeter-barh-8": {
+        "description": "Claudemeter projected bar, 8/8 high",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E00F"
+        }
+      },
+      "claudemeter-blocked": {
+        "description": "Claudemeter blocked cell",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E010"
+        }
+      },
+      "claudemeter-dot": {
+        "description": "Claudemeter filled dot",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E011"
+        }
+      },
+      "claudemeter-dot-empty": {
+        "description": "Claudemeter empty dot",
+        "default": {
+          "fontPath": "assets/icons/claudemeter-icons.woff",
+          "fontCharacter": "\\E012"
+        }
+      }
     }
   },
   "overrides": {
@@ -668,9 +843,11 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.8.1",
+    "playwright": "1.64.1",
     "vitest": "^4.1.11"
   }
 }

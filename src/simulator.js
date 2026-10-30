@@ -22,6 +22,12 @@ let simulatedCreditsPercent = null;     // 0..100, overrides monthlyCredits.perc
 let simulatedHappyHour = null;          // null | true | false
 let simulatedColorMode = null;          // null | 'color' | 'basic'
 let simulatedProfileOverride = null;    // null | profile name string
+let simulatedPanelBody = null;          // {session?, weekly?}: dev-only text drawn after the gauge label
+let simulatedUsageHistory = null;       // relative-minute rows standing in for the usage history file
+let simulatedRunsOut = null;            // {session?, weekly?}: minutes until the forced run-out
+let simulatedPaceDelta = null;          // points ahead of the weekly clock
+let simulatedTkSeries = null;           // [[minutesAgo, tokens]] standing in for the transcript turns
+const RUNS_OUT_KEYS = new Set(['session', 'weekly']);
 
 function clamp01_100(v) {
     if (typeof v !== 'number' || Number.isNaN(v)) return null;
@@ -139,7 +145,82 @@ function setProfileOverride(profileName) {
 }
 function getProfileOverride() { return simulatedProfileOverride; }
 
+// Replaces what a gauge draws after its label, so glyph experiments can be
+// seen in the real status bar without touching the renderers.
+const PANEL_BODY_KEYS = new Set(['session', 'weekly']);
+function setPanelBody(bodies) {
+    if (bodies === null) { simulatedPanelBody = null; return; }
+    if (!bodies || typeof bodies !== 'object' || Array.isArray(bodies)) return;
+    const cleaned = Object.fromEntries(
+        Object.entries(bodies).filter(([k, v]) => PANEL_BODY_KEYS.has(k) && typeof v === 'string')
+    );
+    simulatedPanelBody = Object.keys(cleaned).length > 0 ? cleaned : null;
+}
+function getPanelBody(key) { return simulatedPanelBody?.[key] ?? null; }
+
+const MINUTE_MS = 60 * 1000;
+const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+
+// Usage history as relative minutes, so a scenario stays valid whenever it is applied:
+// { fiveResetsInMin, weekResetsInMin, samples: [[minutesAgo, fivePct, weekPct, {scopedKey: pct}?], ...] }.
+function setUsageHistory(spec) {
+    if (spec === null) { simulatedUsageHistory = null; return; }
+    if (!spec || typeof spec !== 'object' || !Array.isArray(spec.samples)) return;
+    const rows = spec.samples.filter((r) => Array.isArray(r) && finite(r[0]) && finite(r[1]) && finite(r[2]));
+    simulatedUsageHistory = {
+        fiveResetsInMin: finite(spec.fiveResetsInMin) ? spec.fiveResetsInMin : 180,
+        weekResetsInMin: finite(spec.weekResetsInMin) ? spec.weekResetsInMin : 3 * 24 * 60,
+        rows,
+    };
+}
+function getUsageHistory(now) {
+    if (!simulatedUsageHistory) return null;
+    const { fiveResetsInMin, weekResetsInMin, rows } = simulatedUsageHistory;
+    const fiveResetsAt = now + fiveResetsInMin * MINUTE_MS;
+    const weekResetsAt = now + weekResetsInMin * MINUTE_MS;
+    return rows.map(([ago, five, week, scoped]) => ({
+        ts: now - ago * MINUTE_MS,
+        fiveHour: { pct: five, resetsAt: fiveResetsAt },
+        sevenDay: { pct: week, resetsAt: weekResetsAt },
+        scoped: Object.fromEntries(Object.entries(scoped && typeof scoped === 'object' ? scoped : {})
+            .filter(([, pct]) => finite(pct))
+            .map(([key, pct]) => [key, { pct, resetsAt: weekResetsAt }])),
+    }));
+}
+
+// Forces the run-out flag, with the gauge projected to run out this many minutes from now:
+// { session: 40, weekly: 300 }.
+function setRunsOut(minutes) {
+    if (minutes === null) { simulatedRunsOut = null; return; }
+    if (!minutes || typeof minutes !== 'object' || Array.isArray(minutes)) return;
+    const cleaned = Object.fromEntries(Object.entries(minutes).filter(([k, v]) => RUNS_OUT_KEYS.has(k) && finite(v) && v > 0));
+    simulatedRunsOut = Object.keys(cleaned).length > 0 ? cleaned : null;
+}
+function getRunsOut(key) { return simulatedRunsOut?.[key] ?? null; }
+
+// Forces the weekly pace delta, in points ahead of (positive) or behind the clock.
+function setPaceDelta(points) {
+    if (points === null) { simulatedPaceDelta = null; return; }
+    if (!finite(points)) return;
+    simulatedPaceDelta = points;
+}
+function getPaceDelta() { return simulatedPaceDelta; }
+
+// Tk turns as [[minutesAgo, tokens], ...], oldest first.
+function setTkSeries(rows) {
+    if (rows === null) { simulatedTkSeries = null; return; }
+    if (!Array.isArray(rows)) return;
+    simulatedTkSeries = rows.filter((r) => Array.isArray(r) && finite(r[0]) && finite(r[1]) && r[1] >= 0);
+}
+function getTkSeries(now) {
+    return simulatedTkSeries ? simulatedTkSeries.map(([ago, tokens]) => ({ ts: now - ago * MINUTE_MS, tokens })) : null;
+}
+
 function clearAll() {
+    simulatedUsageHistory = null;
+    simulatedRunsOut = null;
+    simulatedPaceDelta = null;
+    simulatedTkSeries = null;
     simulatedTokenLevel = null;
     simulatedTokenUsed = null;
     simulatedSessionPercent = null;
@@ -152,6 +233,42 @@ function clearAll() {
     simulatedHappyHour = null;
     simulatedColorMode = null;
     simulatedProfileOverride = null;
+    simulatedPanelBody = null;
+}
+
+// Setter per scenario key, so a scenario file names the same states the
+// interactive commands do.
+const SCENARIO_SETTERS = {
+    tokenLevel: setTokenLevel,
+    tokenUsed: setTokenUsed,
+    sessionPercent: setSessionPercent,
+    weeklyPercent: setWeeklyPercent,
+    scopedWeekly: setScopedWeekly,
+    thresholdIcons: setThresholdIcons,
+    contextWindow: setContextWindow,
+    planSignals: setPlanSignals,
+    creditsPercent: setCreditsPercent,
+    colorMode: setColorMode,
+    profileOverride: setProfileOverride,
+    panelBody: setPanelBody,
+    usageHistory: setUsageHistory,
+    runsOut: setRunsOut,
+    paceDelta: setPaceDelta,
+    tkSeries: setTkSeries,
+};
+
+// Replace every simulated state with the scenario's, so a scenario never
+// inherits a value from the one before it. Returns the keys applied.
+function applyScenario(scenario) {
+    clearAll();
+    if (!scenario || typeof scenario !== 'object' || Array.isArray(scenario)) return [];
+    const applied = [];
+    for (const [key, value] of Object.entries(scenario)) {
+        if (!Object.hasOwn(SCENARIO_SETTERS, key)) continue;
+        SCENARIO_SETTERS[key](value);
+        applied.push(key);
+    }
+    return applied;
 }
 
 module.exports = {
@@ -167,5 +284,11 @@ module.exports = {
     setHappyHour, getHappyHour,
     setColorMode, getColorMode,
     setProfileOverride, getProfileOverride,
+    setPanelBody, getPanelBody,
+    setUsageHistory, getUsageHistory,
+    setRunsOut, getRunsOut,
+    setPaceDelta, getPaceDelta,
+    setTkSeries, getTkSeries,
     clearAll,
+    applyScenario,
 };

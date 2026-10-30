@@ -124,7 +124,7 @@ async function releaseFileLock(lock) {
 // alongside it, then rename(). rename() is atomic on POSIX and on Windows
 // NTFS, so a reader will see either the old contents or the new contents,
 // never a torn write.
-async function atomicWriteJson(targetPath, obj) {
+async function atomicWriteJson(targetPath, obj, indent = 2) {
     const dir = path.dirname(targetPath);
     const base = path.basename(targetPath);
     // Unique temp name: pid + timestamp + random. Collision risk from two
@@ -135,7 +135,7 @@ async function atomicWriteJson(targetPath, obj) {
     // constant-shape random string. No user-controlled path segments.
     const suffix = `.${base}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
     const tmpPath = path.join(dir, suffix); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
-    const payload = JSON.stringify(obj, null, 2);
+    const payload = JSON.stringify(obj, null, indent);
     let handle;
     try {
         handle = await fs.open(tmpPath, 'w', 0o600);

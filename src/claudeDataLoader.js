@@ -101,18 +101,26 @@ function resetTranscriptCache() {
 // file and all of it lands in cache_creation. Measured 32K against a real
 // 233K prompt in a live session (#54).
 function foldRecord(entry, state) {
+    const prompt = promptOfRecord(entry);
+    if (prompt) state.latest = prompt;
+}
+
+// The prompt a transcript record describes, or null when it is not a real
+// main-session assistant turn. Shared with the Tk series reader so both count
+// a turn the same way.
+function promptOfRecord(entry) {
     // Synthetic and API-error turns carry a token count without being a real
     // prompt, and one would become the session's whole reported context.
-    if (entry.isApiErrorMessage || entry.message?.model === '<synthetic>') return;
+    if (entry.isApiErrorMessage || entry.message?.model === '<synthetic>') return null;
     // A subagent's turn describes the subagent's context, not this session's.
     // Claude Code keeps them in agent-*.jsonl, which the caller already filters
     // out by name, but a filename convention is not a contract and the flag is
     // free to honour.
-    if (entry.isSidechain) return;
-    if (entry.type !== 'assistant' || !entry.message?.usage) return;
+    if (entry.isSidechain) return null;
+    if (entry.type !== 'assistant' || !entry.message?.usage) return null;
 
     const u = entry.message.usage;
-    if (typeof u.input_tokens !== 'number' || typeof u.output_tokens !== 'number') return;
+    if (typeof u.input_tokens !== 'number' || typeof u.output_tokens !== 'number') return null;
     const input = u.input_tokens || 0;
     const cacheCreation = u.cache_creation_input_tokens || 0;
     const cacheRead = u.cache_read_input_tokens || 0;
@@ -120,9 +128,9 @@ function foldRecord(entry, state) {
     // "Had a prompt", not "hit the cache". The first turn after a miss reports
     // cache_read 0 with a full-size cache_creation, and gating on cache_read
     // hid those sessions entirely.
-    if (contextTotal <= 0) return;
+    if (contextTotal <= 0) return null;
 
-    state.latest = {
+    return {
         contextTotal,
         input,
         cacheRead,
@@ -341,7 +349,7 @@ async function flyRead(filePath, log, flight) {
 // Cache what a read established and return a copy of the summary it yields.
 async function remember(filePath, handle, stats, edges, identity, entry) {
     const summary = entry.state.latest
-        ? { file: path.basename(filePath), ...entry.state.latest, cwd: entry.cwd }
+        ? { file: path.basename(filePath), path: filePath, ...entry.state.latest, cwd: entry.cwd }
         : null;
     rememberTranscript(filePath, {
         ...entry,
@@ -832,6 +840,7 @@ class ClaudeDataLoader {
                 isActive: !!active,
                 activeSessionCount: activeSessionCount,
                 modelIds: modelIds,
+                transcriptPath: active ? active.path : null,
             };
 
         } catch (error) {
@@ -855,4 +864,8 @@ module.exports = {
     readSessionUsage,
     resetTranscriptCache,
     TRANSCRIPT_CACHE_MAX,
+    promptOfRecord,
+    forEachLine,
+    forEachLineBackward,
+    lastLineEnd,
 };

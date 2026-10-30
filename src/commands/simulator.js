@@ -1,6 +1,6 @@
 // Project:   Claudemeter
 // File:      commands/simulator.js
-// Purpose:   Register the 13 dev-only F5 simulator commands.
+// Purpose:   Register the dev-only F5 simulator commands.
 //
 //            All commands are gated by the `config.claudemeter.debug`
 //            enablement clause in package.json - they only appear in
@@ -18,8 +18,10 @@
 // License:   MIT
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 
+const fs = require('fs');
 const vscode = require('vscode');
 const simulator = require('../simulator');
+const { fileLog } = require('../utils');
 
 // Shared validator for 0..100 inputs (blank clears).
 const percentValidator = (s) =>
@@ -51,10 +53,13 @@ function quickPickCommand({ id, items, placeHolder, onPick, performFetch }) {
 /**
  * Register every claudemeter.simulate.* command with VS Code. Caller
  * passes a performFetch callback (extension.js owns the fetch lifecycle)
- * so this module stays unaware of the surrounding state.
+ * so this module stays unaware of the surrounding state. refreshLocal
+ * re-reads the local transcript, where a context window override takes
+ * effect, and lets the tooltip redraw at once.
  *
  * @param {vscode.ExtensionContext} context
  * @param {(silent: boolean) => Promise<void>} performFetch
+ * @param {() => Promise<void>} refreshLocal
  */
 const CONTEXT_WINDOW_CHOICES = {
     '200k': 200_000,
@@ -86,7 +91,7 @@ function parseScopedInput(text) {
     return entries.length > 0 ? entries : null;
 }
 
-function registerSimulatorCommands(context, performFetch) {
+function registerSimulatorCommands(context, performFetch, refreshLocal = async () => {}) {
     context.subscriptions.push(
         // Tier-quickpick: snap the Tk gauge to a specific level
         quickPickCommand({
@@ -189,6 +194,24 @@ function registerSimulatorCommands(context, performFetch) {
             placeHolder: 'Force Tk profile',
             onPick: (choice) => simulator.setProfileOverride(choice === 'live' ? null : choice),
             performFetch,
+        }),
+        // Loads a whole state from the JSON file CLAUDEMETER_SIMULATE_FILE
+        // names, which is how the e2e harness switches states without
+        // answering input boxes. Without the variable it does nothing.
+        vscode.commands.registerCommand('claudemeter.simulate.scenario', async () => {
+            const file = process.env.CLAUDEMETER_SIMULATE_FILE;
+            if (!file) return;
+            let scenario;
+            try {
+                scenario = JSON.parse(fs.readFileSync(file, 'utf8'));
+            } catch (err) {
+                fileLog(`Simulator scenario unreadable (${file}): ${err.message}`);
+                return;
+            }
+            const applied = simulator.applyScenario(scenario);
+            fileLog(`Simulator scenario applied: ${applied.join(', ') || 'nothing'}`);
+            await refreshLocal();
+            await performFetch(false);
         }),
         vscode.commands.registerCommand('claudemeter.simulate.clear', async () => {
             simulator.clearAll();

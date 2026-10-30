@@ -185,7 +185,8 @@ beforeEach(() => {
     vscode._resetStatusBarItems();
     vscode.workspace.workspaceFolders = [{ uri: { fsPath: sb.workspace } }];
     // The debug log records each fetch. Service status is off because it calls status.claude.com.
-    vscode._setConfigValues({ debug: true, fetchOnStartup: false, 'statusBar.showServiceStatus': false });
+    // The real Codex CLI must not be spawned from a unit test.
+    vscode._setConfigValues({ debug: true, fetchOnStartup: false, 'statusBar.showServiceStatus': false, 'agents.codex.enabled': false });
 
     writeIdentity({ accountUuid: 'acct-a', organizationUuid: 'org-1', organizationType: 'claude_max' });
     writeCredentials({ subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x', scopes: [] });
