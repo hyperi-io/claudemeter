@@ -1,3 +1,10 @@
+## [2.5.24](https://github.com/hyperi-io/claudemeter/compare/v2.5.23...v2.5.24) (2026-10-31)
+
+
+### Bug Fixes
+
+* handle Ultra accounts with no 5-hour limit ([#76](https://github.com/hyperi-io/claudemeter/issues/76)) ([76a3b93](https://github.com/hyperi-io/claudemeter/commit/76a3b932e5b9fc91a560fd07a0cce80a28b140af))
+
 ## [2.5.23](https://github.com/hyperi-io/claudemeter/compare/v2.5.22...v2.5.23) (2026-10-19)
 
 
