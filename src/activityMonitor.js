@@ -16,7 +16,7 @@ function pickRandom(messages) {
 }
 
 function getActivityLevel(usageData = null, sessionData = null) {
-    const claudePercent = usageData ? usageData.usagePercent : 0;
+    const claudePercent = usageData?.usagePercent ?? 0;
 
     let tokenPercent = 0;
     if (sessionData && sessionData.tokenUsage) {
@@ -52,7 +52,7 @@ function getActivityDescription(level) {
 }
 
 function getStats(usageData = null, sessionData = null) {
-    const claudePercent = usageData ? usageData.usagePercent : 0;
+    const claudePercent = usageData?.usagePercent ?? 0;
 
     let tokenPercent = 0;
     if (sessionData && sessionData.tokenUsage) {

@@ -100,9 +100,16 @@ function formatSubscriptionType(type) {
     return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
 }
 
+// Anthropic renamed these plans but kept the tier strings: Max 20x is Ultra,
+// Max 5x is Max.
+const RENAMED_TIERS = {
+    default_claude_max_20x: 'Ultra',
+    default_claude_max_5x: 'Max',
+};
+
 function formatRateLimitTier(tier) {
     if (!tier) return null;
-    // "default_claude_max_20x" -> "Max 20x"
+    if (Object.hasOwn(RENAMED_TIERS, tier)) return RENAMED_TIERS[tier];
     // "default_claude_pro" -> "Pro"
     const match = tier.match(/default_claude_(\w+?)(?:_(\d+x))?$/);
     if (match) {

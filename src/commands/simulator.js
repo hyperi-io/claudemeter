@@ -107,11 +107,17 @@ function registerSimulatorCommands(context, performFetch) {
             simulator.setTokenUsed(v === '' ? null : Number(v));
             await performFetch(false);
         }),
-        percentCommand({
-            id: 'claudemeter.simulate.sessionPercent',
-            prompt: 'Force session % (0-100, blank to clear)',
-            setter: simulator.setSessionPercent,
-            performFetch,
+        vscode.commands.registerCommand('claudemeter.simulate.sessionPercent', async () => {
+            const v = await vscode.window.showInputBox({
+                prompt: 'Force session % (0-100, "none" for no 5-hour limit, blank to clear)',
+                validateInput: (s) => s.trim().toLowerCase() === 'none' ? null : percentValidator(s),
+            });
+            if (v === undefined) return;
+            const choice = v.trim().toLowerCase();
+            if (choice === '') simulator.setSessionPercent(null);
+            else if (choice === 'none') simulator.setSessionPercent('none');
+            else simulator.setSessionPercent(Number(choice));
+            await performFetch(false);
         }),
         percentCommand({
             id: 'claudemeter.simulate.weeklyPercent',

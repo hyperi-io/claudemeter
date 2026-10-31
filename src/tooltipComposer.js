@@ -130,9 +130,11 @@ function renderPlanAndContext(state) {
     const lines = [];
 
     if (credentialsInfo) {
-        const plan = formatSubscriptionType(credentialsInfo.subscriptionType);
         const tier = formatRateLimitTier(credentialsInfo.rateLimitTier);
         const orgType = ORG_TYPE_LABELS[usageData?.accountInfo?.organizationType];
+        // On a personal plan the 'max' token covers both Max and Ultra, so the tier names it.
+        const tierNamesPlan = credentialsInfo.subscriptionType === 'max' && tier && !orgType;
+        const plan = tierNamesPlan ? tier : formatSubscriptionType(credentialsInfo.subscriptionType);
         const orgName = usageData?.accountInfo?.orgName;
 
         let planLabel = plan && esc(plan);
@@ -186,9 +188,12 @@ function renderSessionBlock(state) {
 
     const lines = [''];  // leading blank line for visual separation
     const sessionPercent = usageData.usagePercent;
-    const resetTimeExpanded = calculateResetClockTimeExpanded(usageData.resetsAt);
-    lines.push(`**Session - ${sessionPercent}%**`);
-    lines.push(`Resets ${resetTimeExpanded}`);
+    if (typeof sessionPercent === 'number') {
+        lines.push(`**Session - ${sessionPercent}%**`);
+        lines.push(`Resets ${calculateResetClockTimeExpanded(usageData.resetsAt)}`);
+    } else {
+        lines.push('**Session - no 5-hour limit**');
+    }
     if (config?.tokenLimitOverride > 0) {
         lines.push(`⚙ Context window override ${formatCompact(config.tokenLimitOverride)}`);
     }

@@ -126,12 +126,16 @@ describe('composeTooltip - outside strings cannot inject a command link', () => 
 });
 
 describe('composeTooltip - plan + context', () => {
-    it('shows plan with Personal suffix when the plan token names no shared org', () => {
+    it.each([
+        ['default_claude_max_5x', 'Max'],
+        ['default_claude_max_20x', 'Ultra'],
+    ])('names a personal %s plan once, with the Personal suffix', (tier, label) => {
         const out = composeTooltip({
             config: baseConfig,
-            credentialsInfo: { subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' },
+            credentialsInfo: { subscriptionType: 'max', rateLimitTier: tier },
         });
-        expect(out).toMatch(/Max \(Personal\)/);
+        expect(out).toContain(`${label} (Personal)`);
+        expect(out).not.toMatch(/Max 20x|Max 5x|·/);
     });
 
     it.each([
@@ -190,6 +194,15 @@ describe('composeTooltip - session block', () => {
             weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit', hour12: true,
         });
         expect(out).toContain(`Resets ${expected}`);
+    });
+
+    it.each([null, undefined])('says there is no 5-hour limit when the percent is %s', (usagePercent) => {
+        const out = composeTooltip({
+            config: baseConfig,
+            usageData: { usagePercent, resetsAt: null, timestamp: new Date() },
+        });
+        expect(out).toContain('**Session - no 5-hour limit**');
+        expect(out).not.toMatch(/Session - (null|undefined)|Resets/);
     });
 
     it('shows "-" rather than the current time when the stamp is missing', () => {
