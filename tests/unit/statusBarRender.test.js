@@ -449,3 +449,42 @@ describe('Tk profile detection from the render path', () => {
         expect(warnings()).toHaveLength(0);
     });
 });
+
+describe('an account with no 5-hour limit', () => {
+    const simulator = require('../../src/simulator');
+    afterEach(() => simulator.clearAll());
+
+    const noSessionPayload = () => processApiResponse({
+        five_hour: null,
+        seven_day: { utilization: 34, resets_at: new Date(Date.now() + 3 * 86400_000).toISOString() },
+        limits: [{ kind: 'weekly_all', group: 'weekly', percent: 34, resets_at: null, scope: null }],
+    }, null, null, null);
+
+    it.each([
+        ['payload', 'default', () => noSessionPayload()],
+        ['payload', 'compact', () => noSessionPayload()],
+        ['simulator', 'default', () => { simulator.setSessionPercent('none'); return usage(); }],
+        ['simulator', 'compact', () => { simulator.setSessionPercent('none'); return usage(); }],
+    ])('%s, %s mode: draws Wk, no Se, and says so in the tooltip', (_source, mode, makeUsage) => {
+        const panels = freshPanels({ 'statusBar.displayMode': mode });
+        updateStatusBar(null, makeUsage(), null, SESSION, null);
+        if (mode === 'compact') {
+            expect(panels.compact.text).toContain('Wk');
+            expect(panels.compact.text).not.toMatch(/(^|\s)S\d/);
+        } else {
+            expect(panels.session.visible).toBe(false);
+            expect(panels.weekly.visible).toBe(true);
+        }
+        const tooltip = panels.all.map(tip).find((t) => t.includes('**Session'));
+        expect(tooltip).toContain('**Session - no 5-hour limit**');
+    });
+
+    it('a number after "none" brings the session gauge back', () => {
+        const panels = freshPanels();
+        simulator.setSessionPercent('none');
+        simulator.setSessionPercent(55);
+        updateStatusBar(null, usage(), null, SESSION, null);
+        expect(panels.session.visible).toBe(true);
+        expect(panels.session.text).toMatch(/^Se /);
+    });
+});

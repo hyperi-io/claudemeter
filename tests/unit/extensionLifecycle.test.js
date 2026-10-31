@@ -310,11 +310,12 @@ describe('identity file re-read', () => {
         writeCache('acct-a', usage(11, { name: 'A', rateLimitTier: 'default_claude_max_5x' }));
         await h.activate();
         await h.runCommand('claudemeter.fetchNow');
-        expect(tooltip()).toContain('Max 5x');
+        expect(tooltip()).toContain('Max');
+        expect(tooltip()).not.toContain('Ultra');
         writeIdentity({ accountUuid: 'acct-a', organizationUuid: 'org-1', organizationType: 'claude_max' });
         await h.fireIdentityChange('.claude.json');
-        expect(tooltip()).toContain('Max 5x');
-        expect(tooltip()).not.toContain('Max 20x');
+        expect(tooltip()).toContain('Max');
+        expect(tooltip()).not.toContain('Ultra');
     });
 
     it('does not copy /profile identity into the credentials record', async () => {

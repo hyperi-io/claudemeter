@@ -214,7 +214,8 @@ function processApiResponse(apiResponse, creditsData, overageData, accountInfo, 
     const { session, weekly } = resetGauges(gauges);
 
     return {
-        usagePercent: session.percent ?? 0,
+        // Null when the account has no 5-hour limit (verified Ultra accounts).
+        usagePercent: session.percent ?? null,
         // Rendered against the clock at display time, so cached data never drifts.
         resetsAt: session.resetsAt || null,
         usagePercentWeek: weekly.percent ?? 0,

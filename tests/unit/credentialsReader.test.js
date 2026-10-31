@@ -29,12 +29,11 @@ describe('formatSubscriptionType', () => {
 });
 
 describe('formatRateLimitTier', () => {
-    it('formats max 20x tier', () => {
-        expect(formatRateLimitTier('default_claude_max_20x')).toBe('Max 20x');
-    });
-
-    it('formats max 5x tier', () => {
-        expect(formatRateLimitTier('default_claude_max_5x')).toBe('Max 5x');
+    it.each([
+        ['default_claude_max_20x', 'Ultra'],
+        ['default_claude_max_5x', 'Max'],
+    ])('shows the renamed plan for %s', (tier, label) => {
+        expect(formatRateLimitTier(tier)).toBe(label);
     });
 
     it('formats pro tier', () => {

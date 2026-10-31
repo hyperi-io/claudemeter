@@ -186,6 +186,22 @@ describe('processApiResponse', () => {
         expect(result.rawData).toBe(apiData);
     });
 
+    // A verified Ultra account has no 5-hour limit: no five_hour block, no session entry.
+    it.each([
+        ['five_hour null', { five_hour: null }],
+        ['five_hour absent', {}],
+        ['utilization null', { five_hour: { utilization: null, resets_at: null } }],
+    ])('reports no session percent when %s', (_label, sessionShape) => {
+        const result = processApiResponse({
+            ...sessionShape,
+            seven_day: { utilization: 34, resets_at: '2026-11-06T19:00:00Z' },
+            limits: [{ kind: 'weekly_all', group: 'weekly', percent: 34, resets_at: '2026-11-06T19:00:00Z', scope: null }],
+        }, null, null, null);
+        expect(result.usagePercent).toBeNull();
+        expect(result.resetsAt).toBeNull();
+        expect(result.usagePercentWeek).toBe(34);
+    });
+
     // A duration taken at fetch time goes stale in the cache; the stamp does not.
     it('stores the reset stamps as the payload gave them', () => {
         const result = processApiResponse({

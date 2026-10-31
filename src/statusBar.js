@@ -921,7 +921,10 @@ function createStatusBarItem(context) {
     return statusBarItems.label;
 }
 
-function updateStatusBar(item, usageData, activityStats = null, sessionData = null, credentialsInfo = null) {
+function updateStatusBar(item, usageDataIn, activityStats = null, sessionData = null, credentialsInfo = null) {
+    const usageData = usageDataIn && simulator.isNoSessionLimit()
+        ? { ...usageDataIn, usagePercent: null, resetsAt: null }
+        : usageDataIn;
     // Happy-hour panel is independent of fetch state - render on
     // every tick so the countdown stays fresh.
     const happyHourState = resolveHappyHourState();

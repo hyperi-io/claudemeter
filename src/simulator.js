@@ -13,6 +13,7 @@ const VALID_COLOR_MODES = new Set(['color', 'basic']);
 let simulatedTokenLevel = null;
 let simulatedTokenUsed = null;          // raw token count, lets simulator drive 'used'
 let simulatedSessionPercent = null;
+let simulatedNoSessionLimit = false;    // the payload a verified Ultra account gets
 let simulatedWeeklyPercent = null;
 let simulatedScopedWeekly = null;       // [{label, percent}], overrides usageData.scopedWeekly
 let simulatedThresholdIcons = null;     // null | true | false, stands in for the global setting
@@ -48,13 +49,16 @@ function setTokenUsed(used) {
 }
 function getTokenUsed() { return simulatedTokenUsed; }
 
+// 'none' simulates an account with no 5-hour limit.
 function setSessionPercent(p) {
-    if (p === null) { simulatedSessionPercent = null; return; }
+    simulatedNoSessionLimit = p === 'none';
+    if (p === null || simulatedNoSessionLimit) { simulatedSessionPercent = null; return; }
     const v = clamp01_100(p);
     if (v === null) return;
     simulatedSessionPercent = v;
 }
 function getSessionPercent() { return simulatedSessionPercent; }
+function isNoSessionLimit() { return simulatedNoSessionLimit; }
 
 function setWeeklyPercent(p) {
     if (p === null) { simulatedWeeklyPercent = null; return; }
@@ -143,6 +147,7 @@ function clearAll() {
     simulatedTokenLevel = null;
     simulatedTokenUsed = null;
     simulatedSessionPercent = null;
+    simulatedNoSessionLimit = false;
     simulatedWeeklyPercent = null;
     simulatedScopedWeekly = null;
     simulatedThresholdIcons = null;
@@ -157,7 +162,7 @@ function clearAll() {
 module.exports = {
     setTokenLevel, getTokenLevel,
     setTokenUsed, getTokenUsed,
-    setSessionPercent, getSessionPercent,
+    setSessionPercent, getSessionPercent, isNoSessionLimit,
     setWeeklyPercent, getWeeklyPercent,
     setScopedWeekly, getScopedWeekly,
     setThresholdIcons, getThresholdIcons,

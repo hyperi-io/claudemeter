@@ -11,7 +11,7 @@
 ![Tooltip](assets/tooltip.png)
 
 - Token context usage
-- Session limits
+- Session limits (the 5-hour limit, hidden once Anthropic removes it from a verified Ultra account)
 - Weekly limits
 - Limit consumption and reset times
 - Claude service status (working, partial outage, major outage)

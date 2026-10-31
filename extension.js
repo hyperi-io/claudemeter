@@ -1002,7 +1002,8 @@ function registerCommands(context) {
                 // the name is PII (see README Privacy - "redacted bug reports").
                 const ai = usageData.accountInfo;
                 debugChannel.appendLine(`  Account: ${ai ? `present (${ai.organizationType || ai.orgType || 'plan unknown'})` : 'unknown'}`);
-                debugChannel.appendLine(`  Session Usage: ${usageData.usagePercent}%`);
+                const sessionUsage = usageData.usagePercent == null ? 'no 5-hour limit' : `${usageData.usagePercent}%`;
+                debugChannel.appendLine(`  Session Usage: ${sessionUsage}`);
                 debugChannel.appendLine(`  Weekly Usage: ${usageData.usagePercentWeek}%`);
                 debugChannel.appendLine(`  Has Monthly Credits: ${!!usageData.monthlyCredits}`);
             } else {
