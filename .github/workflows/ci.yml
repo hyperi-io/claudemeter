@@ -37,7 +37,7 @@ jobs:
           # Match the extension-host Node for our engines.vscode floor; keep in
           # step with .nvmrc + engines.node. Bump only when the floor is raised
           # - see CONTRIBUTING.md / assets/src/deps_node_guard.py.
-          node-version: '24'
+          node-version: '26'
 
       - name: Install dependencies
         run: npm ci
